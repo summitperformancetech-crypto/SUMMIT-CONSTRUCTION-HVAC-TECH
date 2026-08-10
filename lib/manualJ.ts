@@ -42,6 +42,17 @@ export type ManualJRoom = {
   // DUCT_UNCONDITIONED_LOCATIONS below.
   duct_location: string | null;
   duct_insulation_r_value: number | null;
+  // Section 4 gap-closure spec. Null means "no zone assigned" - grouped
+  // into a synthetic "Unassigned" zone at calc time (see computeManualJ)
+  // rather than silently dropped, but every conditioned room always counts
+  // in wholeHouse regardless of zone assignment.
+  zone_id: string | null;
+};
+
+export type ManualJZone = {
+  id: string;
+  name: string;
+  ahu_label: string | null;
 };
 
 export type RoomTypeDefault = {
@@ -120,8 +131,18 @@ export type WholeHouseLoadResult = {
   ductCoolingLatentBtuh: number;
 };
 
+// Section 4: same shape as WholeHouseLoadResult (a zone is computed exactly
+// like the whole house used to be, just scoped to a room subset), labeled
+// with which zone it is. zoneId is null only for the synthetic "Unassigned"
+// bucket, never for a real zone.
+export type ZoneLoadResult = WholeHouseLoadResult & {
+  zoneId: string | null;
+  zoneName: string;
+};
+
 export type ManualJResult = {
   rooms: RoomLoadResult[];
+  zones: ZoneLoadResult[];
   wholeHouse: WholeHouseLoadResult;
 };
 
@@ -439,12 +460,100 @@ function computeRoom(
   };
 }
 
+function emptyLoadResult(): WholeHouseLoadResult {
+  return {
+    heatingBtuh: 0,
+    coolingSensibleBtuh: 0,
+    coolingLatentBtuh: 0,
+    coolingTotalBtuh: 0,
+    doorHeatingBtuh: 0,
+    doorCoolingBtuh: 0,
+    internalGainsSensibleBtuh: 0,
+    internalGainsLatentBtuh: 0,
+    ductHeatingBtuh: 0,
+    ductCoolingSensibleBtuh: 0,
+    ductCoolingLatentBtuh: 0,
+    ventilationCfm: 0,
+    ventilationHeatingBtuh: 0,
+    ventilationCoolingSensibleBtuh: 0,
+    ventilationCoolingLatentBtuh: 0,
+  };
+}
+
+function sumRoomResults(roomResults: RoomLoadResult[]): WholeHouseLoadResult {
+  return roomResults.reduce<WholeHouseLoadResult>(
+    (totals, room) => ({
+      ...totals,
+      heatingBtuh: totals.heatingBtuh + room.heatingBtuh,
+      coolingSensibleBtuh: totals.coolingSensibleBtuh + room.coolingSensibleBtuh,
+      coolingLatentBtuh: totals.coolingLatentBtuh + room.coolingLatentBtuh,
+      coolingTotalBtuh: totals.coolingTotalBtuh + room.coolingTotalBtuh,
+      doorHeatingBtuh: totals.doorHeatingBtuh + room.doorHeatingBtuh,
+      doorCoolingBtuh: totals.doorCoolingBtuh + room.doorCoolingBtuh,
+      internalGainsSensibleBtuh: totals.internalGainsSensibleBtuh + room.internalGainsSensibleBtuh,
+      internalGainsLatentBtuh: totals.internalGainsLatentBtuh + room.internalGainsLatentBtuh,
+      ductHeatingBtuh: totals.ductHeatingBtuh + room.ductHeatingBtuh,
+      ductCoolingSensibleBtuh: totals.ductCoolingSensibleBtuh + room.ductCoolingSensibleBtuh,
+      ductCoolingLatentBtuh: totals.ductCoolingLatentBtuh + room.ductCoolingLatentBtuh,
+    }),
+    emptyLoadResult(),
+  );
+}
+
+// ASHRAE 62.2 mechanical ventilation, computed per group (zone) rather than
+// once whole-house - see the Section 4 migration comment and
+// ASHRAE_622_AREA_FACTOR above. This matches the reference report, which
+// computes ventilation per AHU (24 CFM AHU1 + 60 CFM AHU2 = 84 CFM
+// whole-house - not a single whole-house Nbr/Afloor formula). The "+1"
+// occupancy floor in the formula is NOT linearly distributable across
+// zones (each zone's own calc adds its own +1), so summing per-zone
+// figures is not the same as one whole-house formula in general - it's
+// only identical when there's exactly one zone, which is why this change
+// doesn't move any existing project's total (every current project has
+// exactly one zone, from the Section 4 migration's backfill).
+function addVentilation(
+  totals: WholeHouseLoadResult,
+  groupRooms: ManualJRoom[],
+  envelope: ManualJEnvelope,
+  winterOutdoorF: number,
+  summerOutdoorF: number,
+): WholeHouseLoadResult {
+  const heatingDeltaT = envelope.indoor_design_temp_heating_f - winterOutdoorF;
+  const coolingDeltaT = summerOutdoorF - envelope.indoor_design_temp_cooling_f;
+  const bedrooms = groupRooms.reduce((sum, room) => sum + (room.is_bedroom ? 1 : 0), 0);
+  const floorAreaSqft = groupRooms.reduce((sum, room) => sum + n(room.floor_area_sqft), 0);
+
+  const ventilationCfm =
+    ASHRAE_622_AREA_FACTOR * floorAreaSqft + ASHRAE_622_BEDROOM_FACTOR * (bedrooms + 1);
+  const ventilationHeatingBtuh = INFILTRATION_SENSIBLE_FACTOR * ventilationCfm * heatingDeltaT;
+  const ventilationCoolingSensibleBtuh =
+    INFILTRATION_SENSIBLE_FACTOR * ventilationCfm * coolingDeltaT;
+  const ventilationCoolingLatentBtuh =
+    ventilationCoolingSensibleBtuh * INFILTRATION_LATENT_FACTOR;
+
+  const coolingSensibleBtuh = totals.coolingSensibleBtuh + ventilationCoolingSensibleBtuh;
+  const coolingLatentBtuh = totals.coolingLatentBtuh + ventilationCoolingLatentBtuh;
+
+  return {
+    ...totals,
+    ventilationCfm,
+    ventilationHeatingBtuh,
+    ventilationCoolingSensibleBtuh,
+    ventilationCoolingLatentBtuh,
+    heatingBtuh: totals.heatingBtuh + ventilationHeatingBtuh,
+    coolingSensibleBtuh,
+    coolingLatentBtuh,
+    coolingTotalBtuh: coolingSensibleBtuh + coolingLatentBtuh,
+  };
+}
+
 export function computeManualJ(
   rooms: ManualJRoom[],
   envelope: ManualJEnvelope,
   winterOutdoorF: number,
   summerOutdoorF: number,
   roomTypeDefaults: RoomTypeDefault[],
+  zones: ManualJZone[] = [],
 ): ManualJResult {
   // Unconditioned rooms (garages, unconditioned attics, etc.) have no HVAC
   // load target - Manual J doesn't size equipment or registers for them.
@@ -457,76 +566,79 @@ export function computeManualJ(
     computeRoom(room, envelope, winterOutdoorF, summerOutdoorF, roomTypeDefaults),
   );
 
-  const wholeHouse = roomResults.reduce<WholeHouseLoadResult>(
-    (totals, room) => ({
-      heatingBtuh: totals.heatingBtuh + room.heatingBtuh,
-      coolingSensibleBtuh: totals.coolingSensibleBtuh + room.coolingSensibleBtuh,
-      coolingLatentBtuh: totals.coolingLatentBtuh + room.coolingLatentBtuh,
-      coolingTotalBtuh: totals.coolingTotalBtuh + room.coolingTotalBtuh,
-      doorHeatingBtuh: totals.doorHeatingBtuh + room.doorHeatingBtuh,
-      doorCoolingBtuh: totals.doorCoolingBtuh + room.doorCoolingBtuh,
-      internalGainsSensibleBtuh: totals.internalGainsSensibleBtuh + room.internalGainsSensibleBtuh,
-      internalGainsLatentBtuh: totals.internalGainsLatentBtuh + room.internalGainsLatentBtuh,
-      ductHeatingBtuh: totals.ductHeatingBtuh + room.ductHeatingBtuh,
-      ductCoolingSensibleBtuh: totals.ductCoolingSensibleBtuh + room.ductCoolingSensibleBtuh,
-      ductCoolingLatentBtuh: totals.ductCoolingLatentBtuh + room.ductCoolingLatentBtuh,
-      ventilationCfm: 0,
-      ventilationHeatingBtuh: 0,
-      ventilationCoolingSensibleBtuh: 0,
-      ventilationCoolingLatentBtuh: 0,
+  // Group conditioned rooms (and their matching results - same array order
+  // as conditionedRooms) by zone_id. A room whose zone_id is null, or
+  // points at a zone not in the zones list (e.g. a stale reference), falls
+  // into a synthetic "Unassigned" bucket instead of being dropped from
+  // zone-level reporting - it still always counts toward wholeHouse either
+  // way, since wholeHouse is defined as the sum of every group below.
+  const zoneIds = new Set(zones.map((zone) => zone.id));
+  const groups = new Map<string | null, { rooms: ManualJRoom[]; results: RoomLoadResult[] }>();
+  conditionedRooms.forEach((room, index) => {
+    const key = room.zone_id && zoneIds.has(room.zone_id) ? room.zone_id : null;
+    if (!groups.has(key)) groups.set(key, { rooms: [], results: [] });
+    const group = groups.get(key)!;
+    group.rooms.push(room);
+    group.results.push(roomResults[index]);
+  });
+
+  const zoneResults: ZoneLoadResult[] = zones.map((zone) => {
+    const group = groups.get(zone.id);
+    // A zone with no rooms assigned yet must contribute nothing, not the
+    // ASHRAE 62.2 formula's "+1" occupancy floor (7.5 CFM) applied to zero
+    // rooms - a tech creating "Zone 2" and not yet assigning rooms to it
+    // must not silently inflate the whole-project total. Caught by the
+    // Section 4 test suite: an empty zone in the zones list was adding a
+    // phantom +7.5 CFM before this guard.
+    if (!group || group.rooms.length === 0) {
+      return { ...emptyLoadResult(), zoneId: zone.id, zoneName: zone.name };
+    }
+    const base = sumRoomResults(group.results);
+    const withVentilation = addVentilation(
+      base,
+      group.rooms,
+      envelope,
+      winterOutdoorF,
+      summerOutdoorF,
+    );
+    return { ...withVentilation, zoneId: zone.id, zoneName: zone.name };
+  });
+
+  const unassignedGroup = groups.get(null);
+  if (unassignedGroup) {
+    const base = sumRoomResults(unassignedGroup.results);
+    const withVentilation = addVentilation(
+      base,
+      unassignedGroup.rooms,
+      envelope,
+      winterOutdoorF,
+      summerOutdoorF,
+    );
+    zoneResults.push({ ...withVentilation, zoneId: null, zoneName: "Unassigned" });
+  }
+
+  const wholeHouse = zoneResults.reduce<WholeHouseLoadResult>(
+    (totals, zone) => ({
+      heatingBtuh: totals.heatingBtuh + zone.heatingBtuh,
+      coolingSensibleBtuh: totals.coolingSensibleBtuh + zone.coolingSensibleBtuh,
+      coolingLatentBtuh: totals.coolingLatentBtuh + zone.coolingLatentBtuh,
+      coolingTotalBtuh: totals.coolingTotalBtuh + zone.coolingTotalBtuh,
+      doorHeatingBtuh: totals.doorHeatingBtuh + zone.doorHeatingBtuh,
+      doorCoolingBtuh: totals.doorCoolingBtuh + zone.doorCoolingBtuh,
+      internalGainsSensibleBtuh: totals.internalGainsSensibleBtuh + zone.internalGainsSensibleBtuh,
+      internalGainsLatentBtuh: totals.internalGainsLatentBtuh + zone.internalGainsLatentBtuh,
+      ductHeatingBtuh: totals.ductHeatingBtuh + zone.ductHeatingBtuh,
+      ductCoolingSensibleBtuh: totals.ductCoolingSensibleBtuh + zone.ductCoolingSensibleBtuh,
+      ductCoolingLatentBtuh: totals.ductCoolingLatentBtuh + zone.ductCoolingLatentBtuh,
+      ventilationCfm: totals.ventilationCfm + zone.ventilationCfm,
+      ventilationHeatingBtuh: totals.ventilationHeatingBtuh + zone.ventilationHeatingBtuh,
+      ventilationCoolingSensibleBtuh:
+        totals.ventilationCoolingSensibleBtuh + zone.ventilationCoolingSensibleBtuh,
+      ventilationCoolingLatentBtuh:
+        totals.ventilationCoolingLatentBtuh + zone.ventilationCoolingLatentBtuh,
     }),
-    {
-      heatingBtuh: 0,
-      coolingSensibleBtuh: 0,
-      coolingLatentBtuh: 0,
-      coolingTotalBtuh: 0,
-      doorHeatingBtuh: 0,
-      doorCoolingBtuh: 0,
-      internalGainsSensibleBtuh: 0,
-      internalGainsLatentBtuh: 0,
-      ductHeatingBtuh: 0,
-      ductCoolingSensibleBtuh: 0,
-      ductCoolingLatentBtuh: 0,
-      ventilationCfm: 0,
-      ventilationHeatingBtuh: 0,
-      ventilationCoolingSensibleBtuh: 0,
-      ventilationCoolingLatentBtuh: 0,
-    },
+    emptyLoadResult(),
   );
 
-  // ASHRAE 62.2 mechanical ventilation, whole-house (Nbr and Afloor summed
-  // across conditioned rooms - see ASHRAE_622_AREA_FACTOR above and
-  // migration 20260810190611_add_is_bedroom.sql). Uses the same
-  // sensible/latent conversion as infiltration for consistency.
-  const heatingDeltaT = envelope.indoor_design_temp_heating_f - winterOutdoorF;
-  const coolingDeltaT = summerOutdoorF - envelope.indoor_design_temp_cooling_f;
-  const totalBedrooms = conditionedRooms.reduce(
-    (sum, room) => sum + (room.is_bedroom ? 1 : 0),
-    0,
-  );
-  const totalConditionedFloorAreaSqft = conditionedRooms.reduce(
-    (sum, room) => sum + n(room.floor_area_sqft),
-    0,
-  );
-  const ventilationCfm =
-    ASHRAE_622_AREA_FACTOR * totalConditionedFloorAreaSqft +
-    ASHRAE_622_BEDROOM_FACTOR * (totalBedrooms + 1);
-  const ventilationHeatingBtuh = INFILTRATION_SENSIBLE_FACTOR * ventilationCfm * heatingDeltaT;
-  const ventilationCoolingSensibleBtuh =
-    INFILTRATION_SENSIBLE_FACTOR * ventilationCfm * coolingDeltaT;
-  const ventilationCoolingLatentBtuh =
-    ventilationCoolingSensibleBtuh * INFILTRATION_LATENT_FACTOR;
-
-  wholeHouse.ventilationCfm = ventilationCfm;
-  wholeHouse.ventilationHeatingBtuh = ventilationHeatingBtuh;
-  wholeHouse.ventilationCoolingSensibleBtuh = ventilationCoolingSensibleBtuh;
-  wholeHouse.ventilationCoolingLatentBtuh = ventilationCoolingLatentBtuh;
-  wholeHouse.heatingBtuh += ventilationHeatingBtuh;
-  wholeHouse.coolingSensibleBtuh += ventilationCoolingSensibleBtuh;
-  wholeHouse.coolingLatentBtuh += ventilationCoolingLatentBtuh;
-
-  wholeHouse.coolingTotalBtuh =
-    wholeHouse.coolingSensibleBtuh + wholeHouse.coolingLatentBtuh;
-
-  return { rooms: roomResults, wholeHouse };
+  return { rooms: roomResults, zones: zoneResults, wholeHouse };
 }

@@ -8,7 +8,7 @@ import {
   type ManualJWorkflowHandle,
   type RoomRow,
 } from "@/components/manual-j-workflow";
-import type { ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
+import type { ManualJEnvelope, ManualJZone, RoomTypeDefault } from "@/lib/manualJ";
 import type { DrawingRow } from "@/lib/drawingExtraction";
 import type { FieldResolution } from "@/lib/fieldResolutions";
 
@@ -24,6 +24,7 @@ export function ProjectWorkspace({
   winterDesignTempF,
   summerDesignTempF,
   roomTypeDefaults,
+  initialZones,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -36,6 +37,7 @@ export function ProjectWorkspace({
   winterDesignTempF: number | null;
   summerDesignTempF: number | null;
   roomTypeDefaults: RoomTypeDefault[];
+  initialZones: ManualJZone[];
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -74,6 +76,7 @@ export function ProjectWorkspace({
         winterDesignTempF={winterDesignTempF}
         summerDesignTempF={summerDesignTempF}
         roomTypeDefaults={roomTypeDefaults}
+        initialZones={initialZones}
       />
     </>
   );

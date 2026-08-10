@@ -13,6 +13,7 @@ import {
   type AtticConstructionType,
   type ManualJEnvelope,
   type ManualJRoom,
+  type ManualJZone,
   type RoomTypeDefault,
   type WallExposureType,
 } from "@/lib/manualJ";
@@ -59,7 +60,9 @@ type EnvelopeFormValues = {
 };
 
 const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+
+const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
 
 // The only Building Envelope fields a drawing extraction is allowed to fill.
 // ACH50, occupants, and indoor design temps are never populated from a drawing.
@@ -151,6 +154,7 @@ function roomToForm(room: RoomRow): RoomFormValues {
     floor_exposed: room.floor_exposed,
     is_conditioned: room.is_conditioned,
     is_bedroom: room.is_bedroom,
+    zone_id: room.zone_id ?? "",
     room_type: room.room_type ?? "",
     occupant_count: room.occupant_count?.toString() ?? "",
     sensible_gain_override: room.sensible_gain_override?.toString() ?? "",
@@ -183,6 +187,7 @@ function formToRoomPayload(values: RoomFormValues) {
     floor_exposed: values.floor_exposed,
     is_conditioned: values.is_conditioned,
     is_bedroom: values.is_bedroom,
+    zone_id: toNullableString(values.zone_id),
     room_type: toNullableString(values.room_type),
     occupant_count: toNullableNumber(values.occupant_count),
     sensible_gain_override: toNullableNumber(values.sensible_gain_override),
@@ -230,6 +235,7 @@ export const ManualJWorkflow = forwardRef<
     winterDesignTempF: number | null;
     summerDesignTempF: number | null;
     roomTypeDefaults: RoomTypeDefault[];
+    initialZones: ManualJZone[];
   }
 >(function ManualJWorkflow(
   {
@@ -241,6 +247,7 @@ export const ManualJWorkflow = forwardRef<
     winterDesignTempF,
     summerDesignTempF,
     roomTypeDefaults,
+    initialZones,
   },
   ref,
 ) {
@@ -257,6 +264,12 @@ export const ManualJWorkflow = forwardRef<
   const [listError, setListError] = useState<string | null>(null);
   const roomsSectionRef = useRef<HTMLDivElement>(null);
 
+  const [zones, setZones] = useState<ManualJZone[]>(initialZones);
+  const [newZoneName, setNewZoneName] = useState("");
+  const [newZoneAhuLabel, setNewZoneAhuLabel] = useState("");
+  const [zoneError, setZoneError] = useState<string | null>(null);
+  const [zoneSaving, setZoneSaving] = useState(false);
+
   const envelope = useMemo(() => formToEnvelope(envelopeForm), [envelopeForm]);
   const unconditionedRooms = useMemo(
     () => rooms.filter((room) => !room.is_conditioned),
@@ -267,8 +280,15 @@ export const ManualJWorkflow = forwardRef<
 
   const results = useMemo(() => {
     if (!canCalculate) return null;
-    return computeManualJ(rooms, envelope, winterDesignTempF!, summerDesignTempF!, roomTypeDefaults);
-  }, [rooms, envelope, winterDesignTempF, summerDesignTempF, canCalculate, roomTypeDefaults]);
+    return computeManualJ(
+      rooms,
+      envelope,
+      winterDesignTempF!,
+      summerDesignTempF!,
+      roomTypeDefaults,
+      zones,
+    );
+  }, [rooms, envelope, winterDesignTempF, summerDesignTempF, canCalculate, roomTypeDefaults, zones]);
 
   function updateEnvelopeField<K extends keyof EnvelopeFormValues>(
     key: K,
@@ -300,14 +320,102 @@ export const ManualJWorkflow = forwardRef<
 
   async function handleAddRoom(values: RoomFormValues) {
     const supabase = createClient();
+    const payload = formToRoomPayload(values);
+    // New rooms default to the project's first zone unless the tech
+    // explicitly picked one (or explicitly picked "Unassigned", which
+    // formToRoomPayload already turns into null - only an untouched blank
+    // zone_id from EMPTY_ROOM_FORM gets defaulted here).
+    if (payload.zone_id == null && zones.length > 0) {
+      payload.zone_id = zones[0].id;
+    }
     const { data, error } = await supabase
       .from("rooms")
-      .insert({ ...formToRoomPayload(values), project_id: projectId })
+      .insert({ ...payload, project_id: projectId })
       .select(ROOM_COLUMNS)
       .single<RoomRow>();
     if (error) throw new Error(error.message);
     setRooms((prev) => [...prev, data]);
     setShowAddForm(false);
+  }
+
+  async function handleQuickZoneChange(roomId: string, zoneId: string) {
+    setListError(null);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("rooms")
+      .update({ zone_id: zoneId || null })
+      .eq("id", roomId)
+      .select(ROOM_COLUMNS)
+      .single<RoomRow>();
+    if (error) {
+      setListError(error.message);
+      return;
+    }
+    setRooms((prev) => prev.map((room) => (room.id === roomId ? data : room)));
+  }
+
+  async function handleAddZone() {
+    if (newZoneName.trim() === "") return;
+    setZoneSaving(true);
+    setZoneError(null);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("zones")
+      .insert({
+        project_id: projectId,
+        name: newZoneName.trim(),
+        ahu_label: toNullableString(newZoneAhuLabel),
+      })
+      .select(ZONE_COLUMNS)
+      .single<ManualJZone>();
+    setZoneSaving(false);
+    if (error) {
+      setZoneError(error.message);
+      return;
+    }
+    setZones((prev) => [...prev, data]);
+    setNewZoneName("");
+    setNewZoneAhuLabel("");
+  }
+
+  async function handleRenameZone(zoneId: string, name: string, ahuLabel: string) {
+    setZoneError(null);
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("zones")
+      .update({ name, ahu_label: toNullableString(ahuLabel) })
+      .eq("id", zoneId)
+      .select(ZONE_COLUMNS)
+      .single<ManualJZone>();
+    if (error) {
+      setZoneError(error.message);
+      return;
+    }
+    setZones((prev) => prev.map((zone) => (zone.id === zoneId ? data : zone)));
+  }
+
+  async function handleDeleteZone(zoneId: string) {
+    const roomsInZone = rooms.filter((room) => room.zone_id === zoneId).length;
+    const confirmMsg =
+      roomsInZone > 0
+        ? `Delete this zone? ${roomsInZone} room(s) currently assigned to it will become Unassigned, not deleted.`
+        : "Delete this zone?";
+    if (!window.confirm(confirmMsg)) return;
+    setZoneError(null);
+    const supabase = createClient();
+    const { error } = await supabase.from("zones").delete().eq("id", zoneId);
+    if (error) {
+      setZoneError(error.message);
+      return;
+    }
+    setZones((prev) => prev.filter((zone) => zone.id !== zoneId));
+    // zone_id on rooms is `on delete set null` at the DB level, but the
+    // client-side rooms state won't know that happened without a refetch -
+    // update it locally so the UI (and the next calc) reflects it
+    // immediately rather than showing a stale zone assignment.
+    setRooms((prev) =>
+      prev.map((room) => (room.zone_id === zoneId ? { ...room, zone_id: null } : room)),
+    );
   }
 
   async function handleUpdateRoom(id: string, values: RoomFormValues) {
@@ -361,10 +469,15 @@ export const ManualJWorkflow = forwardRef<
       let roomsCreated = 0;
       if (rooms.length === 0 && extractedRooms.length > 0) {
         const supabase = createClient();
+        // Rooms created from a drawing extraction default to the project's
+        // first zone too, same as rooms added one at a time via
+        // handleAddRoom.
+        const defaultZoneId = zones.length > 0 ? zones[0].id : null;
         const payloads = extractedRooms.map((room) => ({
           project_id: projectId,
           name: room.name || "Untitled room",
           level: "single_story",
+          zone_id: defaultZoneId,
           floor_area_sqft: room.floor_area_sqft,
           ceiling_height_ft: null,
           ceiling_exposed: false,
@@ -532,6 +645,66 @@ export const ManualJWorkflow = forwardRef<
         </div>
       </section>
 
+      <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
+        <h2 className="mb-4 text-lg font-semibold text-zinc-100">Zones</h2>
+
+        {zoneError && (
+          <p className="mb-4 text-sm text-red-400" role="alert">
+            {zoneError}
+          </p>
+        )}
+
+        {zones.length === 0 ? (
+          <p className="mb-4 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4 text-center text-sm text-zinc-400">
+            No zones yet.
+          </p>
+        ) : (
+          <ul className="mb-4 space-y-2">
+            {zones.map((zone) => (
+              <ZoneRow
+                key={zone.id}
+                zone={zone}
+                roomCount={rooms.filter((room) => room.zone_id === zone.id).length}
+                onRename={(name, ahuLabel) => handleRenameZone(zone.id, name, ahuLabel)}
+                onDelete={() => handleDeleteZone(zone.id)}
+              />
+            ))}
+          </ul>
+        )}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-zinc-400">Zone name</label>
+            <input
+              type="text"
+              placeholder="Zone 2 - Upstairs AHU"
+              value={newZoneName}
+              onChange={(e) => setNewZoneName(e.target.value)}
+              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-zinc-400">
+              AHU label (optional)
+            </label>
+            <input
+              type="text"
+              placeholder="AHU-2"
+              value={newZoneAhuLabel}
+              onChange={(e) => setNewZoneAhuLabel(e.target.value)}
+              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+            />
+          </div>
+          <button
+            onClick={handleAddZone}
+            disabled={zoneSaving || newZoneName.trim() === ""}
+            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+          >
+            {zoneSaving ? "Adding…" : "Add Zone"}
+          </button>
+        </div>
+      </section>
+
       <section
         ref={roomsSectionRef}
         className="scroll-mt-6 rounded-lg border border-zinc-800 bg-zinc-950 p-6"
@@ -565,6 +738,7 @@ export const ManualJWorkflow = forwardRef<
               onSubmit={handleAddRoom}
               onCancel={() => setShowAddForm(false)}
               roomTypeDefaults={roomTypeDefaults}
+              zones={zones}
             />
           </div>
         )}
@@ -586,6 +760,7 @@ export const ManualJWorkflow = forwardRef<
                     onSubmit={(values) => handleUpdateRoom(room.id, values)}
                     onCancel={() => setEditingRoomId(null)}
                     roomTypeDefaults={roomTypeDefaults}
+                    zones={zones}
                   />
                 </li>
               ) : (
@@ -606,7 +781,19 @@ export const ManualJWorkflow = forwardRef<
                       {levelLabel(room.level)} · {room.floor_area_sqft ?? "—"} sqft
                     </p>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={room.zone_id ?? ""}
+                      onChange={(e) => handleQuickZoneChange(room.id, e.target.value)}
+                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-300 outline-none focus:border-amber-500"
+                    >
+                      <option value="">Unassigned</option>
+                      {zones.map((zone) => (
+                        <option key={zone.id} value={zone.id}>
+                          {zone.name}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       onClick={() => {
                         setEditingRoomId(room.id);
@@ -726,6 +913,53 @@ export const ManualJWorkflow = forwardRef<
           </div>
         )}
       </section>
+
+      {canCalculate && results && results.zones.length > 0 && (
+        <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
+          <h2 className="mb-4 text-lg font-semibold text-zinc-100">Zone Summary</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
+                  <th className="py-2 pr-4">Zone</th>
+                  <th className="py-2 pr-4 text-right">Heating BTU/hr</th>
+                  <th className="py-2 pr-4 text-right">Cooling Sensible</th>
+                  <th className="py-2 pr-4 text-right">Cooling Latent</th>
+                  <th className="py-2 text-right">Cooling Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {results.zones.map((zone) => (
+                  <tr key={zone.zoneId ?? "unassigned"} className="border-b border-zinc-900">
+                    <td className="py-2 pr-4 text-zinc-100">
+                      {zone.zoneName}
+                      {zone.zoneId === null && (
+                        <span className="ml-2 rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500">
+                          No zone assigned
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4 text-right text-zinc-300">{fmt(zone.heatingBtuh)}</td>
+                    <td className="py-2 pr-4 text-right text-zinc-300">
+                      {fmt(zone.coolingSensibleBtuh)}
+                    </td>
+                    <td className="py-2 pr-4 text-right text-zinc-300">
+                      {fmt(zone.coolingLatentBtuh)}
+                    </td>
+                    <td className="py-2 text-right text-zinc-300">{fmt(zone.coolingTotalBtuh)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-3 text-xs text-zinc-500">
+            Each zone's ventilation (ASHRAE 62.2) is computed from that zone's own bedroom
+            count and floor area, then summed for the whole-project total above — matching
+            how the reference report computes ventilation per AHU rather than once for the
+            whole house.
+          </p>
+        </section>
+      )}
     </div>
   );
 });
@@ -805,5 +1039,89 @@ function EnvelopeSelectField({
         ))}
       </select>
     </div>
+  );
+}
+
+function ZoneRow({
+  zone,
+  roomCount,
+  onRename,
+  onDelete,
+}: {
+  zone: ManualJZone;
+  roomCount: number;
+  onRename: (name: string, ahuLabel: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(zone.name);
+  const [ahuLabel, setAhuLabel] = useState(zone.ahu_label ?? "");
+
+  if (editing) {
+    return (
+      <li className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          className="w-48 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+        />
+        <input
+          type="text"
+          placeholder="AHU label"
+          value={ahuLabel}
+          onChange={(e) => setAhuLabel(e.target.value)}
+          className="w-28 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+        />
+        <button
+          onClick={() => {
+            onRename(name, ahuLabel);
+            setEditing(false);
+          }}
+          disabled={name.trim() === ""}
+          className="rounded-md bg-amber-500 px-3 py-1.5 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+        >
+          Save
+        </button>
+        <button
+          onClick={() => {
+            setName(zone.name);
+            setAhuLabel(zone.ahu_label ?? "");
+            setEditing(false);
+          }}
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500"
+        >
+          Cancel
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3">
+      <div>
+        <p className="font-medium text-zinc-100">
+          {zone.name}
+          {zone.ahu_label && <span className="ml-2 text-sm text-zinc-400">({zone.ahu_label})</span>}
+        </p>
+        <p className="text-sm text-zinc-400">
+          {roomCount} room{roomCount === 1 ? "" : "s"}
+        </p>
+      </div>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setEditing(true)}
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+        >
+          Rename
+        </button>
+        <button
+          onClick={onDelete}
+          className="rounded-md border border-red-900 px-3 py-1.5 text-sm text-red-400 transition hover:border-red-700 hover:text-red-300"
+        >
+          Delete
+        </button>
+      </div>
+    </li>
   );
 }

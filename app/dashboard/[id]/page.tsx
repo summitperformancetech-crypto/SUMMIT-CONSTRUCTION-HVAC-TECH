@@ -3,7 +3,12 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import type { RoomRow } from "@/components/manual-j-workflow";
-import type { AtticConstructionType, ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
+import type {
+  AtticConstructionType,
+  ManualJEnvelope,
+  ManualJZone,
+  RoomTypeDefault,
+} from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
 import { resolveCounty } from "@/lib/countyLookup";
 import {
@@ -38,7 +43,9 @@ type Project = {
 };
 
 const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+
+const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
 
 type ClimateZoneReference = {
   state: string;
@@ -123,6 +130,13 @@ export default async function ProjectDetailPage({
     .eq("project_id", project.id)
     .order("created_at", { ascending: false })
     .returns<DrawingRow[]>();
+
+  const { data: zones } = await supabase
+    .from("zones")
+    .select(ZONE_COLUMNS)
+    .eq("project_id", project.id)
+    .order("created_at", { ascending: true })
+    .returns<ManualJZone[]>();
 
   const { data: roomTypeDefaults } = await supabase
     .from("room_type_defaults")
@@ -230,6 +244,7 @@ export default async function ProjectDetailPage({
         summerDesignTempF={climateZone?.summer_design_temp_f ?? null}
         roomTypeDefaults={roomTypeDefaults ?? []}
         initialFieldResolutions={fieldResolutions ?? []}
+        initialZones={zones ?? []}
       />
     </div>
   );

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
-import type { RoomTypeDefault } from "@/lib/manualJ";
+import type { ManualJZone, RoomTypeDefault } from "@/lib/manualJ";
 
 export type RoomFormValues = {
   name: string;
@@ -12,6 +12,7 @@ export type RoomFormValues = {
   floor_exposed: boolean;
   is_conditioned: boolean;
   is_bedroom: boolean;
+  zone_id: string;
   room_type: string;
   occupant_count: string;
   sensible_gain_override: string;
@@ -82,6 +83,7 @@ export const EMPTY_ROOM_FORM: RoomFormValues = {
   floor_exposed: false,
   is_conditioned: true,
   is_bedroom: false,
+  zone_id: "",
   room_type: "",
   occupant_count: "",
   sensible_gain_override: "",
@@ -109,12 +111,14 @@ export function RoomForm({
   onCancel,
   submitLabel,
   roomTypeDefaults,
+  zones,
 }: {
   initialValues: RoomFormValues;
   onSubmit: (values: RoomFormValues) => Promise<void>;
   onCancel: () => void;
   submitLabel: string;
   roomTypeDefaults: RoomTypeDefault[];
+  zones: ManualJZone[];
 }) {
   const [values, setValues] = useState(initialValues);
   const [saving, setSaving] = useState(false);
@@ -185,6 +189,21 @@ export function RoomForm({
           value={values.level}
           onChange={(v) => update("level", v)}
           options={ROOM_LEVEL_OPTIONS}
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <SelectField
+          label="Zone / AHU"
+          value={values.zone_id}
+          onChange={(v) => update("zone_id", v)}
+          options={[
+            { value: "", label: "Unassigned" },
+            ...zones.map((zone) => ({
+              value: zone.id,
+              label: zone.ahu_label ? `${zone.name} (${zone.ahu_label})` : zone.name,
+            })),
+          ]}
         />
       </div>
 

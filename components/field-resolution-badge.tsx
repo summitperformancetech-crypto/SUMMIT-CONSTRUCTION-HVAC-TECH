@@ -49,6 +49,11 @@ export function FieldResolutionBadge({
     );
   }
 
+  // A null/empty AI value means extraction found nothing usable (e.g. no
+  // R-value was labeled on the drawing) - that's a hard failure, not a
+  // low-confidence guess, so "Accept AI Value" must not be offered. Only
+  // manual entry via Override is valid here.
+  const hasAiValue = aiExtractedValue != null && aiExtractedValue.trim() !== "";
   const valueDiffers = draftValue.trim() !== (aiExtractedValue ?? "").trim();
 
   async function save(type: "accepted" | "overridden") {
@@ -104,7 +109,9 @@ export function FieldResolutionBadge({
         <div className="absolute right-0 top-6 z-10 w-72 space-y-3 rounded-md border border-zinc-700 bg-zinc-900 p-3 text-left shadow-lg">
           <div>
             <p className="text-xs text-zinc-400">AI-extracted value</p>
-            <p className="text-sm text-zinc-100">{aiExtractedValue || "(none)"}</p>
+            <p className="text-sm text-zinc-100">
+              {hasAiValue ? aiExtractedValue : "(none — extraction found no usable value)"}
+            </p>
           </div>
           <div>
             <label className="mb-1 block text-xs text-zinc-400">Value</label>
@@ -132,8 +139,9 @@ export function FieldResolutionBadge({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || !hasAiValue}
               onClick={() => save("accepted")}
+              title={!hasAiValue ? "No AI value was extracted — enter one manually and use Override" : undefined}
               className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-amber-400 disabled:opacity-40"
             >
               Accept AI Value

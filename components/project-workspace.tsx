@@ -8,8 +8,9 @@ import {
   type ManualJWorkflowHandle,
   type RoomRow,
 } from "@/components/manual-j-workflow";
-import type { ManualJEnvelope } from "@/lib/manualJ";
+import type { ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
 import type { DrawingRow } from "@/lib/drawingExtraction";
+import type { FieldResolution } from "@/lib/fieldResolutions";
 
 export function ProjectWorkspace({
   projectId,
@@ -18,8 +19,10 @@ export function ProjectWorkspace({
   initialAtticInsulationType,
   initialRooms,
   initialDrawings,
+  initialFieldResolutions,
   winterDesignTempF,
   summerDesignTempF,
+  roomTypeDefaults,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -27,8 +30,10 @@ export function ProjectWorkspace({
   initialAtticInsulationType: string | null;
   initialRooms: RoomRow[];
   initialDrawings: DrawingRow[];
+  initialFieldResolutions: FieldResolution[];
   winterDesignTempF: number | null;
   summerDesignTempF: number | null;
+  roomTypeDefaults: RoomTypeDefault[];
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -48,6 +53,7 @@ export function ProjectWorkspace({
           <DrawingsSection
             projectId={projectId}
             initialDrawings={initialDrawings}
+            initialFieldResolutions={initialFieldResolutions}
             onApply={(envelope, rooms) =>
               manualJRef.current?.applyExtractedData(envelope, rooms) ??
               Promise.resolve({ appliedEnvelope: false, roomsCreated: 0 })
@@ -64,6 +70,7 @@ export function ProjectWorkspace({
         initialRooms={initialRooms}
         winterDesignTempF={winterDesignTempF}
         summerDesignTempF={summerDesignTempF}
+        roomTypeDefaults={roomTypeDefaults}
       />
     </>
   );

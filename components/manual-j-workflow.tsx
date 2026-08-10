@@ -13,6 +13,7 @@ import {
   type AtticConstructionType,
   type ManualJEnvelope,
   type ManualJRoom,
+  type RoomTypeDefault,
   type WallExposureType,
 } from "@/lib/manualJ";
 import type { ExtractedRoom } from "@/lib/drawingExtraction";
@@ -47,6 +48,7 @@ type EnvelopeFormValues = {
   floor_insulation_r_value: string;
   window_u_value: string;
   window_shgc: string;
+  door_u_value: string;
   ach50: string;
   indoor_design_temp_heating_f: string;
   indoor_design_temp_cooling_f: string;
@@ -56,7 +58,7 @@ type EnvelopeFormValues = {
 };
 
 const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
 
 // The only Building Envelope fields a drawing extraction is allowed to fill.
 // ACH50, occupants, and indoor design temps are never populated from a drawing.
@@ -106,6 +108,7 @@ function envelopeToForm(
     floor_insulation_r_value: envelope.floor_insulation_r_value?.toString() ?? "",
     window_u_value: envelope.window_u_value?.toString() ?? "",
     window_shgc: envelope.window_shgc?.toString() ?? "",
+    door_u_value: envelope.door_u_value?.toString() ?? "",
     ach50: envelope.ach50?.toString() ?? "",
     indoor_design_temp_heating_f: envelope.indoor_design_temp_heating_f.toString(),
     indoor_design_temp_cooling_f: envelope.indoor_design_temp_cooling_f.toString(),
@@ -122,6 +125,7 @@ function formToEnvelope(form: EnvelopeFormValues): ManualJEnvelope {
     floor_insulation_r_value: toNullableNumber(form.floor_insulation_r_value),
     window_u_value: toNullableNumber(form.window_u_value),
     window_shgc: toNullableNumber(form.window_shgc),
+    door_u_value: toNullableNumber(form.door_u_value),
     ach50: toNullableNumber(form.ach50),
     indoor_design_temp_heating_f: toNumber(form.indoor_design_temp_heating_f, 70),
     indoor_design_temp_cooling_f: toNumber(form.indoor_design_temp_cooling_f, 75),
@@ -139,6 +143,11 @@ function roomToForm(room: RoomRow): RoomFormValues {
     ceiling_exposed: room.ceiling_exposed,
     floor_exposed: room.floor_exposed,
     is_conditioned: room.is_conditioned,
+    is_bedroom: room.is_bedroom,
+    room_type: room.room_type ?? "",
+    occupant_count: room.occupant_count?.toString() ?? "",
+    sensible_gain_override: room.sensible_gain_override?.toString() ?? "",
+    latent_gain_override: room.latent_gain_override?.toString() ?? "",
     wall_north_len_ft: room.wall_north_len_ft?.toString() ?? "",
     wall_south_len_ft: room.wall_south_len_ft?.toString() ?? "",
     wall_east_len_ft: room.wall_east_len_ft?.toString() ?? "",
@@ -164,6 +173,11 @@ function formToRoomPayload(values: RoomFormValues) {
     ceiling_exposed: values.ceiling_exposed,
     floor_exposed: values.floor_exposed,
     is_conditioned: values.is_conditioned,
+    is_bedroom: values.is_bedroom,
+    room_type: toNullableString(values.room_type),
+    occupant_count: toNullableNumber(values.occupant_count),
+    sensible_gain_override: toNullableNumber(values.sensible_gain_override),
+    latent_gain_override: toNullableNumber(values.latent_gain_override),
     wall_north_len_ft: toNullableNumber(values.wall_north_len_ft),
     wall_south_len_ft: toNullableNumber(values.wall_south_len_ft),
     wall_east_len_ft: toNullableNumber(values.wall_east_len_ft),
@@ -197,6 +211,7 @@ export const ManualJWorkflow = forwardRef<
     initialAtticInsulationType: string | null;
     winterDesignTempF: number | null;
     summerDesignTempF: number | null;
+    roomTypeDefaults: RoomTypeDefault[];
   }
 >(function ManualJWorkflow(
   {
@@ -206,6 +221,7 @@ export const ManualJWorkflow = forwardRef<
     initialAtticInsulationType,
     winterDesignTempF,
     summerDesignTempF,
+    roomTypeDefaults,
   },
   ref,
 ) {
@@ -232,8 +248,8 @@ export const ManualJWorkflow = forwardRef<
 
   const results = useMemo(() => {
     if (!canCalculate) return null;
-    return computeManualJ(rooms, envelope, winterDesignTempF!, summerDesignTempF!);
-  }, [rooms, envelope, winterDesignTempF, summerDesignTempF, canCalculate]);
+    return computeManualJ(rooms, envelope, winterDesignTempF!, summerDesignTempF!, roomTypeDefaults);
+  }, [rooms, envelope, winterDesignTempF, summerDesignTempF, canCalculate, roomTypeDefaults]);
 
   function updateEnvelopeField<K extends keyof EnvelopeFormValues>(
     key: K,
@@ -332,6 +348,14 @@ export const ManualJWorkflow = forwardRef<
           ceiling_height_ft: null,
           ceiling_exposed: false,
           floor_exposed: false,
+          // Bedroom status/room type/occupants are never inferred from a
+          // drawing extraction, same as indoor design temps - a tech
+          // confirms them.
+          is_bedroom: false,
+          room_type: null,
+          occupant_count: null,
+          sensible_gain_override: null,
+          latent_gain_override: null,
           wall_north_len_ft: room.wall_north_len_ft,
           wall_south_len_ft: room.wall_south_len_ft,
           wall_east_len_ft: room.wall_east_len_ft,
@@ -399,6 +423,11 @@ export const ManualJWorkflow = forwardRef<
             onChange={(v) => updateEnvelopeField("window_shgc", v)}
           />
           <EnvelopeField
+            label="Door U-value"
+            value={envelopeForm.door_u_value}
+            onChange={(v) => updateEnvelopeField("door_u_value", v)}
+          />
+          <EnvelopeField
             label="ACH50 (infiltration)"
             value={envelopeForm.ach50}
             onChange={(v) => updateEnvelopeField("ach50", v)}
@@ -418,11 +447,16 @@ export const ManualJWorkflow = forwardRef<
             }
           />
           <EnvelopeField
-            label="Occupants"
+            label="Occupants (unused)"
             value={envelopeForm.occupants}
             onChange={(v) => updateEnvelopeField("occupants", v)}
           />
         </div>
+        <p className="mt-2 text-xs text-zinc-500">
+          &quot;Occupants&quot; above no longer feeds the load calculation — internal gains
+          are now computed per room from Room Type + Occupants on each room below. This
+          field is kept only for older saved data.
+        </p>
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <EnvelopeSelectField
@@ -500,6 +534,7 @@ export const ManualJWorkflow = forwardRef<
               submitLabel="Add Room"
               onSubmit={handleAddRoom}
               onCancel={() => setShowAddForm(false)}
+              roomTypeDefaults={roomTypeDefaults}
             />
           </div>
         )}
@@ -520,6 +555,7 @@ export const ManualJWorkflow = forwardRef<
                     submitLabel="Save Room"
                     onSubmit={(values) => handleUpdateRoom(room.id, values)}
                     onCancel={() => setEditingRoomId(null)}
+                    roomTypeDefaults={roomTypeDefaults}
                   />
                 </li>
               ) : (
@@ -637,6 +673,26 @@ export const ManualJWorkflow = forwardRef<
                 </tr>
               </tfoot>
             </table>
+            <p className="mt-3 text-xs text-zinc-500">
+              Of which, doors: {fmt(results.wholeHouse.doorHeatingBtuh)} Btuh heating /{" "}
+              {fmt(results.wholeHouse.doorCoolingBtuh)} Btuh cooling (already included in
+              the totals above, at U-value {envelopeForm.door_u_value || "0.35 (default)"}).
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Of which, ASHRAE 62.2 ventilation: {fmt(results.wholeHouse.ventilationCfm)} CFM
+              → {fmt(results.wholeHouse.ventilationHeatingBtuh)} Btuh heating /{" "}
+              {fmt(results.wholeHouse.ventilationCoolingSensibleBtuh)} Btuh cooling sensible /{" "}
+              {fmt(results.wholeHouse.ventilationCoolingLatentBtuh)} Btuh cooling latent
+              (already included in the totals above; uncredited for infiltration — see
+              lib/manualJ.ts).
+            </p>
+            <p className="mt-1 text-xs text-zinc-500">
+              Of which, internal gains (occupants + appliances):{" "}
+              {fmt(results.wholeHouse.internalGainsSensibleBtuh)} Btuh cooling sensible /{" "}
+              {fmt(results.wholeHouse.internalGainsLatentBtuh)} Btuh cooling latent (already
+              included in the totals above; heating unaffected, per-room breakdown on each
+              room below).
+            </p>
           </div>
         )}
       </section>

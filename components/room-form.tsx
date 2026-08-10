@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
+import type { RoomTypeDefault } from "@/lib/manualJ";
 
 export type RoomFormValues = {
   name: string;
@@ -10,6 +11,11 @@ export type RoomFormValues = {
   ceiling_exposed: boolean;
   floor_exposed: boolean;
   is_conditioned: boolean;
+  is_bedroom: boolean;
+  room_type: string;
+  occupant_count: string;
+  sensible_gain_override: string;
+  latent_gain_override: string;
   wall_north_len_ft: string;
   wall_south_len_ft: string;
   wall_east_len_ft: string;
@@ -33,6 +39,21 @@ export const ROOM_LEVEL_OPTIONS = [
   { value: "walkout_basement", label: "Walkout basement" },
 ] as const;
 
+export const ROOM_TYPE_OPTIONS = [
+  { value: "", label: "—" },
+  { value: "Bedroom", label: "Bedroom" },
+  { value: "Living", label: "Living" },
+  { value: "Kitchen", label: "Kitchen" },
+  { value: "Bath", label: "Bath" },
+  { value: "Dining", label: "Dining" },
+  { value: "Family", label: "Family" },
+  { value: "Office", label: "Office" },
+  { value: "Garage", label: "Garage" },
+  { value: "Utility", label: "Utility" },
+  { value: "Hallway", label: "Hallway" },
+  { value: "Other", label: "Other" },
+] as const;
+
 export const WALL_EXPOSURE_OPTIONS = [
   { value: "exterior", label: "Exterior (outside air)" },
   { value: "adjacent_unconditioned", label: "Adjacent to unconditioned space" },
@@ -47,6 +68,11 @@ export const EMPTY_ROOM_FORM: RoomFormValues = {
   ceiling_exposed: false,
   floor_exposed: false,
   is_conditioned: true,
+  is_bedroom: false,
+  room_type: "",
+  occupant_count: "",
+  sensible_gain_override: "",
+  latent_gain_override: "",
   wall_north_len_ft: "",
   wall_south_len_ft: "",
   wall_east_len_ft: "",
@@ -67,15 +93,45 @@ export function RoomForm({
   onSubmit,
   onCancel,
   submitLabel,
+  roomTypeDefaults,
 }: {
   initialValues: RoomFormValues;
   onSubmit: (values: RoomFormValues) => Promise<void>;
   onCancel: () => void;
   submitLabel: string;
+  roomTypeDefaults: RoomTypeDefault[];
 }) {
   const [values, setValues] = useState(initialValues);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Mirrors computeInternalGains in lib/manualJ.ts exactly, so this preview
+  // always matches what the calc engine will actually produce.
+  const typeDefault = roomTypeDefaults.find((d) => d.room_type === values.room_type);
+  const previewOccupants =
+    values.occupant_count.trim() !== ""
+      ? Number(values.occupant_count)
+      : (typeDefault?.default_occupants ?? 0);
+  const computedSensible = typeDefault
+    ? previewOccupants * typeDefault.sensible_btu_per_person + typeDefault.appliance_sensible_btu
+    : 0;
+  const computedLatent = typeDefault ? previewOccupants * typeDefault.latent_btu_per_person : 0;
+  const sensibleOverrideSet = values.sensible_gain_override.trim() !== "";
+  const latentOverrideSet = values.latent_gain_override.trim() !== "";
+  const sensiblePreview = sensibleOverrideSet
+    ? Number(values.sensible_gain_override)
+    : computedSensible;
+  const latentPreview = latentOverrideSet ? Number(values.latent_gain_override) : computedLatent;
+  const sensibleSource = sensibleOverrideSet
+    ? "Manual override"
+    : typeDefault
+      ? `Default for ${values.room_type}`
+      : "No gains applied — set room type";
+  const latentSource = latentOverrideSet
+    ? "Manual override"
+    : typeDefault
+      ? `Default for ${values.room_type}`
+      : "No gains applied — set room type";
 
   function update<K extends keyof RoomFormValues>(
     key: K,
@@ -146,6 +202,11 @@ export function RoomForm({
           checked={values.is_conditioned}
           onChange={(v) => update("is_conditioned", v)}
         />
+        <CheckboxField
+          label="This room is a bedroom"
+          checked={values.is_bedroom}
+          onChange={(v) => update("is_bedroom", v)}
+        />
       </div>
       {!values.is_conditioned && (
         <p className="text-xs text-zinc-500">
@@ -154,6 +215,47 @@ export function RoomForm({
           reference them as adjacent unconditioned space.
         </p>
       )}
+      {values.is_conditioned && (
+        <p className="text-xs text-zinc-500">
+          Bedroom count feeds the ASHRAE 62.2 whole-house ventilation requirement
+          (0.03 × conditioned floor area + 7.5 × (bedrooms + 1) CFM) — see the
+          Ventilation line in Manual J Results.
+        </p>
+      )}
+
+      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+        <legend className="px-1 text-sm font-medium text-zinc-300">Internal Gains</legend>
+        <div className="grid grid-cols-2 gap-3">
+          <SelectField
+            label="Room type"
+            value={values.room_type}
+            onChange={(v) => update("room_type", v)}
+            options={ROOM_TYPE_OPTIONS}
+          />
+          <NumberField
+            label={`Occupants (default: ${typeDefault?.default_occupants ?? "—"})`}
+            value={values.occupant_count}
+            onChange={(v) => update("occupant_count", v)}
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <NumberField
+            label="Sensible gain override (Btuh)"
+            value={values.sensible_gain_override}
+            onChange={(v) => update("sensible_gain_override", v)}
+          />
+          <NumberField
+            label="Latent gain override (Btuh)"
+            value={values.latent_gain_override}
+            onChange={(v) => update("latent_gain_override", v)}
+          />
+        </div>
+        <p className="text-xs text-zinc-500">
+          Sensible: <span className="text-zinc-300">{Math.round(sensiblePreview)} Btuh</span> (
+          {sensibleSource}) · Latent:{" "}
+          <span className="text-zinc-300">{Math.round(latentPreview)} Btuh</span> ({latentSource})
+        </p>
+      </fieldset>
 
       <fieldset>
         <legend className="mb-2 text-sm font-medium text-zinc-300">

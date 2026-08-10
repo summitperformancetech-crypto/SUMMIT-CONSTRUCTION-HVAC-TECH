@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, type DragEvent } from "react";
+import { useMemo, useRef, useState, type DragEvent } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   ACCEPTED_DRAWING_MIME_TYPES,
@@ -8,6 +8,12 @@ import {
   type DrawingRow,
   type ExtractedRoom,
 } from "@/lib/drawingExtraction";
+import {
+  latestResolutions,
+  resolutionKey,
+  type FieldResolution,
+} from "@/lib/fieldResolutions";
+import { FieldResolutionBadge } from "@/components/field-resolution-badge";
 import type {
   ApplyExtractedDataResult,
   ExtractableEnvelopeFields,
@@ -28,10 +34,12 @@ const STATUS_CLASS: Record<DrawingRow["extraction_status"], string> = {
 export function DrawingsSection({
   projectId,
   initialDrawings,
+  initialFieldResolutions,
   onApply,
 }: {
   projectId: string;
   initialDrawings: DrawingRow[];
+  initialFieldResolutions: FieldResolution[];
   onApply: (
     envelope: ExtractableEnvelopeFields,
     rooms: ExtractedRoom[],
@@ -44,7 +52,14 @@ export function DrawingsSection({
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const [resolutions, setResolutions] = useState<FieldResolution[]>(initialFieldResolutions);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const resolutionMap = useMemo(() => latestResolutions(resolutions), [resolutions]);
+
+  function handleResolved(resolution: FieldResolution) {
+    setResolutions((prev) => [...prev, resolution]);
+  }
 
   const reviewingDrawing = drawings.find((d) => d.id === reviewingId) ?? null;
 
@@ -148,17 +163,36 @@ export function DrawingsSection({
     }
   }
 
+  // Prefers a resolved final_value over the raw AI-extracted value when one
+  // exists (Section 3 data-integrity requirement) - e.g. a tech overrode a
+  // misread "R-19" to the correct "R-13" via the Unresolved badge before
+  // clicking Apply. Falls back to the raw extracted value when unresolved,
+  // same as before Section 3 existed.
+  function resolvedEnvelopeNumber(fieldName: string, rawValue: number | null): number | null {
+    const resolution = resolutionMap.get(resolutionKey("projects", projectId, fieldName));
+    if (!resolution?.final_value) return rawValue;
+    const parsed = Number(resolution.final_value);
+    return Number.isFinite(parsed) ? parsed : rawValue;
+  }
+
   async function handleApply(drawing: DrawingRow) {
     if (!drawing.extracted_data) return;
     setApplying(true);
     setApplyMessage(null);
 
     const envelope: ExtractableEnvelopeFields = {
-      wall_insulation_r_value: drawing.extracted_data.building_envelope.wall_insulation_r_value.value,
-      ceiling_insulation_r_value:
+      wall_insulation_r_value: resolvedEnvelopeNumber(
+        "wall_insulation_r_value",
+        drawing.extracted_data.building_envelope.wall_insulation_r_value.value,
+      ),
+      ceiling_insulation_r_value: resolvedEnvelopeNumber(
+        "ceiling_insulation_r_value",
         drawing.extracted_data.building_envelope.ceiling_insulation_r_value.value,
-      floor_insulation_r_value:
+      ),
+      floor_insulation_r_value: resolvedEnvelopeNumber(
+        "floor_insulation_r_value",
         drawing.extracted_data.building_envelope.floor_insulation_r_value.value,
+      ),
     };
 
     const result = await onApply(envelope, drawing.extracted_data.rooms);
@@ -266,10 +300,13 @@ export function DrawingsSection({
 
       {reviewingDrawing?.extracted_data && (
         <ReviewPanel
+          projectId={projectId}
           drawing={reviewingDrawing}
           applying={applying}
           applyMessage={applyMessage}
           onApply={() => handleApply(reviewingDrawing)}
+          resolutionMap={resolutionMap}
+          onResolved={handleResolved}
         />
       )}
     </section>
@@ -277,15 +314,21 @@ export function DrawingsSection({
 }
 
 function ReviewPanel({
+  projectId,
   drawing,
   applying,
   applyMessage,
   onApply,
+  resolutionMap,
+  onResolved,
 }: {
+  projectId: string;
   drawing: DrawingRow;
   applying: boolean;
   applyMessage: string | null;
   onApply: () => void;
+  resolutionMap: Map<string, FieldResolution>;
+  onResolved: (resolution: FieldResolution) => void;
 }) {
   const data = drawing.extracted_data!;
   const envelope = data.building_envelope;
@@ -316,13 +359,61 @@ function ReviewPanel({
       <div>
         <h3 className="mb-2 text-sm font-semibold text-zinc-100">Building Envelope</h3>
         <dl className="space-y-2 text-sm">
-          <FieldRow label="Wall insulation (R)" field={envelope.wall_insulation_r_value} />
-          <FieldRow label="Ceiling insulation (R)" field={envelope.ceiling_insulation_r_value} />
-          <FieldRow label="Floor insulation (R)" field={envelope.floor_insulation_r_value} />
-          <FieldRow label="Window type" field={envelope.window_type} />
-          <FieldRow label="Window count" field={envelope.window_count} />
-          <FieldRow label="Foundation type" field={envelope.foundation_type} />
+          <FieldRow
+            label="Wall insulation (R)"
+            field={envelope.wall_insulation_r_value}
+            projectId={projectId}
+            fieldName="wall_insulation_r_value"
+            resolutionMap={resolutionMap}
+            onResolved={onResolved}
+          />
+          <FieldRow
+            label="Ceiling insulation (R)"
+            field={envelope.ceiling_insulation_r_value}
+            projectId={projectId}
+            fieldName="ceiling_insulation_r_value"
+            resolutionMap={resolutionMap}
+            onResolved={onResolved}
+          />
+          <FieldRow
+            label="Floor insulation (R)"
+            field={envelope.floor_insulation_r_value}
+            projectId={projectId}
+            fieldName="floor_insulation_r_value"
+            resolutionMap={resolutionMap}
+            onResolved={onResolved}
+          />
+          <FieldRow
+            label="Window type"
+            field={envelope.window_type}
+            projectId={projectId}
+            fieldName="window_type"
+            resolutionMap={resolutionMap}
+            onResolved={onResolved}
+          />
+          <FieldRow
+            label="Window count"
+            field={envelope.window_count}
+            projectId={projectId}
+            fieldName="window_count"
+            resolutionMap={resolutionMap}
+            onResolved={onResolved}
+          />
+          <FieldRow
+            label="Foundation type"
+            field={envelope.foundation_type}
+            projectId={projectId}
+            fieldName="foundation_type"
+            resolutionMap={resolutionMap}
+            onResolved={onResolved}
+          />
         </dl>
+        <p className="mt-2 text-xs text-zinc-500">
+          Window type, window count, and foundation type are extracted and shown here for
+          reference, but — unlike the three R-values above — are not currently copied to any
+          project field by &quot;Apply to Form&quot;. Resolving them here creates an audit
+          record but does not yet change any other value in the app.
+        </p>
       </div>
 
       <div>
@@ -340,7 +431,19 @@ function ReviewPanel({
               >
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-zinc-100">{room.name}</span>
-                  {room.unresolved && <UnresolvedBadge />}
+                  {room.unresolved && (
+                    <FieldResolutionBadge
+                      projectId={projectId}
+                      tableName="drawings"
+                      recordId={drawing.id}
+                      fieldName={`room[${index}]`}
+                      aiExtractedValue={room.reason}
+                      resolution={resolutionMap.get(
+                        resolutionKey("drawings", drawing.id, `room[${index}]`),
+                      )}
+                      onResolved={onResolved}
+                    />
+                  )}
                 </div>
                 <p className="mt-1 text-xs text-zinc-500">
                   {room.floor_area_sqft != null ? `${room.floor_area_sqft} sqft` : "area unknown"}
@@ -390,25 +493,35 @@ function ReviewPanel({
 function FieldRow({
   label,
   field,
+  projectId,
+  fieldName,
+  resolutionMap,
+  onResolved,
 }: {
   label: string;
   field: { value: string | number | null; unresolved: boolean };
+  projectId: string;
+  fieldName: string;
+  resolutionMap: Map<string, FieldResolution>;
+  onResolved: (resolution: FieldResolution) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-2">
       <dt className="text-zinc-400">{label}</dt>
       <dd className="flex items-center gap-2 text-right font-medium text-zinc-100">
         {field.value ?? "—"}
-        {field.unresolved && <UnresolvedBadge />}
+        {field.unresolved && (
+          <FieldResolutionBadge
+            projectId={projectId}
+            tableName="projects"
+            recordId={projectId}
+            fieldName={fieldName}
+            aiExtractedValue={field.value != null ? String(field.value) : null}
+            resolution={resolutionMap.get(resolutionKey("projects", projectId, fieldName))}
+            onResolved={onResolved}
+          />
+        )}
       </dd>
     </div>
-  );
-}
-
-function UnresolvedBadge() {
-  return (
-    <span className="rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500">
-      Unresolved
-    </span>
   );
 }

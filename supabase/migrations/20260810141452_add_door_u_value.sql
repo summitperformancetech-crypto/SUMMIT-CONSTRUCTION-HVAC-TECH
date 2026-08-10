@@ -1,0 +1,21 @@
+-- PHASE 1 ONLY: Doors as a distinct load component. door_u_value lives on
+-- projects (not rooms) to stay consistent with every other envelope U/R
+-- value in this schema (wall_insulation_r_value, window_u_value, etc. are
+-- all project-level uniform assumptions applied to every room). door_count
+-- already exists on rooms.
+--
+-- Default 0.35 Btuh/(hr-ft2-F): within the 0.20-0.40 "typical insulated
+-- door" range given for this feature, and consistent with a real ACCA
+-- Manual J report reviewed for this work, where reverse-calculating the
+-- Doors heating row (648 Btuh / 34 F design TD / ~49.5 sqft door area)
+-- implies an as-modeled door U-value of ~0.385. Still a chosen default, not
+-- a measured value for any specific door product - flagged.
+--
+-- This is the doors-only slice of the original bundled
+-- 20260810034611_add_doors_ventilation_ducts_zones_fields.sql migration.
+-- That file was never applied to the live database and still contains the
+-- ventilation/duct/zone/elevation columns for later phases - do not run it
+-- as-is; extract each remaining phase into its own migration when its turn
+-- comes, the same way this one was split out.
+alter table public.projects
+  add column if not exists door_u_value numeric not null default 0.35;

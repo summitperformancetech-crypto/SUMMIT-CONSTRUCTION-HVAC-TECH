@@ -3,9 +3,15 @@ import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import type { RoomRow } from "@/components/manual-j-workflow";
-import type { AtticConstructionType, ManualJEnvelope } from "@/lib/manualJ";
+import type { AtticConstructionType, ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
 import { resolveCounty } from "@/lib/countyLookup";
+import {
+  countUnresolvedFields,
+  resolutionKey,
+  FIELD_RESOLUTION_COLUMNS,
+  type FieldResolution,
+} from "@/lib/fieldResolutions";
 
 type Project = {
   id: string;
@@ -21,6 +27,7 @@ type Project = {
   floor_insulation_r_value: number | null;
   window_u_value: number | null;
   window_shgc: number | null;
+  door_u_value: number | null;
   ach50: number | null;
   indoor_design_temp_heating_f: number;
   indoor_design_temp_cooling_f: number;
@@ -30,7 +37,7 @@ type Project = {
 };
 
 const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
 
 type ClimateZoneReference = {
   state: string;
@@ -66,7 +73,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -116,12 +123,34 @@ export default async function ProjectDetailPage({
     .order("created_at", { ascending: false })
     .returns<DrawingRow[]>();
 
+  const { data: roomTypeDefaults } = await supabase
+    .from("room_type_defaults")
+    .select("room_type, default_occupants, sensible_btu_per_person, latent_btu_per_person, appliance_sensible_btu")
+    .returns<RoomTypeDefault[]>();
+
+  const { data: fieldResolutions } = await supabase
+    .from("field_resolutions")
+    .select(FIELD_RESOLUTION_COLUMNS)
+    .eq("project_id", project.id)
+    .returns<FieldResolution[]>();
+
+  // Count is computed at page-load time from the same drawings data already
+  // fetched above - it will reflect newly-resolved fields on next
+  // navigation/reload, not instantly within an open session (no real-time
+  // subscription wired for this - not asked for, and this app has no
+  // finalize/export feature yet to gate in real time anyway, see below).
+  const resolvedKeys = new Set(
+    (fieldResolutions ?? []).map((r) => resolutionKey(r.table_name, r.record_id, r.field_name)),
+  );
+  const unresolvedFieldCount = countUnresolvedFields(drawings ?? [], resolvedKeys, project.id);
+
   const envelope: ManualJEnvelope = {
     wall_insulation_r_value: project.wall_insulation_r_value,
     ceiling_insulation_r_value: project.ceiling_insulation_r_value,
     floor_insulation_r_value: project.floor_insulation_r_value,
     window_u_value: project.window_u_value,
     window_shgc: project.window_shgc,
+    door_u_value: project.door_u_value,
     ach50: project.ach50,
     indoor_design_temp_heating_f: project.indoor_design_temp_heating_f,
     indoor_design_temp_cooling_f: project.indoor_design_temp_cooling_f,
@@ -141,9 +170,19 @@ export default async function ProjectDetailPage({
       <div className="mb-6 rounded-lg border border-zinc-800 bg-zinc-950 p-6">
         <div className="mb-4 flex items-start justify-between">
           <h1 className="text-xl font-semibold text-zinc-100">{project.name}</h1>
-          <span className="rounded-full border border-amber-500/40 px-3 py-1 text-xs font-medium text-amber-500">
-            {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
-          </span>
+          <div className="flex items-center gap-2">
+            {unresolvedFieldCount > 0 && (
+              <span
+                className="rounded-full border border-amber-500/40 bg-amber-500/5 px-3 py-1 text-xs font-medium text-amber-500"
+                title="AI-extracted fields awaiting review under Drawings below. No finalize/export feature exists yet to block on this — it's visibility only for now."
+              >
+                {unresolvedFieldCount} field{unresolvedFieldCount === 1 ? "" : "s"} need review
+              </span>
+            )}
+            <span className="rounded-full border border-amber-500/40 px-3 py-1 text-xs font-medium text-amber-500">
+              {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
+            </span>
+          </div>
         </div>
         <p className="text-sm text-zinc-400">
           {project.address_line1}, {project.city}, {project.state}{" "}
@@ -187,6 +226,8 @@ export default async function ProjectDetailPage({
         initialDrawings={drawings ?? []}
         winterDesignTempF={climateZone?.winter_design_temp_f ?? null}
         summerDesignTempF={climateZone?.summer_design_temp_f ?? null}
+        roomTypeDefaults={roomTypeDefaults ?? []}
+        initialFieldResolutions={fieldResolutions ?? []}
       />
     </div>
   );

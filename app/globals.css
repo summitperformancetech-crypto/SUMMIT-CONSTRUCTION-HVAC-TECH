@@ -1,22 +1,46 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #080808;
+  --foreground: #dad9d8;
 }
 
+/* Summit brand palette - sampled directly from public/brand/summit-logo.png
+   (not estimated from a description). Values were extracted by scripted
+   pixel sampling: background from the image corners; silver from the
+   SUMMIT wordmark (a brushed-metal texture, hence three tones rather than
+   one flat color); bronze/gold from the tagline + subtitle text; muted
+   grey from the "BUILT ON INTEGRITY..." subtext line.
+
+   brand-bronze and brand-grey are the exact sampled tones - correct for
+   borders, badge fills, icons, and large/heading text (WCAG's 3:1
+   threshold applies there), but both fall short of 4.5:1 against
+   brand-bg when used as normal body/caption text (bronze 3.64:1, grey
+   3.61:1). brand-bronze-text and brand-grey-text are lightness-adjusted
+   variants of the SAME hue (not a different color) tuned to clear 4.5:1
+   specifically for that use case - use them for any actual running text.
+   brand-bronze-hover is a distinct, moderate lightening of brand-bronze
+   for button hover states, chosen so white button text stays >=4.5:1 at
+   both the resting and hover fill (brand-bronze-text was tuned for text-
+   on-background, not background-behind-white-text, and reusing it here
+   would have dropped white-on-hover to ~4.3:1). Silver already clears
+   4.5:1 at its sampled core tone, so it has no separate text variant. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+
+  --color-brand-bg: #080808;
+  --color-brand-silver: #878584;
+  --color-brand-silver-highlight: #dad9d8;
+  --color-brand-silver-shadow: #4e4d4d;
+  --color-brand-bronze: #806443;
+  --color-brand-bronze-hover: #8d6e4a;
+  --color-brand-bronze-text: #94744d;
+  --color-brand-grey: #696868;
+  --color-brand-grey-text: #7a7979;
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {

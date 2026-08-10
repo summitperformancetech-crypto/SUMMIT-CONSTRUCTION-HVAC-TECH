@@ -101,37 +101,37 @@ export function FieldResolutionBadge({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500 transition hover:border-amber-400 hover:bg-amber-500/10"
+        className="rounded-full border border-brand-bronze/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-bronze-text transition hover:border-brand-bronze-hover hover:bg-brand-bronze/10"
       >
         Unresolved
       </button>
       {open && (
         <div className="absolute right-0 top-6 z-10 w-72 space-y-3 rounded-md border border-zinc-700 bg-zinc-900 p-3 text-left shadow-lg">
           <div>
-            <p className="text-xs text-zinc-400">AI-extracted value</p>
-            <p className="text-sm text-zinc-100">
+            <p className="text-xs text-brand-grey-text">AI-extracted value</p>
+            <p className="text-sm text-brand-silver-highlight">
               {hasAiValue ? aiExtractedValue : "(none — extraction found no usable value)"}
             </p>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-zinc-400">Value</label>
+            <label className="mb-1 block text-xs text-brand-grey-text">Value</label>
             <input
               type="text"
               value={draftValue}
               onChange={(e) => setDraftValue(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-amber-500"
+              className="w-full rounded-md border border-zinc-700 bg-brand-bg px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
             />
           </div>
           {valueDiffers && (
             <div>
-              <label className="mb-1 block text-xs text-zinc-400">
+              <label className="mb-1 block text-xs text-brand-grey-text">
                 Override reason (required)
               </label>
               <textarea
                 value={overrideReason}
                 onChange={(e) => setOverrideReason(e.target.value)}
                 rows={2}
-                className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none focus:border-amber-500"
+                className="w-full rounded-md border border-zinc-700 bg-brand-bg px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
               />
             </div>
           )}
@@ -142,7 +142,7 @@ export function FieldResolutionBadge({
               disabled={saving || !hasAiValue}
               onClick={() => save("accepted")}
               title={!hasAiValue ? "No AI value was extracted — enter one manually and use Override" : undefined}
-              className="rounded-md bg-amber-500 px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-amber-400 disabled:opacity-40"
+              className="rounded-md bg-brand-bronze px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-40"
             >
               Accept AI Value
             </button>
@@ -158,7 +158,7 @@ export function FieldResolutionBadge({
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-zinc-400 transition hover:border-zinc-500"
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-brand-grey-text transition hover:border-zinc-500"
             >
               Cancel
             </button>

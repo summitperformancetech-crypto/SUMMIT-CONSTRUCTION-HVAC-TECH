@@ -10,10 +10,10 @@ export default function DashboardLayout({
     <div className="flex min-h-full flex-1 flex-col">
       <header className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
         <Link href="/dashboard" className="flex items-baseline gap-2">
-          <span className="text-lg font-semibold tracking-tight text-zinc-100">
+          <span className="text-lg font-semibold tracking-tight text-brand-silver-highlight">
             Summit
           </span>
-          <span className="hidden text-xs text-amber-500 sm:inline">
+          <span className="hidden text-xs text-brand-bronze-text sm:inline">
             Built on Integrity. Engineered for Excellence.
           </span>
         </Link>

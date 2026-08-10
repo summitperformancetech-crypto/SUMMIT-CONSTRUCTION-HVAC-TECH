@@ -177,36 +177,36 @@ export default async function ProjectDetailPage({
     <div className="mx-auto max-w-3xl">
       <Link
         href="/dashboard"
-        className="mb-6 inline-block text-sm text-zinc-400 transition hover:text-zinc-100"
+        className="mb-6 inline-block text-sm text-brand-grey-text transition hover:text-brand-silver-highlight"
       >
         ← Back to projects
       </Link>
 
-      <div className="mb-6 rounded-lg border border-zinc-800 bg-zinc-950 p-6">
+      <div className="mb-6 rounded-lg border border-zinc-800 bg-brand-bg p-6">
         <div className="mb-4 flex items-start justify-between">
-          <h1 className="text-xl font-semibold text-zinc-100">{project.name}</h1>
+          <h1 className="text-xl font-semibold text-brand-silver-highlight">{project.name}</h1>
           <div className="flex items-center gap-2">
             {unresolvedFieldCount > 0 && (
               <span
-                className="rounded-full border border-amber-500/40 bg-amber-500/5 px-3 py-1 text-xs font-medium text-amber-500"
+                className="rounded-full border border-brand-bronze/40 bg-brand-bronze/5 px-3 py-1 text-xs font-medium text-brand-bronze-text"
                 title="AI-extracted fields awaiting review under Drawings below. No finalize/export feature exists yet to block on this — it's visibility only for now."
               >
                 {unresolvedFieldCount} field{unresolvedFieldCount === 1 ? "" : "s"} need review
               </span>
             )}
-            <span className="rounded-full border border-amber-500/40 px-3 py-1 text-xs font-medium text-amber-500">
+            <span className="rounded-full border border-brand-bronze/40 px-3 py-1 text-xs font-medium text-brand-bronze-text">
               {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
             </span>
           </div>
         </div>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-brand-grey-text">
           {project.address_line1}, {project.city}, {project.state}{" "}
           {project.zip}
         </p>
       </div>
 
-      <div className="mb-6 rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-zinc-100">
+      <div className="mb-6 rounded-lg border border-zinc-800 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">
           Climate Zone
         </h2>
 
@@ -224,7 +224,7 @@ export default async function ProjectDetailPage({
             />
           </dl>
         ) : (
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-brand-grey-text">
             {resolvedCounty
               ? `No climate data found for ${resolvedCounty} County, ${project.state} yet.`
               : `No climate data found for this state yet.`}
@@ -253,8 +253,8 @@ export default async function ProjectDetailPage({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-      <dt className="text-zinc-400">{label}</dt>
-      <dd className="text-right font-medium text-zinc-100">{value}</dd>
+      <dt className="text-brand-grey-text">{label}</dt>
+      <dd className="text-right font-medium text-brand-silver-highlight">{value}</dd>
     </div>
   );
 }

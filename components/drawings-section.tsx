@@ -26,7 +26,7 @@ const STATUS_LABEL: Record<DrawingRow["extraction_status"], string> = {
 };
 
 const STATUS_CLASS: Record<DrawingRow["extraction_status"], string> = {
-  pending: "border-amber-500/40 text-amber-500",
+  pending: "border-brand-bronze/40 text-brand-bronze-text",
   completed: "border-emerald-600/40 text-emerald-400",
   failed: "border-red-800 text-red-400",
 };
@@ -228,8 +228,8 @@ export function DrawingsSection({
   }
 
   return (
-    <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-      <h2 className="mb-4 text-lg font-semibold text-zinc-100">Drawings</h2>
+    <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
+      <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">Drawings</h2>
 
       <div
         onClick={() => fileInputRef.current?.click()}
@@ -243,14 +243,14 @@ export function DrawingsSection({
         tabIndex={0}
         className={`cursor-pointer rounded-lg border-2 border-dashed px-6 py-10 text-center transition ${
           dragActive
-            ? "border-amber-500 bg-amber-500/5"
+            ? "border-brand-bronze bg-brand-bronze/5"
             : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
         }`}
       >
-        <p className="text-sm font-medium text-zinc-200">
+        <p className="text-sm font-medium text-brand-silver-highlight">
           {uploading ? "Uploading…" : "Drag and drop a drawing here, or click to browse"}
         </p>
-        <p className="mt-1 text-xs text-zinc-500">PDF or image files</p>
+        <p className="mt-1 text-xs text-brand-grey-text">PDF or image files</p>
         <input
           ref={fileInputRef}
           type="file"
@@ -280,7 +280,7 @@ export function DrawingsSection({
               className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
             >
               <div>
-                <p className="text-sm font-medium text-zinc-100">{drawing.file_name}</p>
+                <p className="text-sm font-medium text-brand-silver-highlight">{drawing.file_name}</p>
                 {drawing.applied_to_field_data && (
                   <p className="text-xs text-emerald-400">Applied to form</p>
                 )}
@@ -296,7 +296,7 @@ export function DrawingsSection({
                     onClick={() =>
                       setReviewingId((current) => (current === drawing.id ? null : drawing.id))
                     }
-                    className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                    className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
                   >
                     {reviewingId === drawing.id ? "Hide" : "Review"}
                   </button>
@@ -349,7 +349,7 @@ function ReviewPanel({
         className={`rounded-md border px-3 py-2 text-xs ${
           orientation?.detected
             ? "border-emerald-600/40 bg-emerald-950 text-emerald-300"
-            : "border-amber-500/30 bg-amber-500/5 text-amber-200"
+            : "border-brand-bronze/30 bg-brand-bronze/5 text-brand-bronze-text"
         }`}
       >
         {orientation?.detected ? (
@@ -366,7 +366,7 @@ function ReviewPanel({
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-zinc-100">Building Envelope</h3>
+        <h3 className="mb-2 text-sm font-semibold text-brand-silver-highlight">Building Envelope</h3>
         <dl className="space-y-2 text-sm">
           <FieldRow
             label="Wall insulation (R)"
@@ -417,7 +417,7 @@ function ReviewPanel({
             onResolved={onResolved}
           />
         </dl>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-2 text-xs text-brand-grey-text">
           Window type and window count are extracted and shown here for reference, but — unlike
           the three R-values and foundation type above — are not currently copied to any project
           field by &quot;Apply to Form&quot;. Resolving them here creates an audit record but
@@ -427,20 +427,20 @@ function ReviewPanel({
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-zinc-100">
+        <h3 className="mb-2 text-sm font-semibold text-brand-silver-highlight">
           Rooms ({data.rooms.length})
         </h3>
         {data.rooms.length === 0 ? (
-          <p className="text-sm text-zinc-500">No rooms detected.</p>
+          <p className="text-sm text-brand-grey-text">No rooms detected.</p>
         ) : (
           <ul className="space-y-2">
             {data.rooms.map((room, index) => (
               <li
                 key={index}
-                className="rounded-md border border-zinc-800 bg-zinc-950 px-3 py-2 text-sm"
+                className="rounded-md border border-zinc-800 bg-brand-bg px-3 py-2 text-sm"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-zinc-100">{room.name}</span>
+                  <span className="font-medium text-brand-silver-highlight">{room.name}</span>
                   {room.unresolved && (
                     <FieldResolutionBadge
                       projectId={projectId}
@@ -455,7 +455,7 @@ function ReviewPanel({
                     />
                   )}
                 </div>
-                <p className="mt-1 text-xs text-zinc-500">
+                <p className="mt-1 text-xs text-brand-grey-text">
                   {room.floor_area_sqft != null ? `${room.floor_area_sqft} sqft` : "area unknown"}
                   {" · "}
                   {room.door_count != null ? `${room.door_count} door(s)` : "doors unknown"}
@@ -465,10 +465,10 @@ function ReviewPanel({
                     : "windows unknown"}
                 </p>
                 {room.unresolved && room.reason && (
-                  <p className="mt-1 text-xs text-amber-400">{room.reason}</p>
+                  <p className="mt-1 text-xs text-brand-bronze-text">{room.reason}</p>
                 )}
                 <div className="mt-2 flex items-center gap-2 border-t border-zinc-800 pt-2">
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs text-brand-grey-text">
                     Ducts: {room.duct_location?.value ?? "—"}
                     {room.duct_insulation_r_value?.value != null &&
                       ` (R-${room.duct_insulation_r_value.value})`}
@@ -516,7 +516,7 @@ function ReviewPanel({
         )}
       </div>
 
-      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-3 text-xs text-amber-200">
+      <div className="rounded-md border border-brand-bronze/30 bg-brand-bronze/5 px-3 py-3 text-xs text-brand-bronze-text">
         <p className="font-semibold">Always entered manually — never auto-extracted:</p>
         <ul className="mt-1 list-inside list-disc space-y-0.5">
           <li>ACH50 (infiltration)</li>
@@ -529,7 +529,7 @@ function ReviewPanel({
         <button
           onClick={onApply}
           disabled={applying || drawing.applied_to_field_data}
-          className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+          className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
         >
           {applying
             ? "Applying…"
@@ -537,7 +537,7 @@ function ReviewPanel({
               ? "Already applied"
               : "Apply to Form"}
         </button>
-        {applyMessage && <span className="text-sm text-zinc-300">{applyMessage}</span>}
+        {applyMessage && <span className="text-sm text-brand-silver">{applyMessage}</span>}
       </div>
     </div>
   );
@@ -560,8 +560,8 @@ function FieldRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-2">
-      <dt className="text-zinc-400">{label}</dt>
-      <dd className="flex items-center gap-2 text-right font-medium text-zinc-100">
+      <dt className="text-brand-grey-text">{label}</dt>
+      <dd className="flex items-center gap-2 text-right font-medium text-brand-silver-highlight">
         {field.value ?? "—"}
         {field.unresolved && (
           <FieldResolutionBadge

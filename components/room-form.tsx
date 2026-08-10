@@ -243,22 +243,22 @@ export function RoomForm({
         />
       </div>
       {!values.is_conditioned && (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-brand-grey-text">
           Unconditioned rooms (garages, unconditioned attics, etc.) are excluded from
           whole-house Manual J totals but stay in the room list so other rooms can
           reference them as adjacent unconditioned space.
         </p>
       )}
       {values.is_conditioned && (
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-brand-grey-text">
           Bedroom count feeds the ASHRAE 62.2 whole-house ventilation requirement
           (0.03 × conditioned floor area + 7.5 × (bedrooms + 1) CFM) — see the
           Ventilation line in Manual J Results.
         </p>
       )}
 
-      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-zinc-950 p-3">
-        <legend className="px-1 text-sm font-medium text-zinc-300">Internal Gains</legend>
+      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-brand-bg p-3">
+        <legend className="px-1 text-sm font-medium text-brand-silver">Internal Gains</legend>
         <div className="grid grid-cols-2 gap-3">
           <SelectField
             label="Room type"
@@ -284,15 +284,15 @@ export function RoomForm({
             onChange={(v) => update("latent_gain_override", v)}
           />
         </div>
-        <p className="text-xs text-zinc-500">
-          Sensible: <span className="text-zinc-300">{Math.round(sensiblePreview)} Btuh</span> (
+        <p className="text-xs text-brand-grey-text">
+          Sensible: <span className="text-brand-silver">{Math.round(sensiblePreview)} Btuh</span> (
           {sensibleSource}) · Latent:{" "}
-          <span className="text-zinc-300">{Math.round(latentPreview)} Btuh</span> ({latentSource})
+          <span className="text-brand-silver">{Math.round(latentPreview)} Btuh</span> ({latentSource})
         </p>
       </fieldset>
 
-      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-zinc-950 p-3">
-        <legend className="px-1 text-sm font-medium text-zinc-300">Ducts</legend>
+      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-brand-bg p-3">
+        <legend className="px-1 text-sm font-medium text-brand-silver">Ducts</legend>
         <div className="grid grid-cols-2 gap-3">
           <SelectField
             label="Duct location"
@@ -306,14 +306,14 @@ export function RoomForm({
             onChange={(v) => update("duct_insulation_r_value", v)}
           />
         </div>
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-brand-grey-text">
           Saving this form always marks duct data as manually confirmed, overwriting any
           AI-extracted or construction-based default value.
         </p>
       </fieldset>
 
       <fieldset>
-        <legend className="mb-2 text-sm font-medium text-zinc-300">
+        <legend className="mb-2 text-sm font-medium text-brand-silver">
           Wall length and exposure by direction
         </legend>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -349,7 +349,7 @@ export function RoomForm({
       </fieldset>
 
       <fieldset>
-        <legend className="mb-2 text-sm font-medium text-zinc-300">
+        <legend className="mb-2 text-sm font-medium text-brand-silver">
           Window area by exposure (sqft)
         </legend>
         <div className="grid grid-cols-4 gap-3">
@@ -394,14 +394,14 @@ export function RoomForm({
         <button
           type="submit"
           disabled={saving}
-          className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+          className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
         >
           {saving ? "Saving…" : submitLabel}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+          className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
         >
           Cancel
         </button>
@@ -411,7 +411,7 @@ export function RoomForm({
 }
 
 const inputClass =
-  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500";
+  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze";
 
 function TextField({
   label,
@@ -454,7 +454,7 @@ function WallDirectionField({
   onExposureChange: (value: string) => void;
 }) {
   return (
-    <div className="space-y-1.5 rounded-md border border-zinc-800 bg-zinc-950 p-2">
+    <div className="space-y-1.5 rounded-md border border-zinc-800 bg-brand-bg p-2">
       <NumberField label={`${label} length (ft)`} value={lengthValue} onChange={onLengthChange} />
       <SelectField
         label={`${label} exposure`}
@@ -527,12 +527,12 @@ function CheckboxField({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm text-zinc-300">
+    <label className="flex items-center gap-2 text-sm text-brand-silver">
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 accent-amber-500"
+        className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 accent-brand-bronze"
       />
       {label}
     </label>
@@ -542,7 +542,7 @@ function CheckboxField({
 function FieldWrap({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-zinc-400">
+      <label className="mb-1 block text-xs font-medium text-brand-grey-text">
         {label}
       </label>
       {children}

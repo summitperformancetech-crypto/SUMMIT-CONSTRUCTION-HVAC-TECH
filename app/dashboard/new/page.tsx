@@ -88,11 +88,11 @@ export default function NewProjectPage() {
   if (savedProject) {
     return (
       <div className="mx-auto max-w-md">
-        <div className="rounded-lg border border-amber-500/40 bg-zinc-950 p-6">
-          <h1 className="mb-1 text-lg font-semibold text-zinc-100">
+        <div className="rounded-lg border border-brand-bronze/40 bg-brand-bg p-6">
+          <h1 className="mb-1 text-lg font-semibold text-brand-silver-highlight">
             Project created
           </h1>
-          <p className="mb-6 text-sm text-zinc-400">
+          <p className="mb-6 text-sm text-brand-grey-text">
             The following project was saved to Summit.
           </p>
 
@@ -115,7 +115,7 @@ export default function NewProjectPage() {
           <div className="mt-6 flex gap-3">
             <Link
               href="/dashboard"
-              className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
+              className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover"
             >
               Back to dashboard
             </Link>
@@ -124,7 +124,7 @@ export default function NewProjectPage() {
                 setForm(INITIAL_STATE);
                 setSavedProject(null);
               }}
-              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
             >
               Add another
             </button>
@@ -136,11 +136,11 @@ export default function NewProjectPage() {
 
   return (
     <div className="mx-auto max-w-md">
-      <h1 className="mb-6 text-xl font-semibold text-zinc-100">New Project</h1>
+      <h1 className="mb-6 text-xl font-semibold text-brand-silver-highlight">New Project</h1>
 
       <form
         onSubmit={handleSubmit}
-        className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-950 p-6"
+        className="space-y-4 rounded-lg border border-zinc-800 bg-brand-bg p-6"
       >
         <Field label="Project name" htmlFor="name">
           <input
@@ -218,13 +218,13 @@ export default function NewProjectPage() {
           <button
             type="submit"
             disabled={loading}
-            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+            className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
           >
             {loading ? "Saving…" : "Save project"}
           </button>
           <Link
             href="/dashboard"
-            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
           >
             Cancel
           </Link>
@@ -235,7 +235,7 @@ export default function NewProjectPage() {
 }
 
 const inputClass =
-  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500";
+  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze";
 
 function Field({
   label,
@@ -250,7 +250,7 @@ function Field({
 }) {
   return (
     <div className={className}>
-      <label htmlFor={htmlFor} className="mb-1 block text-sm font-medium text-zinc-300">
+      <label htmlFor={htmlFor} className="mb-1 block text-sm font-medium text-brand-silver">
         {label}
       </label>
       {children}
@@ -261,8 +261,8 @@ function Field({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
-      <dt className="text-zinc-400">{label}</dt>
-      <dd className="text-right font-medium text-zinc-100">{value}</dd>
+      <dt className="text-brand-grey-text">{label}</dt>
+      <dd className="text-right font-medium text-brand-silver-highlight">{value}</dd>
     </div>
   );
 }

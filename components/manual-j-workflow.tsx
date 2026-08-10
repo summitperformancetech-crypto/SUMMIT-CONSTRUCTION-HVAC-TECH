@@ -530,8 +530,8 @@ export const ManualJWorkflow = forwardRef<
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-zinc-100">
+      <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">
           Building Envelope
         </h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -595,7 +595,7 @@ export const ManualJWorkflow = forwardRef<
             onChange={(v) => updateEnvelopeField("foundation_type", v)}
           />
         </div>
-        <p className="mt-2 text-xs text-zinc-500">
+        <p className="mt-2 text-xs text-brand-grey-text">
           &quot;Occupants&quot; above no longer feeds the load calculation — internal gains
           are now computed per room from Room Type + Occupants on each room below. This
           field is kept only for older saved data.
@@ -618,7 +618,7 @@ export const ManualJWorkflow = forwardRef<
           )}
         </div>
         {envelopeForm.attic_construction_type === "sealed_conditioned" && (
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-brand-grey-text">
             Sealed attic: the ceiling plane is treated as a buffer space (reduced delta-T),
             not full outdoor exposure, using the same approximation as adjacent-unconditioned
             walls — see lib/manualJ.ts.
@@ -635,7 +635,7 @@ export const ManualJWorkflow = forwardRef<
           <button
             onClick={handleSaveEnvelope}
             disabled={envelopeSaving}
-            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+            className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
           >
             {envelopeSaving ? "Saving…" : "Save Envelope"}
           </button>
@@ -645,8 +645,8 @@ export const ManualJWorkflow = forwardRef<
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-zinc-100">Zones</h2>
+      <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">Zones</h2>
 
         {zoneError && (
           <p className="mb-4 text-sm text-red-400" role="alert">
@@ -655,7 +655,7 @@ export const ManualJWorkflow = forwardRef<
         )}
 
         {zones.length === 0 ? (
-          <p className="mb-4 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4 text-center text-sm text-zinc-400">
+          <p className="mb-4 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4 text-center text-sm text-brand-grey-text">
             No zones yet.
           </p>
         ) : (
@@ -674,17 +674,17 @@ export const ManualJWorkflow = forwardRef<
 
         <div className="flex flex-wrap items-end gap-2">
           <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-400">Zone name</label>
+            <label className="mb-1 block text-xs font-medium text-brand-grey-text">Zone name</label>
             <input
               type="text"
               placeholder="Zone 2 - Upstairs AHU"
               value={newZoneName}
               onChange={(e) => setNewZoneName(e.target.value)}
-              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-zinc-400">
+            <label className="mb-1 block text-xs font-medium text-brand-grey-text">
               AHU label (optional)
             </label>
             <input
@@ -692,13 +692,13 @@ export const ManualJWorkflow = forwardRef<
               placeholder="AHU-2"
               value={newZoneAhuLabel}
               onChange={(e) => setNewZoneAhuLabel(e.target.value)}
-              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
             />
           </div>
           <button
             onClick={handleAddZone}
             disabled={zoneSaving || newZoneName.trim() === ""}
-            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+            className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
           >
             {zoneSaving ? "Adding…" : "Add Zone"}
           </button>
@@ -707,17 +707,17 @@ export const ManualJWorkflow = forwardRef<
 
       <section
         ref={roomsSectionRef}
-        className="scroll-mt-6 rounded-lg border border-zinc-800 bg-zinc-950 p-6"
+        className="scroll-mt-6 rounded-lg border border-zinc-800 bg-brand-bg p-6"
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-zinc-100">Rooms</h2>
+          <h2 className="text-lg font-semibold text-brand-silver-highlight">Rooms</h2>
           {!showAddForm && (
             <button
               onClick={() => {
                 setShowAddForm(true);
                 setEditingRoomId(null);
               }}
-              className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400"
+              className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover"
             >
               Add Room
             </button>
@@ -744,7 +744,7 @@ export const ManualJWorkflow = forwardRef<
         )}
 
         {rooms.length === 0 && !showAddForm && (
-          <p className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-6 text-center text-sm text-zinc-400">
+          <p className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-6 text-center text-sm text-brand-grey-text">
             No rooms yet. Add your first room to start the load calculation.
           </p>
         )}
@@ -769,15 +769,15 @@ export const ManualJWorkflow = forwardRef<
                   className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
                 >
                   <div>
-                    <p className="flex items-center gap-2 font-medium text-zinc-100">
+                    <p className="flex items-center gap-2 font-medium text-brand-silver-highlight">
                       {room.name}
                       {!room.is_conditioned && (
-                        <span className="rounded-full border border-zinc-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                        <span className="rounded-full border border-zinc-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-grey-text">
                           Unconditioned
                         </span>
                       )}
                     </p>
-                    <p className="text-sm text-zinc-400">
+                    <p className="text-sm text-brand-grey-text">
                       {levelLabel(room.level)} · {room.floor_area_sqft ?? "—"} sqft
                     </p>
                   </div>
@@ -785,7 +785,7 @@ export const ManualJWorkflow = forwardRef<
                     <select
                       value={room.zone_id ?? ""}
                       onChange={(e) => handleQuickZoneChange(room.id, e.target.value)}
-                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-zinc-300 outline-none focus:border-amber-500"
+                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-brand-silver outline-none focus:border-brand-bronze"
                     >
                       <option value="">Unassigned</option>
                       {zones.map((zone) => (
@@ -799,7 +799,7 @@ export const ManualJWorkflow = forwardRef<
                         setEditingRoomId(room.id);
                         setShowAddForm(false);
                       }}
-                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
                     >
                       Edit
                     </button>
@@ -817,25 +817,25 @@ export const ManualJWorkflow = forwardRef<
         )}
       </section>
 
-      <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-        <h2 className="mb-4 text-lg font-semibold text-zinc-100">
+      <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">
           Manual J Results
         </h2>
 
         {!canCalculate && (
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-brand-grey-text">
             Confirm climate data above before running the load calculation.
           </p>
         )}
 
         {canCalculate && rooms.length === 0 && (
-          <p className="text-sm text-zinc-400">
+          <p className="text-sm text-brand-grey-text">
             Add at least one room to see load results.
           </p>
         )}
 
         {canCalculate && unconditionedRooms.length > 0 && (
-          <p className="mb-3 text-xs text-zinc-500">
+          <p className="mb-3 text-xs text-brand-grey-text">
             {unconditionedRooms.length} unconditioned room(s) excluded from totals:{" "}
             {unconditionedRooms.map((r) => r.name).join(", ")}
           </p>
@@ -845,7 +845,7 @@ export const ManualJWorkflow = forwardRef<
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-brand-grey-text">
                   <th className="py-2 pr-4">Room</th>
                   <th className="py-2 pr-4 text-right">Heating BTU/hr</th>
                   <th className="py-2 pr-4 text-right">Cooling Sensible</th>
@@ -856,24 +856,24 @@ export const ManualJWorkflow = forwardRef<
               <tbody>
                 {results.rooms.map((room) => (
                   <tr key={room.roomId} className="border-b border-zinc-900">
-                    <td className="py-2 pr-4 text-zinc-100">{room.roomName}</td>
-                    <td className="py-2 pr-4 text-right text-zinc-300">
+                    <td className="py-2 pr-4 text-brand-silver-highlight">{room.roomName}</td>
+                    <td className="py-2 pr-4 text-right text-brand-silver">
                       {fmt(room.heatingBtuh)}
                     </td>
-                    <td className="py-2 pr-4 text-right text-zinc-300">
+                    <td className="py-2 pr-4 text-right text-brand-silver">
                       {fmt(room.coolingSensibleBtuh)}
                     </td>
-                    <td className="py-2 pr-4 text-right text-zinc-300">
+                    <td className="py-2 pr-4 text-right text-brand-silver">
                       {fmt(room.coolingLatentBtuh)}
                     </td>
-                    <td className="py-2 text-right text-zinc-300">
+                    <td className="py-2 text-right text-brand-silver">
                       {fmt(room.coolingTotalBtuh)}
                     </td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
-                <tr className="font-semibold text-amber-500">
+                <tr className="font-semibold text-brand-bronze-text">
                   <td className="py-2 pr-4">Whole House Total</td>
                   <td className="py-2 pr-4 text-right">
                     {fmt(results.wholeHouse.heatingBtuh)}
@@ -890,12 +890,12 @@ export const ManualJWorkflow = forwardRef<
                 </tr>
               </tfoot>
             </table>
-            <p className="mt-3 text-xs text-zinc-500">
+            <p className="mt-3 text-xs text-brand-grey-text">
               Of which, doors: {fmt(results.wholeHouse.doorHeatingBtuh)} Btuh heating /{" "}
               {fmt(results.wholeHouse.doorCoolingBtuh)} Btuh cooling (already included in
               the totals above, at U-value {envelopeForm.door_u_value || "0.35 (default)"}).
             </p>
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-brand-grey-text">
               Of which, ASHRAE 62.2 ventilation: {fmt(results.wholeHouse.ventilationCfm)} CFM
               → {fmt(results.wholeHouse.ventilationHeatingBtuh)} Btuh heating /{" "}
               {fmt(results.wholeHouse.ventilationCoolingSensibleBtuh)} Btuh cooling sensible /{" "}
@@ -903,7 +903,7 @@ export const ManualJWorkflow = forwardRef<
               (already included in the totals above; uncredited for infiltration — see
               lib/manualJ.ts).
             </p>
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-brand-grey-text">
               Of which, internal gains (occupants + appliances):{" "}
               {fmt(results.wholeHouse.internalGainsSensibleBtuh)} Btuh cooling sensible /{" "}
               {fmt(results.wholeHouse.internalGainsLatentBtuh)} Btuh cooling latent (already
@@ -915,12 +915,12 @@ export const ManualJWorkflow = forwardRef<
       </section>
 
       {canCalculate && results && results.zones.length > 0 && (
-        <section className="rounded-lg border border-zinc-800 bg-zinc-950 p-6">
-          <h2 className="mb-4 text-lg font-semibold text-zinc-100">Zone Summary</h2>
+        <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
+          <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">Zone Summary</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-brand-grey-text">
                   <th className="py-2 pr-4">Zone</th>
                   <th className="py-2 pr-4 text-right">Heating BTU/hr</th>
                   <th className="py-2 pr-4 text-right">Cooling Sensible</th>
@@ -931,28 +931,28 @@ export const ManualJWorkflow = forwardRef<
               <tbody>
                 {results.zones.map((zone) => (
                   <tr key={zone.zoneId ?? "unassigned"} className="border-b border-zinc-900">
-                    <td className="py-2 pr-4 text-zinc-100">
+                    <td className="py-2 pr-4 text-brand-silver-highlight">
                       {zone.zoneName}
                       {zone.zoneId === null && (
-                        <span className="ml-2 rounded-full border border-amber-500/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-500">
+                        <span className="ml-2 rounded-full border border-brand-bronze/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-bronze-text">
                           No zone assigned
                         </span>
                       )}
                     </td>
-                    <td className="py-2 pr-4 text-right text-zinc-300">{fmt(zone.heatingBtuh)}</td>
-                    <td className="py-2 pr-4 text-right text-zinc-300">
+                    <td className="py-2 pr-4 text-right text-brand-silver">{fmt(zone.heatingBtuh)}</td>
+                    <td className="py-2 pr-4 text-right text-brand-silver">
                       {fmt(zone.coolingSensibleBtuh)}
                     </td>
-                    <td className="py-2 pr-4 text-right text-zinc-300">
+                    <td className="py-2 pr-4 text-right text-brand-silver">
                       {fmt(zone.coolingLatentBtuh)}
                     </td>
-                    <td className="py-2 text-right text-zinc-300">{fmt(zone.coolingTotalBtuh)}</td>
+                    <td className="py-2 text-right text-brand-silver">{fmt(zone.coolingTotalBtuh)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="mt-3 text-xs text-zinc-500">
+          <p className="mt-3 text-xs text-brand-grey-text">
             Each zone's ventilation (ASHRAE 62.2) is computed from that zone's own bedroom
             count and floor area, then summed for the whole-project total above — matching
             how the reference report computes ventilation per AHU rather than once for the
@@ -975,7 +975,7 @@ function EnvelopeField({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-zinc-400">
+      <label className="mb-1 block text-xs font-medium text-brand-grey-text">
         {label}
       </label>
       <input
@@ -983,7 +983,7 @@ function EnvelopeField({
         step="any"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
       />
     </div>
   );
@@ -1000,14 +1000,14 @@ function EnvelopeTextField({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-zinc-400">
+      <label className="mb-1 block text-xs font-medium text-brand-grey-text">
         {label}
       </label>
       <input
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
       />
     </div>
   );
@@ -1026,11 +1026,11 @@ function EnvelopeSelectField({
 }) {
   return (
     <div>
-      <label className="mb-1 block text-xs font-medium text-zinc-400">{label}</label>
+      <label className="mb-1 block text-xs font-medium text-brand-grey-text">{label}</label>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1064,14 +1064,14 @@ function ZoneRow({
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-48 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+          className="w-48 rounded-md border border-zinc-700 bg-brand-bg px-2 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
         />
         <input
           type="text"
           placeholder="AHU label"
           value={ahuLabel}
           onChange={(e) => setAhuLabel(e.target.value)}
-          className="w-28 rounded-md border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-100 outline-none focus:border-amber-500"
+          className="w-28 rounded-md border border-zinc-700 bg-brand-bg px-2 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
         />
         <button
           onClick={() => {
@@ -1079,7 +1079,7 @@ function ZoneRow({
             setEditing(false);
           }}
           disabled={name.trim() === ""}
-          className="rounded-md bg-amber-500 px-3 py-1.5 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+          className="rounded-md bg-brand-bronze px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
         >
           Save
         </button>
@@ -1089,7 +1089,7 @@ function ZoneRow({
             setAhuLabel(zone.ahu_label ?? "");
             setEditing(false);
           }}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500"
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500"
         >
           Cancel
         </button>
@@ -1100,18 +1100,18 @@ function ZoneRow({
   return (
     <li className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3">
       <div>
-        <p className="font-medium text-zinc-100">
+        <p className="font-medium text-brand-silver-highlight">
           {zone.name}
-          {zone.ahu_label && <span className="ml-2 text-sm text-zinc-400">({zone.ahu_label})</span>}
+          {zone.ahu_label && <span className="ml-2 text-sm text-brand-grey-text">({zone.ahu_label})</span>}
         </p>
-        <p className="text-sm text-zinc-400">
+        <p className="text-sm text-brand-grey-text">
           {roomCount} room{roomCount === 1 ? "" : "s"}
         </p>
       </div>
       <div className="flex gap-2">
         <button
           onClick={() => setEditing(true)}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition hover:border-zinc-500 hover:text-zinc-100"
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
         >
           Rename
         </button>

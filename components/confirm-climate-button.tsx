@@ -53,7 +53,7 @@ export function ConfirmClimateButton({
       <button
         onClick={handleConfirm}
         disabled={loading}
-        className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-black transition hover:bg-amber-400 disabled:opacity-50"
+        className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
       >
         {loading ? "Confirming…" : "Confirm Climate Data"}
       </button>

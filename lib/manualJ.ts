@@ -36,6 +36,12 @@ export type ManualJRoom = {
   occupant_count: number | null;
   sensible_gain_override: number | null;
   latent_gain_override: number | null;
+  // Section 2 gap-closure spec. duct_location is one of the 7 values in
+  // migration 20260810210059_add_ducts.sql's check constraint; anything
+  // else (including null) is treated as "no data yet" - see
+  // DUCT_UNCONDITIONED_LOCATIONS below.
+  duct_location: string | null;
+  duct_insulation_r_value: number | null;
 };
 
 export type RoomTypeDefault = {
@@ -85,6 +91,11 @@ export type RoomLoadResult = {
   // in coolingSensibleBtuh/coolingLatentBtuh above.
   internalGainsSensibleBtuh: number;
   internalGainsLatentBtuh: number;
+  // Duct gain/loss (Section 2), already included in heatingBtuh/
+  // coolingSensibleBtuh/coolingLatentBtuh above.
+  ductHeatingBtuh: number;
+  ductCoolingSensibleBtuh: number;
+  ductCoolingLatentBtuh: number;
 };
 
 export type WholeHouseLoadResult = {
@@ -104,6 +115,9 @@ export type WholeHouseLoadResult = {
   ventilationCoolingLatentBtuh: number;
   internalGainsSensibleBtuh: number;
   internalGainsLatentBtuh: number;
+  ductHeatingBtuh: number;
+  ductCoolingSensibleBtuh: number;
+  ductCoolingLatentBtuh: number;
 };
 
 export type ManualJResult = {
@@ -155,6 +169,58 @@ const ASHRAE_622_BEDROOM_FACTOR = 7.5;
 // and sealed-attic ceilings as approximate, and prefer a full Manual J tool
 // for anything load-critical.
 const BUFFER_DELTA_T_FACTOR = 0.5;
+
+// APPROXIMATION, not the certified ACCA Manual J 8th Edition duct-loss
+// procedure. The spec's suggested formula (supply CFM x 1.1 x delta-T x
+// duct loss factor) isn't implementable here: this app has no supply-CFM
+// or duct-surface-area model (that's normally a Manual D/equipment-sizing
+// output, and this app has no Manual S/equipment-sizing feature at all).
+//
+// Instead these factors are reverse-engineered from the one real data
+// point available - the reference report at REFERENCE-DOCS/ (Houston-area,
+// zone 2A, R-8 ducts in an unconditioned attic). Its "Ducts" line is a
+// first-pass component alongside Walls/Glazing/Doors/etc (not a post-
+// equipment-sizing adjustment), so this is applied the same way, per room,
+// as a percentage of that room's own (envelope + infiltration) subtotal -
+// the same base the reference report's own "Structure + Infiltration"
+// figures represent:
+//   heating:          6452 / (32629 + 8510)  = 0.1568
+//   cooling sensible: 4673 / (29801 + 1922)  = 0.1473
+//   cooling latent:   2506 / 3091 (infiltration latent only, since that's
+//                     this app's only other latent source at the room
+//                     level) = 0.8107 - notably higher than the sensible
+//                     ratio, consistent with the report's duct figure
+//                     bundling both conduction loss AND duct-leakage gain
+//                     (leakage carries latent load the way infiltration
+//                     does; this app has no separate duct-leakage-CFM
+//                     model, so it's folded into this one factor).
+// Scaled linearly by (R8 / actual R) for other insulation levels - a
+// simplification (real duct loss also depends on location-specific
+// effective temperature, e.g. attic vs. crawlspace vs. basement have very
+// different real design temps, which this does not model - every
+// "unconditioned" location below uses the same factor).
+const DUCT_INSULATION_R_BASELINE = 8;
+const DUCT_LOSS_FACTOR_HEATING_R8 = 0.1568;
+const DUCT_GAIN_FACTOR_COOLING_SENSIBLE_R8 = 0.1473;
+const DUCT_GAIN_FACTOR_COOLING_LATENT_R8 = 0.8107;
+
+// Locations where ducts are assumed exposed to non-conditioned-space
+// temperatures. Attic-Conditioned/Basement-Conditioned/Conditioned-Space
+// (and null/unset) are treated as 0 duct loss - ducts fully inside the
+// conditioned envelope, or no data yet.
+const DUCT_UNCONDITIONED_LOCATIONS = new Set([
+  "Attic-Unconditioned",
+  "Crawlspace",
+  "Basement-Unconditioned",
+  "Exterior-Wall",
+]);
+
+function ductRScaleFactor(room: ManualJRoom): number {
+  if (!room.duct_location || !DUCT_UNCONDITIONED_LOCATIONS.has(room.duct_location)) return 0;
+  const r = room.duct_insulation_r_value;
+  if (r == null || r <= 0) return 0;
+  return DUCT_INSULATION_R_BASELINE / r;
+}
 
 function n(value: number | null | undefined): number {
   return value ?? 0;
@@ -330,13 +396,31 @@ function computeRoom(
   // Heating.
   const internalGains = computeInternalGains(room, roomTypeDefaults);
 
-  const heatingBtuh = envelopeHeatingBtuh + infiltrationHeatingBtuh;
+  // Duct gain/loss (Section 2): a percentage of this room's own envelope +
+  // infiltration subtotal - see DUCT_LOSS_FACTOR_HEATING_R8 etc. above for
+  // the derivation. Computed from envelope/infiltration BEFORE internal
+  // gains are added (internal gains aren't structure/infiltration load,
+  // and the reference report's own "Structure + Infiltration" base for
+  // Ducts excludes its "Internal gains" line too).
+  const ductScale = ductRScaleFactor(room);
+  const ductHeatingBtuh =
+    ductScale * DUCT_LOSS_FACTOR_HEATING_R8 * (envelopeHeatingBtuh + infiltrationHeatingBtuh);
+  const ductCoolingSensibleBtuh =
+    ductScale *
+    DUCT_GAIN_FACTOR_COOLING_SENSIBLE_R8 *
+    (envelopeCoolingBtuh + infiltrationCoolingSensibleBtuh + solarGainBtuh);
+  const ductCoolingLatentBtuh =
+    ductScale * DUCT_GAIN_FACTOR_COOLING_LATENT_R8 * infiltrationCoolingLatentBtuh;
+
+  const heatingBtuh = envelopeHeatingBtuh + infiltrationHeatingBtuh + ductHeatingBtuh;
   const coolingSensibleBtuh =
     envelopeCoolingBtuh +
     infiltrationCoolingSensibleBtuh +
     solarGainBtuh +
-    internalGains.sensibleBtuh;
-  const coolingLatentBtuh = infiltrationCoolingLatentBtuh + internalGains.latentBtuh;
+    internalGains.sensibleBtuh +
+    ductCoolingSensibleBtuh;
+  const coolingLatentBtuh =
+    infiltrationCoolingLatentBtuh + internalGains.latentBtuh + ductCoolingLatentBtuh;
 
   return {
     roomId: room.id,
@@ -349,6 +433,9 @@ function computeRoom(
     doorCoolingBtuh,
     internalGainsSensibleBtuh: internalGains.sensibleBtuh,
     internalGainsLatentBtuh: internalGains.latentBtuh,
+    ductHeatingBtuh,
+    ductCoolingSensibleBtuh,
+    ductCoolingLatentBtuh,
   };
 }
 
@@ -380,6 +467,9 @@ export function computeManualJ(
       doorCoolingBtuh: totals.doorCoolingBtuh + room.doorCoolingBtuh,
       internalGainsSensibleBtuh: totals.internalGainsSensibleBtuh + room.internalGainsSensibleBtuh,
       internalGainsLatentBtuh: totals.internalGainsLatentBtuh + room.internalGainsLatentBtuh,
+      ductHeatingBtuh: totals.ductHeatingBtuh + room.ductHeatingBtuh,
+      ductCoolingSensibleBtuh: totals.ductCoolingSensibleBtuh + room.ductCoolingSensibleBtuh,
+      ductCoolingLatentBtuh: totals.ductCoolingLatentBtuh + room.ductCoolingLatentBtuh,
       ventilationCfm: 0,
       ventilationHeatingBtuh: 0,
       ventilationCoolingSensibleBtuh: 0,
@@ -394,6 +484,9 @@ export function computeManualJ(
       doorCoolingBtuh: 0,
       internalGainsSensibleBtuh: 0,
       internalGainsLatentBtuh: 0,
+      ductHeatingBtuh: 0,
+      ductCoolingSensibleBtuh: 0,
+      ductCoolingLatentBtuh: 0,
       ventilationCfm: 0,
       ventilationHeatingBtuh: 0,
       ventilationCoolingSensibleBtuh: 0,

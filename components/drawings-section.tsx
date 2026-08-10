@@ -175,6 +175,11 @@ export function DrawingsSection({
     return Number.isFinite(parsed) ? parsed : rawValue;
   }
 
+  function resolvedEnvelopeString(fieldName: string, rawValue: string | null): string | null {
+    const resolution = resolutionMap.get(resolutionKey("projects", projectId, fieldName));
+    return resolution?.final_value ?? rawValue;
+  }
+
   async function handleApply(drawing: DrawingRow) {
     if (!drawing.extracted_data) return;
     setApplying(true);
@@ -192,6 +197,10 @@ export function DrawingsSection({
       floor_insulation_r_value: resolvedEnvelopeNumber(
         "floor_insulation_r_value",
         drawing.extracted_data.building_envelope.floor_insulation_r_value.value,
+      ),
+      foundation_type: resolvedEnvelopeString(
+        "foundation_type",
+        drawing.extracted_data.building_envelope.foundation_type.value,
       ),
     };
 
@@ -409,10 +418,11 @@ function ReviewPanel({
           />
         </dl>
         <p className="mt-2 text-xs text-zinc-500">
-          Window type, window count, and foundation type are extracted and shown here for
-          reference, but — unlike the three R-values above — are not currently copied to any
-          project field by &quot;Apply to Form&quot;. Resolving them here creates an audit
-          record but does not yet change any other value in the app.
+          Window type and window count are extracted and shown here for reference, but — unlike
+          the three R-values and foundation type above — are not currently copied to any project
+          field by &quot;Apply to Form&quot;. Resolving them here creates an audit record but
+          does not yet change any other value in the app. Foundation type is now copied on Apply
+          (Section 2), but isn&apos;t yet consumed by the load calculation itself.
         </p>
       </div>
 
@@ -457,6 +467,49 @@ function ReviewPanel({
                 {room.unresolved && room.reason && (
                   <p className="mt-1 text-xs text-amber-400">{room.reason}</p>
                 )}
+                <div className="mt-2 flex items-center gap-2 border-t border-zinc-800 pt-2">
+                  <span className="text-xs text-zinc-500">
+                    Ducts: {room.duct_location?.value ?? "—"}
+                    {room.duct_insulation_r_value?.value != null &&
+                      ` (R-${room.duct_insulation_r_value.value})`}
+                    {room.duct_source === "default" && " · construction-based default"}
+                    {room.duct_source === "ai_extracted" && " · read from drawing"}
+                  </span>
+                  {room.duct_location?.unresolved && (
+                    <FieldResolutionBadge
+                      projectId={projectId}
+                      tableName="drawings"
+                      recordId={drawing.id}
+                      fieldName={`room[${index}].duct_location`}
+                      aiExtractedValue={room.duct_location.value}
+                      resolution={resolutionMap.get(
+                        resolutionKey("drawings", drawing.id, `room[${index}].duct_location`),
+                      )}
+                      onResolved={onResolved}
+                    />
+                  )}
+                  {room.duct_insulation_r_value?.unresolved && (
+                    <FieldResolutionBadge
+                      projectId={projectId}
+                      tableName="drawings"
+                      recordId={drawing.id}
+                      fieldName={`room[${index}].duct_insulation_r_value`}
+                      aiExtractedValue={
+                        room.duct_insulation_r_value.value != null
+                          ? String(room.duct_insulation_r_value.value)
+                          : null
+                      }
+                      resolution={resolutionMap.get(
+                        resolutionKey(
+                          "drawings",
+                          drawing.id,
+                          `room[${index}].duct_insulation_r_value`,
+                        ),
+                      )}
+                      onResolved={onResolved}
+                    />
+                  )}
+                </div>
               </li>
             ))}
           </ul>

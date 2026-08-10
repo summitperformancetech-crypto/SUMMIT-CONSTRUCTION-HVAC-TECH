@@ -17,6 +17,7 @@ export function ProjectWorkspace({
   initialClimateConfirmed,
   initialEnvelope,
   initialAtticInsulationType,
+  initialFoundationType,
   initialRooms,
   initialDrawings,
   initialFieldResolutions,
@@ -28,6 +29,7 @@ export function ProjectWorkspace({
   initialClimateConfirmed: boolean;
   initialEnvelope: ManualJEnvelope;
   initialAtticInsulationType: string | null;
+  initialFoundationType: string | null;
   initialRooms: RoomRow[];
   initialDrawings: DrawingRow[];
   initialFieldResolutions: FieldResolution[];
@@ -67,6 +69,7 @@ export function ProjectWorkspace({
         projectId={projectId}
         initialEnvelope={initialEnvelope}
         initialAtticInsulationType={initialAtticInsulationType}
+        initialFoundationType={initialFoundationType}
         initialRooms={initialRooms}
         winterDesignTempF={winterDesignTempF}
         summerDesignTempF={summerDesignTempF}

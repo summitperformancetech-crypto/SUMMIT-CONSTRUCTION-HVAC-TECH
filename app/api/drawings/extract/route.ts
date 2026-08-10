@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import {
   EXTRACTION_PROMPT,
   collectUnresolvedItems,
+  applyDuctFallbackDefaults,
   type DrawingExtraction,
 } from "@/lib/drawingExtraction";
 
@@ -155,6 +156,12 @@ export async function POST(request: Request) {
       { status: 502 },
     );
   }
+
+  // Section 2: most drawings don't show ductwork, so this fills a
+  // construction-based default for any room the model left blank - see
+  // applyDuctFallbackDefaults for why it's a uniform default rather than
+  // branching per room by foundation type.
+  extraction = applyDuctFallbackDefaults(extraction);
 
   const unresolvedItems = collectUnresolvedItems(extraction);
 

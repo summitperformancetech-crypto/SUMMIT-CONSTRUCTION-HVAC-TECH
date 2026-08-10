@@ -55,17 +55,22 @@ type EnvelopeFormValues = {
   occupants: string;
   attic_construction_type: string;
   attic_insulation_type: string;
+  foundation_type: string;
 };
 
 const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
 
 // The only Building Envelope fields a drawing extraction is allowed to fill.
 // ACH50, occupants, and indoor design temps are never populated from a drawing.
+// foundation_type isn't consumed by ManualJEnvelope/computeManualJ (see
+// migration 20260810210059_add_ducts.sql) - it's carried here only so
+// "Apply to Form" can fill it the same way as the R-values.
 export type ExtractableEnvelopeFields = {
   wall_insulation_r_value: number | null;
   ceiling_insulation_r_value: number | null;
   floor_insulation_r_value: number | null;
+  foundation_type: string | null;
 };
 
 export type ApplyExtractedDataResult = {
@@ -100,6 +105,7 @@ function toNullableString(value: string): string | null {
 function envelopeToForm(
   envelope: ManualJEnvelope,
   atticInsulationType: string | null,
+  foundationType: string | null,
 ): EnvelopeFormValues {
   return {
     wall_insulation_r_value: envelope.wall_insulation_r_value?.toString() ?? "",
@@ -115,6 +121,7 @@ function envelopeToForm(
     occupants: envelope.occupants.toString(),
     attic_construction_type: envelope.attic_construction_type,
     attic_insulation_type: atticInsulationType ?? "",
+    foundation_type: foundationType ?? "",
   };
 }
 
@@ -148,6 +155,8 @@ function roomToForm(room: RoomRow): RoomFormValues {
     occupant_count: room.occupant_count?.toString() ?? "",
     sensible_gain_override: room.sensible_gain_override?.toString() ?? "",
     latent_gain_override: room.latent_gain_override?.toString() ?? "",
+    duct_location: room.duct_location ?? "",
+    duct_insulation_r_value: room.duct_insulation_r_value?.toString() ?? "",
     wall_north_len_ft: room.wall_north_len_ft?.toString() ?? "",
     wall_south_len_ft: room.wall_south_len_ft?.toString() ?? "",
     wall_east_len_ft: room.wall_east_len_ft?.toString() ?? "",
@@ -178,6 +187,14 @@ function formToRoomPayload(values: RoomFormValues) {
     occupant_count: toNullableNumber(values.occupant_count),
     sensible_gain_override: toNullableNumber(values.sensible_gain_override),
     latent_gain_override: toNullableNumber(values.latent_gain_override),
+    duct_location: toNullableString(values.duct_location),
+    duct_insulation_r_value: toNullableNumber(values.duct_insulation_r_value),
+    // Saving via this form is always a human action - overwrites whatever
+    // duct_source an extraction/fallback previously set (ai_extracted or
+    // default) with 'manual', since the tech has now confirmed/edited it
+    // directly. null when no duct_location is set at all (nothing to
+    // attribute a source to).
+    duct_source: toNullableString(values.duct_location) ? "manual" : null,
     wall_north_len_ft: toNullableNumber(values.wall_north_len_ft),
     wall_south_len_ft: toNullableNumber(values.wall_south_len_ft),
     wall_east_len_ft: toNullableNumber(values.wall_east_len_ft),
@@ -209,6 +226,7 @@ export const ManualJWorkflow = forwardRef<
     initialEnvelope: ManualJEnvelope;
     initialRooms: RoomRow[];
     initialAtticInsulationType: string | null;
+    initialFoundationType: string | null;
     winterDesignTempF: number | null;
     summerDesignTempF: number | null;
     roomTypeDefaults: RoomTypeDefault[];
@@ -219,6 +237,7 @@ export const ManualJWorkflow = forwardRef<
     initialEnvelope,
     initialRooms,
     initialAtticInsulationType,
+    initialFoundationType,
     winterDesignTempF,
     summerDesignTempF,
     roomTypeDefaults,
@@ -226,7 +245,7 @@ export const ManualJWorkflow = forwardRef<
   ref,
 ) {
   const [envelopeForm, setEnvelopeForm] = useState(
-    envelopeToForm(initialEnvelope, initialAtticInsulationType),
+    envelopeToForm(initialEnvelope, initialAtticInsulationType, initialFoundationType),
   );
   const [envelopeSaving, setEnvelopeSaving] = useState(false);
   const [envelopeError, setEnvelopeError] = useState<string | null>(null);
@@ -268,6 +287,7 @@ export const ManualJWorkflow = forwardRef<
       .update({
         ...formToEnvelope(envelopeForm),
         attic_insulation_type: toNullableString(envelopeForm.attic_insulation_type),
+        foundation_type: toNullableString(envelopeForm.foundation_type),
       })
       .eq("id", projectId);
     setEnvelopeSaving(false);
@@ -325,6 +345,7 @@ export const ManualJWorkflow = forwardRef<
             "wall_insulation_r_value",
             "ceiling_insulation_r_value",
             "floor_insulation_r_value",
+            "foundation_type",
           ] as const
         ).forEach((key) => {
           const extractedValue = extractedEnvelope[key];
@@ -356,6 +377,10 @@ export const ManualJWorkflow = forwardRef<
           occupant_count: null,
           sensible_gain_override: null,
           latent_gain_override: null,
+          duct_location: room.duct_location?.value ?? null,
+          duct_insulation_r_value: room.duct_insulation_r_value?.value ?? null,
+          duct_source: room.duct_source ?? null,
+          duct_confidence: room.duct_confidence ?? null,
           wall_north_len_ft: room.wall_north_len_ft,
           wall_south_len_ft: room.wall_south_len_ft,
           wall_east_len_ft: room.wall_east_len_ft,
@@ -450,6 +475,11 @@ export const ManualJWorkflow = forwardRef<
             label="Occupants (unused)"
             value={envelopeForm.occupants}
             onChange={(v) => updateEnvelopeField("occupants", v)}
+          />
+          <EnvelopeTextField
+            label="Foundation type"
+            value={envelopeForm.foundation_type}
+            onChange={(v) => updateEnvelopeField("foundation_type", v)}
           />
         </div>
         <p className="mt-2 text-xs text-zinc-500">
@@ -717,6 +747,30 @@ function EnvelopeField({
       <input
         type="number"
         step="any"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"
+      />
+    </div>
+  );
+}
+
+function EnvelopeTextField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="mb-1 block text-xs font-medium text-zinc-400">
+        {label}
+      </label>
+      <input
+        type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-amber-500"

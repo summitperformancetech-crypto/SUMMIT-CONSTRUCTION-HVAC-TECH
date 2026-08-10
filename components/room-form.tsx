@@ -16,6 +16,8 @@ export type RoomFormValues = {
   occupant_count: string;
   sensible_gain_override: string;
   latent_gain_override: string;
+  duct_location: string;
+  duct_insulation_r_value: string;
   wall_north_len_ft: string;
   wall_south_len_ft: string;
   wall_east_len_ft: string;
@@ -54,6 +56,17 @@ export const ROOM_TYPE_OPTIONS = [
   { value: "Other", label: "Other" },
 ] as const;
 
+export const DUCT_LOCATION_OPTIONS = [
+  { value: "", label: "—" },
+  { value: "Attic-Unconditioned", label: "Attic (unconditioned)" },
+  { value: "Attic-Conditioned", label: "Attic (conditioned/sealed)" },
+  { value: "Crawlspace", label: "Crawlspace" },
+  { value: "Basement-Conditioned", label: "Basement (conditioned)" },
+  { value: "Basement-Unconditioned", label: "Basement (unconditioned)" },
+  { value: "Conditioned-Space", label: "Conditioned space" },
+  { value: "Exterior-Wall", label: "Exterior wall" },
+] as const;
+
 export const WALL_EXPOSURE_OPTIONS = [
   { value: "exterior", label: "Exterior (outside air)" },
   { value: "adjacent_unconditioned", label: "Adjacent to unconditioned space" },
@@ -73,6 +86,8 @@ export const EMPTY_ROOM_FORM: RoomFormValues = {
   occupant_count: "",
   sensible_gain_override: "",
   latent_gain_override: "",
+  duct_location: "",
+  duct_insulation_r_value: "",
   wall_north_len_ft: "",
   wall_south_len_ft: "",
   wall_east_len_ft: "",
@@ -254,6 +269,27 @@ export function RoomForm({
           Sensible: <span className="text-zinc-300">{Math.round(sensiblePreview)} Btuh</span> (
           {sensibleSource}) · Latent:{" "}
           <span className="text-zinc-300">{Math.round(latentPreview)} Btuh</span> ({latentSource})
+        </p>
+      </fieldset>
+
+      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-zinc-950 p-3">
+        <legend className="px-1 text-sm font-medium text-zinc-300">Ducts</legend>
+        <div className="grid grid-cols-2 gap-3">
+          <SelectField
+            label="Duct location"
+            value={values.duct_location}
+            onChange={(v) => update("duct_location", v)}
+            options={DUCT_LOCATION_OPTIONS}
+          />
+          <NumberField
+            label="Duct insulation (R)"
+            value={values.duct_insulation_r_value}
+            onChange={(v) => update("duct_insulation_r_value", v)}
+          />
+        </div>
+        <p className="text-xs text-zinc-500">
+          Saving this form always marks duct data as manually confirmed, overwriting any
+          AI-extracted or construction-based default value.
         </p>
       </fieldset>
 

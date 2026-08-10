@@ -66,6 +66,20 @@ export function countUnresolvedFields(
       ) {
         count += 1;
       }
+      if (
+        room.duct_location?.unresolved &&
+        !resolvedKeys.has(resolutionKey("drawings", drawing.id, `room[${index}].duct_location`))
+      ) {
+        count += 1;
+      }
+      if (
+        room.duct_insulation_r_value?.unresolved &&
+        !resolvedKeys.has(
+          resolutionKey("drawings", drawing.id, `room[${index}].duct_insulation_r_value`),
+        )
+      ) {
+        count += 1;
+      }
     });
   }
   return count;

@@ -1,11 +1,26 @@
 import Link from "next/link";
 import { SignOutButton } from "@/components/sign-out-button";
+import { createClient } from "@/lib/supabase/server";
 
-export default function DashboardLayout({
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  let isAdmin = false;
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("role")
+      .eq("id", user.id)
+      .maybeSingle<{ role: string }>();
+    isAdmin = profile?.role === "admin";
+  }
+
   return (
     <div className="flex min-h-full flex-1 flex-col">
       <header className="flex items-center justify-between border-b border-brand-gold/50 px-6 py-4">
@@ -17,7 +32,17 @@ export default function DashboardLayout({
             Built on Integrity. Engineered for Excellence.
           </span>
         </Link>
-        <SignOutButton />
+        <div className="flex items-center gap-4">
+          {isAdmin && (
+            <Link
+              href="/dashboard/settings/equipment"
+              className="text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
+            >
+              Equipment Preferences
+            </Link>
+          )}
+          <SignOutButton />
+        </div>
       </header>
       <main className="flex-1 px-6 py-8">{children}</main>
     </div>

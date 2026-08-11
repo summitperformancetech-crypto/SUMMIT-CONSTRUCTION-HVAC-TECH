@@ -51,6 +51,8 @@ const TYPE_LABEL: Record<EquipmentCatalogEntry["equipmentType"], string> = {
   package_unit: "Package Unit",
 };
 
+const DEFAULT_VISIBLE_COUNT = 3;
+
 function fmt(value: number): string {
   return Math.round(value).toLocaleString();
 }
@@ -70,6 +72,8 @@ export function EquipmentSelectionSection({
   winterOutdoorDesignF,
   initialSelectedEquipmentId,
   initialEquipmentSelectionNotes,
+  preferredEquipmentIds,
+  exclusiveEquipmentIds,
 }: {
   projectId: string;
   catalog: EquipmentCatalogEntry[];
@@ -81,13 +85,15 @@ export function EquipmentSelectionSection({
   winterOutdoorDesignF: number;
   initialSelectedEquipmentId: string | null;
   initialEquipmentSelectionNotes: string | null;
+  preferredEquipmentIds: ReadonlySet<string>;
+  exclusiveEquipmentIds: ReadonlySet<string>;
 }) {
   const [selectedEquipmentId, setSelectedEquipmentId] = useState(initialSelectedEquipmentId);
   const [notes, setNotes] = useState(initialEquipmentSelectionNotes ?? "");
-  const [overrideReason, setOverrideReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
   const pointsByEquipment = useMemo(() => {
     const map = new Map<string, PerformancePoint[]>();
@@ -98,7 +104,13 @@ export function EquipmentSelectionSection({
     return map;
   }, [performancePoints]);
 
-  const evaluations = useMemo(() => {
+  // rankEquipment both filters to ONLY compatible equipment (cleared the
+  // hard ACCA sizing-window gate - see isCompatible in lib/manualS.ts) and
+  // sorts by compatibilityScore, with preferred/exclusive lines only
+  // breaking ties/near-ties. Equipment outside the window never reaches
+  // this array at all, by design - there is no "show it anyway, ranked
+  // low" path.
+  const ranked = useMemo(() => {
     const evals: EquipmentEvaluation[] = catalog.map((equipment) =>
       evaluateEquipment(
         equipment,
@@ -110,7 +122,8 @@ export function EquipmentSelectionSection({
         winterOutdoorDesignF,
       ),
     );
-    return rankEquipment(evals);
+    const preferredOrExclusive = new Set([...preferredEquipmentIds, ...exclusiveEquipmentIds]);
+    return rankEquipment(evals, preferredOrExclusive);
   }, [
     catalog,
     pointsByEquipment,
@@ -119,30 +132,20 @@ export function EquipmentSelectionSection({
     summerOutdoorDesignF,
     summerCoincidentWetbulbF,
     winterOutdoorDesignF,
+    preferredEquipmentIds,
+    exclusiveEquipmentIds,
   ]);
 
-  const selectedEval = evaluations.find((e) => e.equipment.id === selectedEquipmentId) ?? null;
-  const requiresOverrideReason = selectedEval != null && !selectedEval.withinCoolingWindow;
+  const visible = showAll ? ranked : ranked.slice(0, DEFAULT_VISIBLE_COUNT);
+  const hiddenCount = ranked.length - visible.length;
 
   async function handleSelect(equipmentId: string) {
-    const evaluation = evaluations.find((e) => e.equipment.id === equipmentId);
-    if (evaluation && !evaluation.withinCoolingWindow && overrideReason.trim() === "") {
-      setError(
-        "This equipment is outside the ACCA Manual S sizing window - enter an override reason below before saving.",
-      );
-      setSelectedEquipmentId(equipmentId);
-      return;
-    }
     setError(null);
     setSaving(true);
     const supabase = createClient();
-    const combinedNotes =
-      evaluation && !evaluation.withinCoolingWindow && overrideReason.trim() !== ""
-        ? `${notes.trim() ? notes.trim() + "\n\n" : ""}Override reason: ${overrideReason.trim()}`
-        : notes;
     const { error: saveError } = await supabase
       .from("projects")
-      .update({ selected_equipment_id: equipmentId, equipment_selection_notes: combinedNotes || null })
+      .update({ selected_equipment_id: equipmentId, equipment_selection_notes: notes || null })
       .eq("id", projectId);
     setSaving(false);
     if (saveError) {
@@ -150,8 +153,6 @@ export function EquipmentSelectionSection({
       return;
     }
     setSelectedEquipmentId(equipmentId);
-    setNotes(combinedNotes);
-    setOverrideReason("");
   }
 
   return (
@@ -161,7 +162,10 @@ export function EquipmentSelectionSection({
         Capacity shown below is interpolated from each unit&apos;s OEM extended performance data at
         this project&apos;s actual design conditions ({summerOutdoorDesignF}°F / {summerCoincidentWetbulbF}°F
         wb cooling, {winterOutdoorDesignF}°F heating) - never the AHRI 210/240 nameplate rating.
-        Nominal capacity is shown separately, clearly labeled, for reference only.
+        Nominal capacity is shown separately, clearly labeled, for reference only. Only equipment
+        that clears the ACCA Manual S sizing window is shown at all; the compatibility score
+        ranks how good a match among those, and is never affected by your org&apos;s preferred/
+        exclusive lines - those only break ties in display order.
       </p>
 
       {error && (
@@ -170,10 +174,19 @@ export function EquipmentSelectionSection({
         </p>
       )}
 
+      {ranked.length === 0 && (
+        <p className="rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-6 text-center text-sm text-brand-grey-text">
+          No catalog equipment falls within the ACCA Manual S sizing window for this
+          project&apos;s Manual J load at its design conditions.
+        </p>
+      )}
+
       <div className="space-y-3">
-        {evaluations.map((evaluation) => {
+        {visible.map((evaluation) => {
           const isSelected = evaluation.equipment.id === selectedEquipmentId;
           const isExpanded = expandedId === evaluation.equipment.id;
+          const isPreferred = preferredEquipmentIds.has(evaluation.equipment.id);
+          const isExclusive = exclusiveEquipmentIds.has(evaluation.equipment.id);
           return (
             <div
               key={evaluation.equipment.id}
@@ -190,6 +203,16 @@ export function EquipmentSelectionSection({
                         Selected
                       </span>
                     )}
+                    {isExclusive && (
+                      <span className="ml-2 rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-gold-hover">
+                        Exclusive line
+                      </span>
+                    )}
+                    {!isExclusive && isPreferred && (
+                      <span className="ml-2 rounded-full border border-zinc-700 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-silver">
+                        Preferred
+                      </span>
+                    )}
                   </p>
                   <p className="text-xs text-brand-grey-text">
                     {TYPE_LABEL[evaluation.equipment.equipmentType]} ·{" "}
@@ -202,15 +225,16 @@ export function EquipmentSelectionSection({
                   </p>
                 </div>
                 <div className="text-right">
-                  <p
-                    className={`text-sm font-semibold ${
-                      evaluation.withinCoolingWindow ? "text-brand-success" : "text-red-400"
-                    }`}
-                  >
+                  <p className="text-lg font-semibold text-brand-success">
+                    {evaluation.compatibilityScore != null ? pct(evaluation.compatibilityScore) : "—"}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wide text-brand-grey-text">
+                    compatibility
+                  </p>
+                  <p className="mt-1 text-xs text-brand-grey-text">
                     {evaluation.coolingPercentOfLoad != null
-                      ? pct(evaluation.coolingPercentOfLoad)
-                      : "—"}{" "}
-                    of cooling load
+                      ? `${pct(evaluation.coolingPercentOfLoad)} of cooling load`
+                      : "—"}
                   </p>
                   <p className="text-xs text-brand-grey-text">
                     {evaluation.coolingCapacityAtDesign
@@ -287,31 +311,27 @@ export function EquipmentSelectionSection({
                   </p>
                 </div>
               )}
-
-              {isSelected && requiresOverrideReason && (
-                <div className="mt-3 space-y-2 rounded-md border border-red-800 bg-red-950/30 p-3">
-                  <label className="block text-xs font-medium text-red-400">
-                    Override reason (required - this equipment is outside the ACCA sizing window)
-                  </label>
-                  <textarea
-                    value={overrideReason}
-                    onChange={(e) => setOverrideReason(e.target.value)}
-                    rows={2}
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
-                  />
-                  <button
-                    onClick={() => handleSelect(evaluation.equipment.id)}
-                    disabled={saving || overrideReason.trim() === ""}
-                    className="rounded-md bg-brand-gold px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
-                  >
-                    Save override
-                  </button>
-                </div>
-              )}
             </div>
           );
         })}
       </div>
+
+      {!showAll && hiddenCount > 0 && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="mt-3 text-sm text-brand-silver underline decoration-dotted hover:text-brand-gold-hover"
+        >
+          See all {ranked.length} compatible models ({hiddenCount} more)
+        </button>
+      )}
+      {showAll && ranked.length > DEFAULT_VISIBLE_COUNT && (
+        <button
+          onClick={() => setShowAll(false)}
+          className="mt-3 text-sm text-brand-silver underline decoration-dotted hover:text-brand-gold-hover"
+        >
+          Show top {DEFAULT_VISIBLE_COUNT} only
+        </button>
+      )}
 
       <div className="mt-4">
         <label className="mb-1 block text-xs font-medium text-brand-grey-text">

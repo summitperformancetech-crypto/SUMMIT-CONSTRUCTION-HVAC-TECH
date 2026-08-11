@@ -210,7 +210,121 @@ export type EquipmentEvaluation = {
   balancePointF: number | null;
   supplementalHeatBtuh: number | null;
   supplementalHeatKw: number | null;
+  // 0-1 (render as a percent). Only ever computed for equipment that
+  // already passed the hard ACCA sizing-window gate (see isCompatible
+  // below) - this is a "how good is this compatible match" score, not a
+  // second opinion on compatibility itself. null for equipment that failed
+  // the gate; those never reach the UI anyway (filterCompatible below
+  // drops them before scoring is even useful).
+  compatibilityScore: number | null;
 };
+
+// Equipment must clear the ACCA sizing window (see AC/HEAT_PUMP/FURNACE_*
+// _FRACTION above) before it is "compatible" at all - this is a hard gate,
+// not an input a low score can override. AC/heat_pump/package_unit are
+// gated on the cooling window (they're primarily cooling equipment,
+// selected first on cooling capacity); furnace is gated on the heating
+// window. Heat pump heating deliberately has NO hard gate here - per ACCA
+// Manual S, a heat pump needing supplemental/strip heat below its balance
+// point is expected, normal design in most US climates, not a
+// disqualification (see computeBalancePointF/computeSupplementalHeatBtuh).
+export function isCompatible(evaluation: {
+  equipment: EquipmentCatalogEntry;
+  withinCoolingWindow: boolean;
+  withinHeatingWindow: boolean;
+}): boolean {
+  if (evaluation.equipment.equipmentType === "furnace") {
+    return evaluation.withinHeatingWindow;
+  }
+  return evaluation.withinCoolingWindow;
+}
+
+// More modulation stages give better part-load comfort, humidity control,
+// and cycling behavior - a well-established residential HVAC design
+// preference (and part of why ACCA's own current Manual S addendum treats
+// variable-capacity equipment's low-stage behavior as a real sizing
+// factor - see the 80%-of-heat-loss minimum-stage rule referenced in this
+// module's ACCA sizing window comment above). Not itself an ACCA
+// pass/fail limit, just a scoring input, so expressed as a soft 0-1 scale
+// rather than a gate.
+const STAGE_TYPE_SCORE: Record<StageType, number> = {
+  single: 0.6,
+  two_stage: 0.85,
+  variable_speed: 1.0,
+};
+
+// Compatibility score (0-1, rendered as a percent in the UI) for equipment
+// that has ALREADY cleared the hard ACCA window gate (isCompatible) -
+// this ranks "how good" among compatible options, it does not decide
+// compatibility itself. Weighted average of:
+//   - 45% cooling fit: how close interpolated capacity at design
+//     conditions sits to exactly 100% of the Manual J load (not just
+//     "inside the window" - closer to matched, not oversized, is better
+//     practice even within an ACCA-legal range).
+//   - 30% heating fit: for a furnace, the same closeness-to-100% logic
+//     against the heating window. For a heat pump, there's no percentage
+//     target - instead this rewards a LOW supplemental-heat requirement
+//     at design conditions (a heat pump that covers more of the load on
+//     its own, i.e. a lower balance point relative to design temp, scores
+//     higher). For equipment with no heating pairing at all (cooling-only
+//     data), this factor is dropped and the other two are reweighted to
+//     still sum to 1 - it's genuinely not applicable, not a penalty.
+//   - 25% staging fit: STAGE_TYPE_SCORE above.
+export function computeCompatibilityScore(evaluation: {
+  equipment: EquipmentCatalogEntry;
+  coolingPercentOfLoad: number | null;
+  heatingPercentOfLoad: number | null;
+  supplementalHeatBtuh: number | null;
+  manualJHeatingBtuh: number;
+}): number {
+  const equipmentType = evaluation.equipment.equipmentType;
+  const [coolingMin, coolingMax] =
+    equipmentType === "heat_pump"
+      ? [HEAT_PUMP_COOLING_MIN_FRACTION, HEAT_PUMP_COOLING_MAX_FRACTION]
+      : [AC_COOLING_MIN_FRACTION, AC_COOLING_MAX_FRACTION];
+  const coolingHalfWidth = Math.max(1 - coolingMin, coolingMax - 1);
+  const coolingFit =
+    evaluation.coolingPercentOfLoad != null
+      ? clamp01(1 - Math.abs(evaluation.coolingPercentOfLoad - 1) / coolingHalfWidth)
+      : null;
+
+  let heatingFit: number | null = null;
+  if (equipmentType === "furnace" && evaluation.heatingPercentOfLoad != null) {
+    const halfWidth = Math.max(
+      1 - FURNACE_HEATING_MIN_FRACTION,
+      FURNACE_HEATING_MAX_FRACTION - 1,
+    );
+    heatingFit = clamp01(1 - Math.abs(evaluation.heatingPercentOfLoad - 1) / halfWidth);
+  } else if (
+    equipmentType === "heat_pump" &&
+    evaluation.supplementalHeatBtuh != null &&
+    evaluation.manualJHeatingBtuh > 0
+  ) {
+    // supplementalHeatBtuh is the gap at design conditions (see
+    // computeSupplementalHeatBtuh) - express it as a fraction of the
+    // heating load and reward heat pumps that need less of it. >=50%
+    // reliance on strip heat at design conditions scores 0 on this factor
+    // specifically - still a usable, ACCA-compliant system in a cold
+    // climate, just not a strong match on this one criterion.
+    const supplementalFraction = evaluation.supplementalHeatBtuh / evaluation.manualJHeatingBtuh;
+    heatingFit = clamp01(1 - 2 * supplementalFraction);
+  }
+
+  const stagingFit = STAGE_TYPE_SCORE[evaluation.equipment.stageType];
+
+  const terms: Array<{ value: number; weight: number }> = [];
+  if (coolingFit != null) terms.push({ value: coolingFit, weight: 0.45 });
+  if (heatingFit != null) terms.push({ value: heatingFit, weight: 0.3 });
+  terms.push({ value: stagingFit, weight: 0.25 });
+
+  const totalWeight = terms.reduce((sum, t) => sum + t.weight, 0);
+  const weightedSum = terms.reduce((sum, t) => sum + t.value * t.weight, 0);
+  return totalWeight > 0 ? weightedSum / totalWeight : stagingFit;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
 export function evaluateEquipment(
   equipment: EquipmentCatalogEntry,
@@ -274,6 +388,17 @@ export function evaluateEquipment(
     }
   }
 
+  const compatible = isCompatible({ equipment, withinCoolingWindow, withinHeatingWindow });
+  const compatibilityScore = compatible
+    ? computeCompatibilityScore({
+        equipment,
+        coolingPercentOfLoad,
+        heatingPercentOfLoad,
+        supplementalHeatBtuh,
+        manualJHeatingBtuh,
+      })
+    : null;
+
   return {
     equipment,
     coolingCapacityAtDesign,
@@ -285,20 +410,35 @@ export function evaluateEquipment(
     balancePointF,
     supplementalHeatBtuh,
     supplementalHeatKw,
+    compatibilityScore,
   };
 }
 
-// Ranked by closeness to a "just right" cooling match (100% of load) -
-// equipment outside the ACCA window still appears (so a tech can see why
-// it was excluded and, per the required-reason override workflow, choose
-// it anyway) but sorts after every equipment that's actually in-window.
-export function rankEquipment(evaluations: EquipmentEvaluation[]): EquipmentEvaluation[] {
-  return [...evaluations].sort((a, b) => {
-    if (a.withinCoolingWindow !== b.withinCoolingWindow) {
-      return a.withinCoolingWindow ? -1 : 1;
-    }
-    const aDist = a.coolingPercentOfLoad != null ? Math.abs(a.coolingPercentOfLoad - 1) : Infinity;
-    const bDist = b.coolingPercentOfLoad != null ? Math.abs(b.coolingPercentOfLoad - 1) : Infinity;
-    return aDist - bDist;
-  });
+// Filters to ONLY compatible equipment (passed the hard ACCA window gate -
+// see isCompatible) and ranks by compatibilityScore, highest first.
+// preferredEquipmentIds (an org's equipment_org_preferences with
+// is_preferred=true) only breaks ties/near-ties - within
+// TIE_BREAK_SCORE_THRESHOLD of each other, a preferred line sorts first,
+// but a non-preferred unit with a genuinely better score still wins.
+// Preference never touches compatibilityScore itself, so the displayed
+// percent always stays a physics-based, honest number - preference only
+// ever affects display ORDER among near-equal scores.
+const TIE_BREAK_SCORE_THRESHOLD = 0.03;
+
+export function rankEquipment(
+  evaluations: EquipmentEvaluation[],
+  preferredEquipmentIds: ReadonlySet<string> = new Set(),
+): EquipmentEvaluation[] {
+  return evaluations
+    .filter((e) => isCompatible(e))
+    .sort((a, b) => {
+      const aScore = a.compatibilityScore ?? 0;
+      const bScore = b.compatibilityScore ?? 0;
+      if (Math.abs(aScore - bScore) <= TIE_BREAK_SCORE_THRESHOLD) {
+        const aPreferred = preferredEquipmentIds.has(a.equipment.id);
+        const bPreferred = preferredEquipmentIds.has(b.equipment.id);
+        if (aPreferred !== bPreferred) return aPreferred ? -1 : 1;
+      }
+      return bScore - aScore;
+    });
 }

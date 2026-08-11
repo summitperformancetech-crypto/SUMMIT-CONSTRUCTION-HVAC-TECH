@@ -39,6 +39,8 @@ export function ProjectWorkspace({
   equipmentPerformancePoints,
   initialSelectedEquipmentId,
   initialEquipmentSelectionNotes,
+  preferredEquipmentIds,
+  exclusiveEquipmentIds,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -63,6 +65,8 @@ export function ProjectWorkspace({
   equipmentPerformancePoints: PerformancePoint[];
   initialSelectedEquipmentId: string | null;
   initialEquipmentSelectionNotes: string | null;
+  preferredEquipmentIds: ReadonlySet<string>;
+  exclusiveEquipmentIds: ReadonlySet<string>;
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -113,6 +117,8 @@ export function ProjectWorkspace({
         equipmentPerformancePoints={equipmentPerformancePoints}
         initialSelectedEquipmentId={initialSelectedEquipmentId}
         initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
+        preferredEquipmentIds={preferredEquipmentIds}
+        exclusiveEquipmentIds={exclusiveEquipmentIds}
       />
     </>
   );

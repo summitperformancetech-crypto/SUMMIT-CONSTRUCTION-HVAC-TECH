@@ -70,6 +70,12 @@ type EquipmentCatalogDbRow = {
   source_document: string;
 };
 
+type EquipmentOrgPreferenceDbRow = {
+  equipment_id: string;
+  is_preferred: boolean;
+  is_exclusive: boolean;
+};
+
 type EquipmentPerformancePointDbRow = {
   equipment_id: string;
   mode: "cooling" | "heating";
@@ -139,6 +145,12 @@ export default async function ProjectDetailPage({
     redirect("/login");
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("org_id")
+    .eq("id", user.id)
+    .maybeSingle<{ org_id: string }>();
+
   const { data: project, error } = await supabase
     .from("projects")
     .select(
@@ -190,6 +202,7 @@ export default async function ProjectDetailPage({
     { data: ductSizingRows },
     { data: equipmentCatalogRows },
     { data: equipmentPerformancePointRows },
+    { data: equipmentPreferenceRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -243,7 +256,25 @@ export default async function ProjectDetailPage({
       .from("equipment_performance_points")
       .select(EQUIPMENT_PERFORMANCE_POINT_COLUMNS)
       .returns<EquipmentPerformancePointDbRow[]>(),
+    // Org-scoped, unlike the two global reference queries above - RLS
+    // already restricts this to the caller's own org, but scoping the
+    // query explicitly avoids depending on that alone. Skipped (empty
+    // array) if the user has no profile row yet.
+    profile
+      ? supabase
+          .from("equipment_org_preferences")
+          .select("equipment_id, is_preferred, is_exclusive")
+          .eq("org_id", profile.org_id)
+          .returns<EquipmentOrgPreferenceDbRow[]>()
+      : Promise.resolve({ data: [] as EquipmentOrgPreferenceDbRow[] }),
   ]);
+
+  const preferredEquipmentIds = new Set(
+    (equipmentPreferenceRows ?? []).filter((r) => r.is_preferred).map((r) => r.equipment_id),
+  );
+  const exclusiveEquipmentIds = new Set(
+    (equipmentPreferenceRows ?? []).filter((r) => r.is_exclusive).map((r) => r.equipment_id),
+  );
 
   const equipmentCatalog: EquipmentCatalogEntry[] = (equipmentCatalogRows ?? []).map((r) => ({
     id: r.id,
@@ -384,6 +415,8 @@ export default async function ProjectDetailPage({
         equipmentPerformancePoints={equipmentPerformancePoints}
         initialSelectedEquipmentId={project.selected_equipment_id}
         initialEquipmentSelectionNotes={project.equipment_selection_notes}
+        preferredEquipmentIds={preferredEquipmentIds}
+        exclusiveEquipmentIds={exclusiveEquipmentIds}
       />
     </div>
   );

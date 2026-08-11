@@ -298,6 +298,8 @@ export const ManualJWorkflow = forwardRef<
     equipmentPerformancePoints: PerformancePoint[];
     initialSelectedEquipmentId: string | null;
     initialEquipmentSelectionNotes: string | null;
+    preferredEquipmentIds: ReadonlySet<string>;
+    exclusiveEquipmentIds: ReadonlySet<string>;
   }
 >(function ManualJWorkflow(
   {
@@ -321,6 +323,8 @@ export const ManualJWorkflow = forwardRef<
     equipmentPerformancePoints,
     initialSelectedEquipmentId,
     initialEquipmentSelectionNotes,
+    preferredEquipmentIds,
+    exclusiveEquipmentIds,
   },
   ref,
 ) {
@@ -1174,6 +1178,8 @@ export const ManualJWorkflow = forwardRef<
             winterOutdoorDesignF={winterDesignTempF}
             initialSelectedEquipmentId={initialSelectedEquipmentId}
             initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
+            preferredEquipmentIds={preferredEquipmentIds}
+            exclusiveEquipmentIds={exclusiveEquipmentIds}
           />
         )}
       {canCalculate &&

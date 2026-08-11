@@ -1,3 +1,5 @@
+import { DUCT_LOCATION_VALUES, normalizeDuctLocation } from "./constants/ductLocations";
+
 export type ExtractedField<T> = {
   value: T | null;
   unresolved: boolean;
@@ -121,7 +123,7 @@ STEP 2 — Room geometry, conditioned on Step 1:
 - If orientation was NOT detected: set wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft to null for every room. Do not guess which side of a room faces which compass direction — an incorrect guess here silently corrupts solar gain calculations downstream. Set that room's "unresolved" to true and "reason" to exactly "no orientation marker - exposure cannot be determined".
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
 
-STEP 3 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to your best read of where that room's duct run is (e.g. "attic", "crawlspace", "conditioned space"), "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess. A server-side fallback fills a construction-based default afterward; that is not your job.
+STEP 3 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to EXACTLY ONE of these values (case-sensitive, no other text): ${DUCT_LOCATION_VALUES.map((v) => `"${v}"`).join(", ")} — use "Attic-Unconditioned" for a plain vented attic, "Attic-Conditioned" for a sealed/spray-foamed attic, "Basement-Unconditioned"/"Basement-Conditioned" the same way, "Conditioned-Space" for ducts run inside living space (e.g. a dropped soffit or interior chase), and "Exterior-Wall" for ducts run in an exterior wall cavity. Also set "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess, and never output a location outside the exact list above. A server-side fallback fills a construction-based default afterward; that is not your job.
 
 Other rules:
 - Only fill an insulation R-value if it is visibly labeled on the drawing (e.g. "R-19 batt", "R-38 ceiling"). Do not infer a code-minimum or typical value — leave it null instead.
@@ -187,11 +189,23 @@ export function applyDuctFallbackDefaults(extraction: DrawingExtraction): Drawin
   return {
     ...extraction,
     rooms: extraction.rooms.map((room) => {
+      // Safety net: even with EXTRACTION_PROMPT now listing exact enum
+      // values, the model's duct_location is still free-text-derived and
+      // can drift back to something like "attic" instead of
+      // "Attic-Unconditioned". Normalizing (or dropping to null if
+      // unmappable) here means a bad value never reaches the DB, where it
+      // would trip rooms_duct_location_check and fail the whole room-
+      // insert batch, not just this one room's duct field.
+      const normalizedLocation = normalizeDuctLocation(room.duct_location?.value);
       // The model's own JSON output never sets duct_source (it isn't part
       // of what we ask it to return) - this is where that provenance tag
       // actually gets assigned, based on whether the model found something.
-      if (room.duct_location?.value) {
-        return { ...room, duct_source: "ai_extracted" as const };
+      if (normalizedLocation) {
+        return {
+          ...room,
+          duct_location: { ...room.duct_location, value: normalizedLocation },
+          duct_source: "ai_extracted" as const,
+        };
       }
       return {
         ...room,

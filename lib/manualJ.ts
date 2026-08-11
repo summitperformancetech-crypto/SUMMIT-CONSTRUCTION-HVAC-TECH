@@ -1,3 +1,5 @@
+import { DUCT_UNCONDITIONED_LOCATIONS, type DuctLocation } from "./constants/ductLocations";
+
 export type WallExposureType = "exterior" | "adjacent_unconditioned" | "adjacent_conditioned";
 
 export type AtticConstructionType = "sealed_conditioned" | "vented_unconditioned";
@@ -241,15 +243,16 @@ const DUCT_GAIN_FACTOR_COOLING_LATENT_R8 = 0.8107;
 // temperatures. Attic-Conditioned/Basement-Conditioned/Conditioned-Space
 // (and null/unset) are treated as 0 duct loss - ducts fully inside the
 // conditioned envelope, or no data yet.
-const DUCT_UNCONDITIONED_LOCATIONS = new Set([
-  "Attic-Unconditioned",
-  "Crawlspace",
-  "Basement-Unconditioned",
-  "Exterior-Wall",
-]);
-
 function ductRScaleFactor(room: ManualJRoom): number {
-  if (!room.duct_location || !DUCT_UNCONDITIONED_LOCATIONS.has(room.duct_location)) return 0;
+  // room.duct_location is a plain string at the type level (it comes from
+  // the DB via ManualJRoom, not the narrower DuctLocation type) even
+  // though the check constraint guarantees it's one of the enum values -
+  // Set<DuctLocation>.has() needs the cast for that same reason.
+  if (
+    !room.duct_location ||
+    !DUCT_UNCONDITIONED_LOCATIONS.has(room.duct_location as DuctLocation)
+  )
+    return 0;
   const r = room.duct_insulation_r_value;
   // null/undefined means no data yet - skip (0 duct loss), don't guess. A
   // literal 0 (or any value below the practical floor) is real data - a

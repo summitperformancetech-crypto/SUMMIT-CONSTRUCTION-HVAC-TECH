@@ -18,16 +18,23 @@ import {
   type WallExposureType,
 } from "@/lib/manualJ";
 import type { ExtractedRoom } from "@/lib/drawingExtraction";
+import { normalizeDuctLocation } from "@/lib/constants/ductLocations";
 import {
   RoomForm,
   EMPTY_ROOM_FORM,
   ROOM_LEVEL_OPTIONS,
+  UNASSIGNED_ZONE,
   type RoomFormValues,
 } from "@/components/room-form";
 
 export type RoomRow = ManualJRoom & {
   project_id: string;
   level: string;
+  // Provenance for duct_location/duct_insulation_r_value - not consumed by
+  // computeManualJ (hence not on ManualJRoom itself), only by the
+  // dirty-tracking in formToRoomPayload below.
+  duct_source: string | null;
+  duct_confidence: number | null;
 };
 
 const ATTIC_CONSTRUCTION_OPTIONS = [
@@ -57,6 +64,8 @@ type EnvelopeFormValues = {
   attic_construction_type: string;
   attic_insulation_type: string;
   foundation_type: string;
+  window_type: string;
+  window_count: string;
 };
 
 const ROOM_COLUMNS =
@@ -66,20 +75,30 @@ const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
 
 // The only Building Envelope fields a drawing extraction is allowed to fill.
 // ACH50, occupants, and indoor design temps are never populated from a drawing.
-// foundation_type isn't consumed by ManualJEnvelope/computeManualJ (see
-// migration 20260810210059_add_ducts.sql) - it's carried here only so
-// "Apply to Form" can fill it the same way as the R-values.
+// foundation_type/window_type/window_count aren't consumed by
+// ManualJEnvelope/computeManualJ (see migrations 20260810210059_add_ducts.sql
+// and 20260811005233_add_window_type_count.sql) - carried here only so
+// "Apply to Form" can fill them the same way as the R-values.
 export type ExtractableEnvelopeFields = {
   wall_insulation_r_value: number | null;
   ceiling_insulation_r_value: number | null;
   floor_insulation_r_value: number | null;
   foundation_type: string | null;
+  window_type: string | null;
+  window_count: number | null;
 };
 
 export type ApplyExtractedDataResult = {
   appliedEnvelope: boolean;
   roomsCreated: number;
   roomsUpdated: number;
+  // Set when the room-insert (or a duct write-through update) batch
+  // actually failed at the DB - distinct from roomsCreated/roomsUpdated
+  // both being 0 because there was genuinely nothing new to apply. Without
+  // this, a failed insert (e.g. a bad duct_location enum value tripping
+  // rooms_duct_location_check) looked identical in the UI to "already
+  // up to date".
+  error: string | null;
 };
 
 export type ManualJWorkflowHandle = {
@@ -110,6 +129,8 @@ function envelopeToForm(
   envelope: ManualJEnvelope,
   atticInsulationType: string | null,
   foundationType: string | null,
+  windowType: string | null,
+  windowCount: number | null,
 ): EnvelopeFormValues {
   return {
     wall_insulation_r_value: envelope.wall_insulation_r_value?.toString() ?? "",
@@ -126,6 +147,8 @@ function envelopeToForm(
     attic_construction_type: envelope.attic_construction_type,
     attic_insulation_type: atticInsulationType ?? "",
     foundation_type: foundationType ?? "",
+    window_type: windowType ?? "",
+    window_count: windowCount?.toString() ?? "",
   };
 }
 
@@ -155,7 +178,7 @@ function roomToForm(room: RoomRow): RoomFormValues {
     floor_exposed: room.floor_exposed,
     is_conditioned: room.is_conditioned,
     is_bedroom: room.is_bedroom,
-    zone_id: room.zone_id ?? "",
+    zone_id: room.zone_id ?? UNASSIGNED_ZONE,
     room_type: room.room_type ?? "",
     occupant_count: room.occupant_count?.toString() ?? "",
     sensible_gain_override: room.sensible_gain_override?.toString() ?? "",
@@ -178,7 +201,31 @@ function roomToForm(room: RoomRow): RoomFormValues {
   };
 }
 
-function formToRoomPayload(values: RoomFormValues) {
+// originalDuct is only passed by handleUpdateRoom (an existing room being
+// edited) - handleAddRoom has no prior duct state to compare against, so
+// every duct value entered on a new room is inherently a fresh manual
+// entry. When editing, if duct_location/duct_insulation_r_value come back
+// out unchanged from what's already on the room, the room's existing
+// duct_source (ai_extracted/default/manual/null) is preserved instead of
+// being stomped to 'manual' - editing an unrelated field (e.g. floor
+// area) must not silently erase AI-extraction provenance on fields the
+// tech never touched.
+function formToRoomPayload(
+  values: RoomFormValues,
+  originalDuct?: {
+    duct_location: string | null;
+    duct_insulation_r_value: number | null;
+    duct_source: string | null;
+  },
+) {
+  const zoneId =
+    values.zone_id === UNASSIGNED_ZONE ? null : toNullableString(values.zone_id);
+  const ductLocation = toNullableString(values.duct_location);
+  const ductR = toNullableNumber(values.duct_insulation_r_value);
+  const ductFieldsUnchanged =
+    originalDuct != null &&
+    ductLocation === originalDuct.duct_location &&
+    ductR === originalDuct.duct_insulation_r_value;
   return {
     name: values.name,
     level: values.level,
@@ -188,19 +235,18 @@ function formToRoomPayload(values: RoomFormValues) {
     floor_exposed: values.floor_exposed,
     is_conditioned: values.is_conditioned,
     is_bedroom: values.is_bedroom,
-    zone_id: toNullableString(values.zone_id),
+    zone_id: zoneId,
     room_type: toNullableString(values.room_type),
     occupant_count: toNullableNumber(values.occupant_count),
     sensible_gain_override: toNullableNumber(values.sensible_gain_override),
     latent_gain_override: toNullableNumber(values.latent_gain_override),
-    duct_location: toNullableString(values.duct_location),
-    duct_insulation_r_value: toNullableNumber(values.duct_insulation_r_value),
-    // Saving via this form is always a human action - overwrites whatever
-    // duct_source an extraction/fallback previously set (ai_extracted or
-    // default) with 'manual', since the tech has now confirmed/edited it
-    // directly. null when no duct_location is set at all (nothing to
-    // attribute a source to).
-    duct_source: toNullableString(values.duct_location) ? "manual" : null,
+    duct_location: ductLocation,
+    duct_insulation_r_value: ductR,
+    duct_source: ductFieldsUnchanged
+      ? originalDuct!.duct_source
+      : ductLocation
+        ? "manual"
+        : null,
     wall_north_len_ft: toNullableNumber(values.wall_north_len_ft),
     wall_south_len_ft: toNullableNumber(values.wall_south_len_ft),
     wall_east_len_ft: toNullableNumber(values.wall_east_len_ft),
@@ -233,6 +279,8 @@ export const ManualJWorkflow = forwardRef<
     initialRooms: RoomRow[];
     initialAtticInsulationType: string | null;
     initialFoundationType: string | null;
+    initialWindowType: string | null;
+    initialWindowCount: number | null;
     winterDesignTempF: number | null;
     summerDesignTempF: number | null;
     roomTypeDefaults: RoomTypeDefault[];
@@ -245,6 +293,8 @@ export const ManualJWorkflow = forwardRef<
     initialRooms,
     initialAtticInsulationType,
     initialFoundationType,
+    initialWindowType,
+    initialWindowCount,
     winterDesignTempF,
     summerDesignTempF,
     roomTypeDefaults,
@@ -253,7 +303,13 @@ export const ManualJWorkflow = forwardRef<
   ref,
 ) {
   const [envelopeForm, setEnvelopeForm] = useState(
-    envelopeToForm(initialEnvelope, initialAtticInsulationType, initialFoundationType),
+    envelopeToForm(
+      initialEnvelope,
+      initialAtticInsulationType,
+      initialFoundationType,
+      initialWindowType,
+      initialWindowCount,
+    ),
   );
   const [envelopeSaving, setEnvelopeSaving] = useState(false);
   const [envelopeError, setEnvelopeError] = useState<string | null>(null);
@@ -309,6 +365,8 @@ export const ManualJWorkflow = forwardRef<
         ...formToEnvelope(envelopeForm),
         attic_insulation_type: toNullableString(envelopeForm.attic_insulation_type),
         foundation_type: toNullableString(envelopeForm.foundation_type),
+        window_type: toNullableString(envelopeForm.window_type),
+        window_count: toNullableNumber(envelopeForm.window_count),
       })
       .eq("id", projectId);
     setEnvelopeSaving(false);
@@ -322,11 +380,14 @@ export const ManualJWorkflow = forwardRef<
   async function handleAddRoom(values: RoomFormValues) {
     const supabase = createClient();
     const payload = formToRoomPayload(values);
-    // New rooms default to the project's first zone unless the tech
-    // explicitly picked one (or explicitly picked "Unassigned", which
-    // formToRoomPayload already turns into null - only an untouched blank
-    // zone_id from EMPTY_ROOM_FORM gets defaulted here).
-    if (payload.zone_id == null && zones.length > 0) {
+    // New rooms default to the project's first zone only when the Zone
+    // dropdown was never touched (values.zone_id still EMPTY_ROOM_FORM's
+    // ""). An explicit "Unassigned" choice is UNASSIGNED_ZONE, not "" -
+    // formToRoomPayload already turns that into a real null, so checking
+    // payload.zone_id here would incorrectly catch both cases the same
+    // way the old bug did. Checking the pre-conversion values.zone_id is
+    // what actually distinguishes them.
+    if (values.zone_id === "" && zones.length > 0) {
       payload.zone_id = zones[0].id;
     }
     const { data, error } = await supabase
@@ -421,9 +482,20 @@ export const ManualJWorkflow = forwardRef<
 
   async function handleUpdateRoom(id: string, values: RoomFormValues) {
     const supabase = createClient();
+    const original = rooms.find((room) => room.id === id);
+    const payload = formToRoomPayload(
+      values,
+      original
+        ? {
+            duct_location: original.duct_location,
+            duct_insulation_r_value: original.duct_insulation_r_value,
+            duct_source: original.duct_source,
+          }
+        : undefined,
+    );
     const { data, error } = await supabase
       .from("rooms")
-      .update(formToRoomPayload(values))
+      .update(payload)
       .eq("id", id)
       .select(ROOM_COLUMNS)
       .single<RoomRow>();
@@ -455,6 +527,8 @@ export const ManualJWorkflow = forwardRef<
             "ceiling_insulation_r_value",
             "floor_insulation_r_value",
             "foundation_type",
+            "window_type",
+            "window_count",
           ] as const
         ).forEach((key) => {
           const extractedValue = extractedEnvelope[key];
@@ -469,6 +543,7 @@ export const ManualJWorkflow = forwardRef<
 
       let roomsCreated = 0;
       let roomsUpdated = 0;
+      let applyError: string | null = null;
       if (rooms.length === 0 && extractedRooms.length > 0) {
         const supabase = createClient();
         // Rooms created from a drawing extraction default to the project's
@@ -492,7 +567,15 @@ export const ManualJWorkflow = forwardRef<
           occupant_count: null,
           sensible_gain_override: null,
           latent_gain_override: null,
-          duct_location: room.duct_location?.value ?? null,
+          // normalizeDuctLocation is a last defensive layer: the server
+          // route already runs it (see applyDuctFallbackDefaults), but a
+          // human can also free-type an override value in the Unresolved
+          // badge (see FieldResolutionBadge) that reaches here via
+          // drawings-section.tsx's resolvedRoom - that text field isn't
+          // constrained to the enum at all. A value this can't map is
+          // dropped to null rather than sent to the DB, where it would
+          // fail rooms_duct_location_check for every room in this batch.
+          duct_location: normalizeDuctLocation(room.duct_location?.value),
           duct_insulation_r_value: room.duct_insulation_r_value?.value ?? null,
           duct_source: room.duct_source ?? null,
           duct_confidence: room.duct_confidence ?? null,
@@ -513,7 +596,9 @@ export const ManualJWorkflow = forwardRef<
           .select(ROOM_COLUMNS)
           .returns<RoomRow[]>();
 
-        if (!error && data) {
+        if (error) {
+          applyError = `Failed to create rooms: ${error.message}`;
+        } else if (data) {
           setRooms(data);
           roomsCreated = data.length;
         }
@@ -536,10 +621,17 @@ export const ManualJWorkflow = forwardRef<
         }
 
         const updatedRooms: RoomRow[] = [];
+        const updateErrors: string[] = [];
         for (const extractedRoom of extractedRooms) {
-          const ductLocation = extractedRoom.duct_location?.value ?? null;
+          const rawDuctLocation = extractedRoom.duct_location?.value ?? null;
+          // See the comment on the insert path above - same normalization,
+          // same reason (this value can come from a free-typed Unresolved
+          // override, not just the AI). Presence is judged on the raw
+          // value so a room isn't skipped entirely just because its
+          // location text was unmappable while its R-value is still good.
+          const ductLocation = normalizeDuctLocation(rawDuctLocation);
           const ductR = extractedRoom.duct_insulation_r_value?.value ?? null;
-          if (ductLocation == null && ductR == null) continue;
+          if (rawDuctLocation == null && ductR == null) continue;
 
           const key = extractedRoom.name?.trim().toLowerCase();
           if (!key || nameCounts.get(key) !== 1) continue;
@@ -558,10 +650,15 @@ export const ManualJWorkflow = forwardRef<
             .select(ROOM_COLUMNS)
             .single<RoomRow>();
 
-          if (!error && data) {
+          if (error) {
+            updateErrors.push(`${target.name}: ${error.message}`);
+          } else if (data) {
             updatedRooms.push(data);
             roomsUpdated += 1;
           }
+        }
+        if (updateErrors.length > 0) {
+          applyError = `Failed to update duct data on ${updateErrors.length} room(s): ${updateErrors.join("; ")}`;
         }
 
         if (updatedRooms.length > 0) {
@@ -578,7 +675,7 @@ export const ManualJWorkflow = forwardRef<
         });
       });
 
-      return { appliedEnvelope, roomsCreated, roomsUpdated };
+      return { appliedEnvelope, roomsCreated, roomsUpdated, error: applyError };
     },
   }));
 
@@ -647,6 +744,16 @@ export const ManualJWorkflow = forwardRef<
             label="Foundation type"
             value={envelopeForm.foundation_type}
             onChange={(v) => updateEnvelopeField("foundation_type", v)}
+          />
+          <EnvelopeTextField
+            label="Window type"
+            value={envelopeForm.window_type}
+            onChange={(v) => updateEnvelopeField("window_type", v)}
+          />
+          <EnvelopeField
+            label="Window count"
+            value={envelopeForm.window_count}
+            onChange={(v) => updateEnvelopeField("window_count", v)}
           />
         </div>
         <p className="mt-2 text-xs text-brand-grey-text">

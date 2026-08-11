@@ -2,6 +2,7 @@
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import type { ManualJZone, RoomTypeDefault } from "@/lib/manualJ";
+import { DUCT_LOCATION_OPTIONS as DUCT_LOCATION_ENUM_OPTIONS } from "@/lib/constants/ductLocations";
 
 export type RoomFormValues = {
   name: string;
@@ -57,16 +58,21 @@ export const ROOM_TYPE_OPTIONS = [
   { value: "Other", label: "Other" },
 ] as const;
 
+// Re-exported for existing importers (e.g. drawings-section.tsx's review
+// panel) - the canonical list now lives in lib/constants/ductLocations.ts,
+// this just adds the form's own "unset" option on top.
 export const DUCT_LOCATION_OPTIONS = [
   { value: "", label: "—" },
-  { value: "Attic-Unconditioned", label: "Attic (unconditioned)" },
-  { value: "Attic-Conditioned", label: "Attic (conditioned/sealed)" },
-  { value: "Crawlspace", label: "Crawlspace" },
-  { value: "Basement-Conditioned", label: "Basement (conditioned)" },
-  { value: "Basement-Unconditioned", label: "Basement (unconditioned)" },
-  { value: "Conditioned-Space", label: "Conditioned space" },
-  { value: "Exterior-Wall", label: "Exterior wall" },
+  ...DUCT_LOCATION_ENUM_OPTIONS,
 ] as const;
+
+// Distinct from RoomFormValues.zone_id's default "" so handleAddRoom can
+// tell "dropdown never touched" (still "") from "explicitly chose no
+// zone" (this sentinel) - both used to collapse to the same empty string,
+// which meant an explicit Unassigned choice silently got overridden by
+// the project's-first-zone default. See handleAddRoom/handleUpdateRoom in
+// manual-j-workflow.tsx.
+export const UNASSIGNED_ZONE = "__unassigned__";
 
 export const WALL_EXPOSURE_OPTIONS = [
   { value: "exterior", label: "Exterior (outside air)" },
@@ -197,8 +203,18 @@ export function RoomForm({
           label="Zone / AHU"
           value={values.zone_id}
           onChange={(v) => update("zone_id", v)}
+          required={false}
           options={[
-            { value: "", label: "Unassigned" },
+            // Only shown/selected while untouched on a new room (see
+            // EMPTY_ROOM_FORM.zone_id and handleAddRoom's default-to-
+            // first-zone logic) - not a real, submittable choice distinct
+            // from Unassigned, just makes that state visible instead of
+            // leaving the control looking arbitrarily blank.
+            {
+              value: "",
+              label: zones.length > 0 ? "— Defaults to first zone —" : "— Unassigned —",
+            },
+            { value: UNASSIGNED_ZONE, label: "Unassigned" },
             ...zones.map((zone) => ({
               value: zone.id,
               label: zone.ahu_label ? `${zone.name} (${zone.ahu_label})` : zone.name,
@@ -471,16 +487,18 @@ function SelectField({
   value,
   onChange,
   options,
+  required = true,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   options: ReadonlyArray<{ value: string; label: string }>;
+  required?: boolean;
 }) {
   return (
     <FieldWrap label={label}>
       <select
-        required
+        required={required}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className={inputClass}

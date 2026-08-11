@@ -28,6 +28,14 @@
 --    project (exceeding, not violating, the zone's actual code minimum).
 --    Crawlspace default of R-6 matches both the spec and verified IECC
 --    (uniform R-6 for crawlspace/basement/garage regardless of zone).
+--
+-- rooms_duct_location_check below is mirrored in application code at
+-- lib/constants/ductLocations.ts (DUCT_LOCATION_VALUES) - that file is now
+-- the single source of truth for the app side (previously this list was
+-- duplicated independently in lib/manualJ.ts and room-form.tsx and had
+-- already drifted once). Changing the valid set means updating that file
+-- AND writing a new migration to alter this constraint to match - the two
+-- don't auto-sync.
 alter table public.rooms
   add column if not exists duct_location text,
   add column if not exists duct_insulation_r_value numeric,

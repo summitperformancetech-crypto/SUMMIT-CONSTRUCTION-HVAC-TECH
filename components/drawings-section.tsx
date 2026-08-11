@@ -52,6 +52,7 @@ export function DrawingsSection({
   const [reviewingId, setReviewingId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyMessage, setApplyMessage] = useState<string | null>(null);
+  const [applyMessageIsError, setApplyMessageIsError] = useState(false);
   const [resolutions, setResolutions] = useState<FieldResolution[]>(initialFieldResolutions);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -213,6 +214,7 @@ export function DrawingsSection({
     if (!drawing.extracted_data) return;
     setApplying(true);
     setApplyMessage(null);
+    setApplyMessageIsError(false);
 
     const envelope: ExtractableEnvelopeFields = {
       wall_insulation_r_value: resolvedEnvelopeNumber(
@@ -231,6 +233,14 @@ export function DrawingsSection({
         "foundation_type",
         drawing.extracted_data.building_envelope.foundation_type.value,
       ),
+      window_type: resolvedEnvelopeString(
+        "window_type",
+        drawing.extracted_data.building_envelope.window_type.value,
+      ),
+      window_count: resolvedEnvelopeNumber(
+        "window_count",
+        drawing.extracted_data.building_envelope.window_count.value,
+      ),
     };
 
     const resolvedRooms = drawing.extracted_data.rooms.map((room, index) =>
@@ -238,25 +248,37 @@ export function DrawingsSection({
     );
     const result = await onApply(envelope, resolvedRooms);
 
-    const supabase = createClient();
-    await supabase
-      .from("drawings")
-      .update({ applied_to_field_data: true })
-      .eq("id", drawing.id);
+    // Only mark applied_to_field_data on an actual (even partial) success -
+    // this permanently disables the Apply button (see the "Already
+    // applied" state below), so marking it after a failed insert would
+    // strand the drawing with no way to retry once the underlying issue
+    // (e.g. a bad duct_location value) is fixed.
+    if (!result.error) {
+      const supabase = createClient();
+      await supabase
+        .from("drawings")
+        .update({ applied_to_field_data: true })
+        .eq("id", drawing.id);
 
-    setDrawings((prev) =>
-      prev.map((d) => (d.id === drawing.id ? { ...d, applied_to_field_data: true } : d)),
-    );
+      setDrawings((prev) =>
+        prev.map((d) => (d.id === drawing.id ? { ...d, applied_to_field_data: true } : d)),
+      );
+    }
 
-    const parts: string[] = [];
-    if (result.appliedEnvelope) parts.push("filled blank Building Envelope fields");
-    if (result.roomsCreated > 0) parts.push(`created ${result.roomsCreated} room(s)`);
-    if (result.roomsUpdated > 0) parts.push(`updated ducts on ${result.roomsUpdated} room(s)`);
-    setApplyMessage(
-      parts.length > 0
-        ? `Applied: ${parts.join(", ")}.`
-        : "Nothing to apply — Building Envelope fields were already filled, rooms already exist, and no duct data matched an existing room by name.",
-    );
+    if (result.error) {
+      setApplyMessageIsError(true);
+      setApplyMessage(`Apply failed — ${result.error}`);
+    } else {
+      const parts: string[] = [];
+      if (result.appliedEnvelope) parts.push("filled blank Building Envelope fields");
+      if (result.roomsCreated > 0) parts.push(`created ${result.roomsCreated} room(s)`);
+      if (result.roomsUpdated > 0) parts.push(`updated ducts on ${result.roomsUpdated} room(s)`);
+      setApplyMessage(
+        parts.length > 0
+          ? `Applied: ${parts.join(", ")}.`
+          : "Nothing to apply — Building Envelope fields were already filled, rooms already exist, and no duct data matched an existing room by name.",
+      );
+    }
     setApplying(false);
   }
 
@@ -346,6 +368,7 @@ export function DrawingsSection({
           drawing={reviewingDrawing}
           applying={applying}
           applyMessage={applyMessage}
+          applyMessageIsError={applyMessageIsError}
           onApply={() => handleApply(reviewingDrawing)}
           resolutionMap={resolutionMap}
           onResolved={handleResolved}
@@ -360,6 +383,7 @@ function ReviewPanel({
   drawing,
   applying,
   applyMessage,
+  applyMessageIsError,
   onApply,
   resolutionMap,
   onResolved,
@@ -368,6 +392,7 @@ function ReviewPanel({
   drawing: DrawingRow;
   applying: boolean;
   applyMessage: string | null;
+  applyMessageIsError: boolean;
   onApply: () => void;
   resolutionMap: Map<string, FieldResolution>;
   onResolved: (resolution: FieldResolution) => void;
@@ -570,7 +595,14 @@ function ReviewPanel({
               ? "Already applied"
               : "Apply to Form"}
         </button>
-        {applyMessage && <span className="text-sm text-brand-silver">{applyMessage}</span>}
+        {applyMessage && (
+          <span
+            className={`text-sm ${applyMessageIsError ? "text-red-400" : "text-brand-silver"}`}
+            role={applyMessageIsError ? "alert" : undefined}
+          >
+            {applyMessage}
+          </span>
+        )}
       </div>
     </div>
   );

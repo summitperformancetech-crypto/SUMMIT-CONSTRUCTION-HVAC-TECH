@@ -18,6 +18,8 @@ export function ProjectWorkspace({
   initialEnvelope,
   initialAtticInsulationType,
   initialFoundationType,
+  initialWindowType,
+  initialWindowCount,
   initialRooms,
   initialDrawings,
   initialFieldResolutions,
@@ -31,6 +33,8 @@ export function ProjectWorkspace({
   initialEnvelope: ManualJEnvelope;
   initialAtticInsulationType: string | null;
   initialFoundationType: string | null;
+  initialWindowType: string | null;
+  initialWindowCount: number | null;
   initialRooms: RoomRow[];
   initialDrawings: DrawingRow[];
   initialFieldResolutions: FieldResolution[];
@@ -60,7 +64,7 @@ export function ProjectWorkspace({
             initialFieldResolutions={initialFieldResolutions}
             onApply={(envelope, rooms) =>
               manualJRef.current?.applyExtractedData(envelope, rooms) ??
-              Promise.resolve({ appliedEnvelope: false, roomsCreated: 0, roomsUpdated: 0 })
+              Promise.resolve({ appliedEnvelope: false, roomsCreated: 0, roomsUpdated: 0, error: null })
             }
           />
         </div>
@@ -72,6 +76,8 @@ export function ProjectWorkspace({
         initialEnvelope={initialEnvelope}
         initialAtticInsulationType={initialAtticInsulationType}
         initialFoundationType={initialFoundationType}
+        initialWindowType={initialWindowType}
+        initialWindowCount={initialWindowCount}
         initialRooms={initialRooms}
         winterDesignTempF={winterDesignTempF}
         summerDesignTempF={summerDesignTempF}

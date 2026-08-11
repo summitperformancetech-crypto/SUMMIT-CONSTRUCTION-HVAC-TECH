@@ -40,6 +40,8 @@ type Project = {
   attic_construction_type: AtticConstructionType;
   attic_insulation_type: string | null;
   foundation_type: string | null;
+  window_type: string | null;
+  window_count: number | null;
 };
 
 const ROOM_COLUMNS =
@@ -81,7 +83,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -117,37 +119,45 @@ export default async function ProjectDetailPage({
 
   const climateZone = climateZoneRows?.[0] ?? null;
 
-  const { data: rooms } = await supabase
-    .from("rooms")
-    .select(ROOM_COLUMNS)
-    .eq("project_id", project.id)
-    .order("created_at", { ascending: true })
-    .returns<RoomRow[]>();
-
-  const { data: drawings } = await supabase
-    .from("drawings")
-    .select(DRAWING_COLUMNS)
-    .eq("project_id", project.id)
-    .order("created_at", { ascending: false })
-    .returns<DrawingRow[]>();
-
-  const { data: zones } = await supabase
-    .from("zones")
-    .select(ZONE_COLUMNS)
-    .eq("project_id", project.id)
-    .order("created_at", { ascending: true })
-    .returns<ManualJZone[]>();
-
-  const { data: roomTypeDefaults } = await supabase
-    .from("room_type_defaults")
-    .select("room_type, default_occupants, sensible_btu_per_person, latent_btu_per_person, appliance_sensible_btu")
-    .returns<RoomTypeDefault[]>();
-
-  const { data: fieldResolutions } = await supabase
-    .from("field_resolutions")
-    .select(FIELD_RESOLUTION_COLUMNS)
-    .eq("project_id", project.id)
-    .returns<FieldResolution[]>();
+  // Independent of each other (and of the climate zone lookup above) - no
+  // reason to wait on each round trip serially.
+  const [
+    { data: rooms },
+    { data: drawings },
+    { data: zones },
+    { data: roomTypeDefaults },
+    { data: fieldResolutions },
+  ] = await Promise.all([
+    supabase
+      .from("rooms")
+      .select(ROOM_COLUMNS)
+      .eq("project_id", project.id)
+      .order("created_at", { ascending: true })
+      .returns<RoomRow[]>(),
+    supabase
+      .from("drawings")
+      .select(DRAWING_COLUMNS)
+      .eq("project_id", project.id)
+      .order("created_at", { ascending: false })
+      .returns<DrawingRow[]>(),
+    supabase
+      .from("zones")
+      .select(ZONE_COLUMNS)
+      .eq("project_id", project.id)
+      .order("created_at", { ascending: true })
+      .returns<ManualJZone[]>(),
+    supabase
+      .from("room_type_defaults")
+      .select(
+        "room_type, default_occupants, sensible_btu_per_person, latent_btu_per_person, appliance_sensible_btu",
+      )
+      .returns<RoomTypeDefault[]>(),
+    supabase
+      .from("field_resolutions")
+      .select(FIELD_RESOLUTION_COLUMNS)
+      .eq("project_id", project.id)
+      .returns<FieldResolution[]>(),
+  ]);
 
   // Count is computed at page-load time from the same drawings data already
   // fetched above - it will reflect newly-resolved fields on next
@@ -238,6 +248,8 @@ export default async function ProjectDetailPage({
         initialEnvelope={envelope}
         initialAtticInsulationType={project.attic_insulation_type}
         initialFoundationType={project.foundation_type}
+        initialWindowType={project.window_type}
+        initialWindowCount={project.window_count}
         initialRooms={rooms ?? []}
         initialDrawings={drawings ?? []}
         winterDesignTempF={climateZone?.winter_design_temp_f ?? null}

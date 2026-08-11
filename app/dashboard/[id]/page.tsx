@@ -10,7 +10,7 @@ import type {
   RoomTypeDefault,
 } from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
-import { DUCT_RUN_COLUMNS, type DuctRunRow } from "@/components/duct-design-section";
+import type { DuctRunRow } from "@/components/duct-design-section";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import { resolveCounty } from "@/lib/countyLookup";
 import {
@@ -59,6 +59,20 @@ const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
 
 const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
+
+// Duplicated from duct-design-section.tsx's own DUCT_RUN_COLUMNS rather
+// than imported - that file is a "use client" module, and importing a
+// runtime value (not just a type) from a client component into this
+// server component turns it into a client-reference object instead of the
+// actual string, which broke Supabase's query builder (it calls
+// .split(",") on the select string internally) with a
+// "(intermediate value)....split is not a function" error at request
+// time. Same reason ROOM_COLUMNS/ZONE_COLUMNS above are already
+// independently duplicated in manual-j-workflow.tsx rather than shared -
+// `import type` across that boundary is fine (erased at compile time),
+// runtime values are not.
+const DUCT_RUN_COLUMNS =
+  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 
 type ClimateZoneReference = {
   state: string;

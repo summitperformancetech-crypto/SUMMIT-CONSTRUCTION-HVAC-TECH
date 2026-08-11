@@ -26,6 +26,8 @@ import {
   UNASSIGNED_ZONE,
   type RoomFormValues,
 } from "@/components/room-form";
+import { DuctDesignSection, type DuctRunRow } from "@/components/duct-design-section";
+import type { DuctSizingTableRow } from "@/lib/manualD";
 
 export type RoomRow = ManualJRoom & {
   project_id: string;
@@ -285,6 +287,10 @@ export const ManualJWorkflow = forwardRef<
     summerDesignTempF: number | null;
     roomTypeDefaults: RoomTypeDefault[];
     initialZones: ManualJZone[];
+    initialAvailableStaticPressureIwc: number | null;
+    initialSupplyAirTempF: number | null;
+    initialDuctRuns: DuctRunRow[];
+    ductSizingTable: DuctSizingTableRow[];
   }
 >(function ManualJWorkflow(
   {
@@ -299,6 +305,10 @@ export const ManualJWorkflow = forwardRef<
     summerDesignTempF,
     roomTypeDefaults,
     initialZones,
+    initialAvailableStaticPressureIwc,
+    initialSupplyAirTempF,
+    initialDuctRuns,
+    ductSizingTable,
   },
   ref,
 ) {
@@ -1114,12 +1124,26 @@ export const ManualJWorkflow = forwardRef<
             </table>
           </div>
           <p className="mt-3 text-xs text-brand-grey-text">
-            Each zone's ventilation (ASHRAE 62.2) is computed from that zone's own bedroom
+            Each zone&apos;s ventilation (ASHRAE 62.2) is computed from that zone&apos;s own bedroom
             count and floor area, then summed for the whole-project total above — matching
             how the reference report computes ventilation per AHU rather than once for the
             whole house.
           </p>
         </section>
+      )}
+
+      {canCalculate && results && rooms.length > 0 && zones.length > 0 && (
+        <DuctDesignSection
+          projectId={projectId}
+          rooms={rooms}
+          zones={zones}
+          roomResults={results.rooms}
+          indoorCoolingDesignTempF={envelope.indoor_design_temp_cooling_f}
+          initialAvailableStaticPressureIwc={initialAvailableStaticPressureIwc}
+          initialSupplyAirTempF={initialSupplyAirTempF}
+          initialDuctRuns={initialDuctRuns}
+          ductSizingTable={ductSizingTable}
+        />
       )}
     </div>
   );

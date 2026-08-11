@@ -8,7 +8,9 @@ import {
   type ManualJWorkflowHandle,
   type RoomRow,
 } from "@/components/manual-j-workflow";
+import type { DuctRunRow } from "@/components/duct-design-section";
 import type { ManualJEnvelope, ManualJZone, RoomTypeDefault } from "@/lib/manualJ";
+import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { DrawingRow } from "@/lib/drawingExtraction";
 import type { FieldResolution } from "@/lib/fieldResolutions";
 
@@ -27,6 +29,10 @@ export function ProjectWorkspace({
   summerDesignTempF,
   roomTypeDefaults,
   initialZones,
+  initialAvailableStaticPressureIwc,
+  initialSupplyAirTempF,
+  initialDuctRuns,
+  ductSizingTable,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -42,6 +48,10 @@ export function ProjectWorkspace({
   summerDesignTempF: number | null;
   roomTypeDefaults: RoomTypeDefault[];
   initialZones: ManualJZone[];
+  initialAvailableStaticPressureIwc: number | null;
+  initialSupplyAirTempF: number | null;
+  initialDuctRuns: DuctRunRow[];
+  ductSizingTable: DuctSizingTableRow[];
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -83,6 +93,10 @@ export function ProjectWorkspace({
         summerDesignTempF={summerDesignTempF}
         roomTypeDefaults={roomTypeDefaults}
         initialZones={initialZones}
+        initialAvailableStaticPressureIwc={initialAvailableStaticPressureIwc}
+        initialSupplyAirTempF={initialSupplyAirTempF}
+        initialDuctRuns={initialDuctRuns}
+        ductSizingTable={ductSizingTable}
       />
     </>
   );

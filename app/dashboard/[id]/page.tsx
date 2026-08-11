@@ -10,6 +10,8 @@ import type {
   RoomTypeDefault,
 } from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
+import { DUCT_RUN_COLUMNS, type DuctRunRow } from "@/components/duct-design-section";
+import type { DuctSizingTableRow } from "@/lib/manualD";
 import { resolveCounty } from "@/lib/countyLookup";
 import {
   countUnresolvedFields,
@@ -42,6 +44,15 @@ type Project = {
   foundation_type: string | null;
   window_type: string | null;
   window_count: number | null;
+  available_static_pressure_iwc: number | null;
+  supply_air_temp_f: number | null;
+};
+
+type DuctSizingTableDbRow = {
+  friction_rate: number;
+  diameter_in: number;
+  cfm: number;
+  velocity_fpm: number;
 };
 
 const ROOM_COLUMNS =
@@ -83,7 +94,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -127,6 +138,8 @@ export default async function ProjectDetailPage({
     { data: zones },
     { data: roomTypeDefaults },
     { data: fieldResolutions },
+    { data: ductRuns },
+    { data: ductSizingRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -157,7 +170,27 @@ export default async function ProjectDetailPage({
       .select(FIELD_RESOLUTION_COLUMNS)
       .eq("project_id", project.id)
       .returns<FieldResolution[]>(),
+    supabase
+      .from("duct_runs")
+      .select(DUCT_RUN_COLUMNS)
+      .eq("project_id", project.id)
+      .order("created_at", { ascending: true })
+      .returns<DuctRunRow[]>(),
+    // Global reference data, not project-scoped - see migration
+    // 20260811014540_add_manual_d.sql for how these rows were derived.
+    supabase
+      .from("duct_sizing_tables")
+      .select("friction_rate, diameter_in, cfm, velocity_fpm")
+      .eq("duct_type", "round")
+      .returns<DuctSizingTableDbRow[]>(),
   ]);
+
+  const ductSizingTable: DuctSizingTableRow[] = (ductSizingRows ?? []).map((r) => ({
+    frictionRate: r.friction_rate,
+    diameterIn: r.diameter_in,
+    cfm: r.cfm,
+    velocityFpm: r.velocity_fpm,
+  }));
 
   // Count is computed at page-load time from the same drawings data already
   // fetched above - it will reflect newly-resolved fields on next
@@ -257,6 +290,10 @@ export default async function ProjectDetailPage({
         roomTypeDefaults={roomTypeDefaults ?? []}
         initialFieldResolutions={fieldResolutions ?? []}
         initialZones={zones ?? []}
+        initialAvailableStaticPressureIwc={project.available_static_pressure_iwc}
+        initialSupplyAirTempF={project.supply_air_temp_f}
+        initialDuctRuns={ductRuns ?? []}
+        ductSizingTable={ductSizingTable}
       />
     </div>
   );

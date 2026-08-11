@@ -175,7 +175,7 @@ export function RoomForm({
   return (
     <form
       onSubmit={handleSubmit}
-      className="space-y-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4"
+      className="space-y-4 rounded-lg border border-brand-gold/50 bg-zinc-900 p-4"
     >
       <div className="grid grid-cols-2 gap-3">
         <TextField
@@ -257,7 +257,7 @@ export function RoomForm({
         </p>
       )}
 
-      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-brand-bg p-3">
+      <fieldset className="space-y-3 rounded-md border border-brand-gold/50 bg-brand-bg p-3">
         <legend className="px-1 text-sm font-medium text-brand-silver">Internal Gains</legend>
         <div className="grid grid-cols-2 gap-3">
           <SelectField
@@ -291,7 +291,7 @@ export function RoomForm({
         </p>
       </fieldset>
 
-      <fieldset className="space-y-3 rounded-md border border-zinc-800 bg-brand-bg p-3">
+      <fieldset className="space-y-3 rounded-md border border-brand-gold/50 bg-brand-bg p-3">
         <legend className="px-1 text-sm font-medium text-brand-silver">Ducts</legend>
         <div className="grid grid-cols-2 gap-3">
           <SelectField
@@ -394,14 +394,14 @@ export function RoomForm({
         <button
           type="submit"
           disabled={saving}
-          className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+          className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
         >
           {saving ? "Saving…" : submitLabel}
         </button>
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
+          className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-brand-gold-hover hover:text-brand-gold-hover"
         >
           Cancel
         </button>
@@ -411,7 +411,7 @@ export function RoomForm({
 }
 
 const inputClass =
-  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze";
+  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold";
 
 function TextField({
   label,
@@ -454,7 +454,7 @@ function WallDirectionField({
   onExposureChange: (value: string) => void;
 }) {
   return (
-    <div className="space-y-1.5 rounded-md border border-zinc-800 bg-brand-bg p-2">
+    <div className="space-y-1.5 rounded-md border border-brand-gold/50 bg-brand-bg p-2">
       <NumberField label={`${label} length (ft)`} value={lengthValue} onChange={onLengthChange} />
       <SelectField
         label={`${label} exposure`}
@@ -532,7 +532,7 @@ function CheckboxField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 accent-brand-bronze"
+        className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 accent-brand-gold"
       />
       {label}
     </label>

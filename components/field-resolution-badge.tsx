@@ -35,7 +35,7 @@ export function FieldResolutionBadge({
       <span
         className={`rounded-full border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
           accepted
-            ? "border-emerald-600/40 text-emerald-400"
+            ? "border-brand-success/40 text-brand-success"
             : "border-sky-500/40 text-sky-400"
         }`}
         title={
@@ -101,7 +101,7 @@ export function FieldResolutionBadge({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="rounded-full border border-brand-bronze/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-bronze-text transition hover:border-brand-bronze-hover hover:bg-brand-bronze/10"
+        className="rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-gold-hover transition hover:border-brand-gold-hover hover:bg-brand-gold-base/40"
       >
         Unresolved
       </button>
@@ -119,7 +119,7 @@ export function FieldResolutionBadge({
               type="text"
               value={draftValue}
               onChange={(e) => setDraftValue(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-brand-bg px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+              className="w-full rounded-md border border-zinc-700 bg-brand-bg px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
             />
           </div>
           {valueDiffers && (
@@ -131,7 +131,7 @@ export function FieldResolutionBadge({
                 value={overrideReason}
                 onChange={(e) => setOverrideReason(e.target.value)}
                 rows={2}
-                className="w-full rounded-md border border-zinc-700 bg-brand-bg px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+                className="w-full rounded-md border border-zinc-700 bg-brand-bg px-2 py-1 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
               />
             </div>
           )}
@@ -142,7 +142,7 @@ export function FieldResolutionBadge({
               disabled={saving || !hasAiValue}
               onClick={() => save("accepted")}
               title={!hasAiValue ? "No AI value was extracted — enter one manually and use Override" : undefined}
-              className="rounded-md bg-brand-bronze px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-40"
+              className="rounded-md bg-brand-gold px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-40"
             >
               Accept AI Value
             </button>
@@ -158,7 +158,7 @@ export function FieldResolutionBadge({
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-brand-grey-text transition hover:border-zinc-500"
+              className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs text-brand-grey-text transition hover:border-brand-gold-hover"
             >
               Cancel
             </button>

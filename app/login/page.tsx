@@ -37,17 +37,17 @@ export default function LoginPage() {
     <main className="flex flex-1 items-center justify-center px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight text-brand-silver-highlight">
+          <h1 className="text-2xl font-semibold tracking-tight text-brand-gold">
             Summit
           </h1>
-          <p className="mt-1 text-sm text-brand-bronze-text">
+          <p className="mt-1 text-sm text-brand-gold">
             Restore. Protect. Perform.
           </p>
         </div>
 
         <form
           onSubmit={handleSubmit}
-          className="space-y-4 rounded-lg border border-zinc-800 bg-brand-bg p-6"
+          className="space-y-4 rounded-lg border border-brand-gold/50 bg-brand-bg p-6"
         >
           <div>
             <label
@@ -63,7 +63,7 @@ export default function LoginPage() {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
             />
           </div>
 
@@ -81,7 +81,7 @@ export default function LoginPage() {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+              className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
             />
           </div>
 
@@ -94,7 +94,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-md bg-brand-bronze px-3 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+            className="w-full rounded-md bg-brand-gold px-3 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
           >
             {loading ? "Signing in…" : "Sign in"}
           </button>

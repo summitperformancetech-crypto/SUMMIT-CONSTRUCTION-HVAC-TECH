@@ -26,8 +26,8 @@ const STATUS_LABEL: Record<DrawingRow["extraction_status"], string> = {
 };
 
 const STATUS_CLASS: Record<DrawingRow["extraction_status"], string> = {
-  pending: "border-brand-bronze/40 text-brand-bronze-text",
-  completed: "border-emerald-600/40 text-emerald-400",
+  pending: "border-brand-gold-base bg-brand-gold-base/25 text-brand-gold-hover",
+  completed: "border-brand-success/40 text-brand-success",
   failed: "border-red-800 text-red-400",
 };
 
@@ -261,8 +261,8 @@ export function DrawingsSection({
   }
 
   return (
-    <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
-      <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">Drawings</h2>
+    <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+      <h2 className="mb-4 text-lg font-semibold text-brand-gold">Drawings</h2>
 
       <div
         onClick={() => fileInputRef.current?.click()}
@@ -276,8 +276,8 @@ export function DrawingsSection({
         tabIndex={0}
         className={`cursor-pointer rounded-lg border-2 border-dashed px-6 py-10 text-center transition ${
           dragActive
-            ? "border-brand-bronze bg-brand-bronze/5"
-            : "border-zinc-700 bg-zinc-900 hover:border-zinc-500"
+            ? "border-brand-gold bg-brand-gold/15"
+            : "border-zinc-700 bg-zinc-900 hover:border-brand-gold-hover"
         }`}
       >
         <p className="text-sm font-medium text-brand-silver-highlight">
@@ -310,12 +310,12 @@ export function DrawingsSection({
           {drawings.map((drawing) => (
             <li
               key={drawing.id}
-              className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
+              className="flex items-center justify-between rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3"
             >
               <div>
                 <p className="text-sm font-medium text-brand-silver-highlight">{drawing.file_name}</p>
                 {drawing.applied_to_field_data && (
-                  <p className="text-xs text-emerald-400">Applied to form</p>
+                  <p className="text-xs text-brand-success">Applied to form</p>
                 )}
               </div>
               <div className="flex items-center gap-3">
@@ -329,7 +329,7 @@ export function DrawingsSection({
                     onClick={() =>
                       setReviewingId((current) => (current === drawing.id ? null : drawing.id))
                     }
-                    className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
+                    className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-brand-gold-hover hover:text-brand-gold-hover"
                   >
                     {reviewingId === drawing.id ? "Hide" : "Review"}
                   </button>
@@ -377,12 +377,12 @@ function ReviewPanel({
   const orientation = data.orientation;
 
   return (
-    <div className="mt-4 space-y-4 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+    <div className="mt-4 space-y-4 rounded-lg border border-brand-gold/50 bg-zinc-900 p-4">
       <div
         className={`rounded-md border px-3 py-2 text-xs ${
           orientation?.detected
-            ? "border-emerald-600/40 bg-emerald-950 text-emerald-300"
-            : "border-brand-bronze/30 bg-brand-bronze/5 text-brand-bronze-text"
+            ? "border-brand-success/40 bg-brand-success/10 text-brand-success"
+            : "border-brand-gold/50 bg-brand-gold/10 text-brand-gold"
         }`}
       >
         {orientation?.detected ? (
@@ -399,7 +399,7 @@ function ReviewPanel({
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-brand-silver-highlight">Building Envelope</h3>
+        <h3 className="mb-2 text-sm font-semibold text-brand-gold">Building Envelope</h3>
         <dl className="space-y-2 text-sm">
           <FieldRow
             label="Wall insulation (R)"
@@ -460,7 +460,7 @@ function ReviewPanel({
       </div>
 
       <div>
-        <h3 className="mb-2 text-sm font-semibold text-brand-silver-highlight">
+        <h3 className="mb-2 text-sm font-semibold text-brand-gold">
           Rooms ({data.rooms.length})
         </h3>
         {data.rooms.length === 0 ? (
@@ -470,7 +470,7 @@ function ReviewPanel({
             {data.rooms.map((room, index) => (
               <li
                 key={index}
-                className="rounded-md border border-zinc-800 bg-brand-bg px-3 py-2 text-sm"
+                className="rounded-md border border-brand-gold/50 bg-brand-bg px-3 py-2 text-sm"
               >
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-brand-silver-highlight">{room.name}</span>
@@ -498,9 +498,9 @@ function ReviewPanel({
                     : "windows unknown"}
                 </p>
                 {room.unresolved && room.reason && (
-                  <p className="mt-1 text-xs text-brand-bronze-text">{room.reason}</p>
+                  <p className="mt-1 text-xs text-brand-gold">{room.reason}</p>
                 )}
-                <div className="mt-2 flex items-center gap-2 border-t border-zinc-800 pt-2">
+                <div className="mt-2 flex items-center gap-2 border-t border-brand-gold/50 pt-2">
                   <span className="text-xs text-brand-grey-text">
                     Ducts: {room.duct_location?.value ?? "—"}
                     {room.duct_insulation_r_value?.value != null &&
@@ -549,7 +549,7 @@ function ReviewPanel({
         )}
       </div>
 
-      <div className="rounded-md border border-brand-bronze/30 bg-brand-bronze/5 px-3 py-3 text-xs text-brand-bronze-text">
+      <div className="rounded-md border border-brand-gold/50 bg-brand-gold/10 px-3 py-3 text-xs text-brand-gold">
         <p className="font-semibold">Always entered manually — never auto-extracted:</p>
         <ul className="mt-1 list-inside list-disc space-y-0.5">
           <li>ACH50 (infiltration)</li>
@@ -562,7 +562,7 @@ function ReviewPanel({
         <button
           onClick={onApply}
           disabled={applying || drawing.applied_to_field_data}
-          className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+          className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
         >
           {applying
             ? "Applying…"
@@ -592,7 +592,7 @@ function FieldRow({
   onResolved: (resolution: FieldResolution) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-zinc-800 pb-2">
+    <div className="flex items-center justify-between gap-4 border-b border-brand-gold/50 pb-2">
       <dt className="text-brand-grey-text">{label}</dt>
       <dd className="flex items-center gap-2 text-right font-medium text-brand-silver-highlight">
         {field.value ?? "—"}

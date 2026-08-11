@@ -584,8 +584,8 @@ export const ManualJWorkflow = forwardRef<
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
-        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">
+      <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-gold">
           Building Envelope
         </h2>
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -689,18 +689,18 @@ export const ManualJWorkflow = forwardRef<
           <button
             onClick={handleSaveEnvelope}
             disabled={envelopeSaving}
-            className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
           >
             {envelopeSaving ? "Saving…" : "Save Envelope"}
           </button>
           {envelopeSaved && (
-            <span className="text-sm text-emerald-400">Saved.</span>
+            <span className="text-sm text-brand-success">Saved.</span>
           )}
         </div>
       </section>
 
-      <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
-        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">Zones</h2>
+      <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-gold">Zones</h2>
 
         {zoneError && (
           <p className="mb-4 text-sm text-red-400" role="alert">
@@ -709,7 +709,7 @@ export const ManualJWorkflow = forwardRef<
         )}
 
         {zones.length === 0 ? (
-          <p className="mb-4 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-4 text-center text-sm text-brand-grey-text">
+          <p className="mb-4 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-4 text-center text-sm text-brand-grey-text">
             No zones yet.
           </p>
         ) : (
@@ -734,7 +734,7 @@ export const ManualJWorkflow = forwardRef<
               placeholder="Zone 2 - Upstairs AHU"
               value={newZoneName}
               onChange={(e) => setNewZoneName(e.target.value)}
-              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
             />
           </div>
           <div>
@@ -746,13 +746,13 @@ export const ManualJWorkflow = forwardRef<
               placeholder="AHU-2"
               value={newZoneAhuLabel}
               onChange={(e) => setNewZoneAhuLabel(e.target.value)}
-              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
             />
           </div>
           <button
             onClick={handleAddZone}
             disabled={zoneSaving || newZoneName.trim() === ""}
-            className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
           >
             {zoneSaving ? "Adding…" : "Add Zone"}
           </button>
@@ -761,17 +761,17 @@ export const ManualJWorkflow = forwardRef<
 
       <section
         ref={roomsSectionRef}
-        className="scroll-mt-6 rounded-lg border border-zinc-800 bg-brand-bg p-6"
+        className="scroll-mt-6 rounded-lg border border-brand-gold/50 bg-brand-bg p-6"
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-brand-silver-highlight">Rooms</h2>
+          <h2 className="text-lg font-semibold text-brand-gold">Rooms</h2>
           {!showAddForm && (
             <button
               onClick={() => {
                 setShowAddForm(true);
                 setEditingRoomId(null);
               }}
-              className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover"
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover"
             >
               Add Room
             </button>
@@ -798,7 +798,7 @@ export const ManualJWorkflow = forwardRef<
         )}
 
         {rooms.length === 0 && !showAddForm && (
-          <p className="rounded-md border border-zinc-800 bg-zinc-900 px-4 py-6 text-center text-sm text-brand-grey-text">
+          <p className="rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-6 text-center text-sm text-brand-grey-text">
             No rooms yet. Add your first room to start the load calculation.
           </p>
         )}
@@ -820,7 +820,7 @@ export const ManualJWorkflow = forwardRef<
               ) : (
                 <li
                   key={room.id}
-                  className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3"
+                  className="flex items-center justify-between rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3"
                 >
                   <div>
                     <p className="flex items-center gap-2 font-medium text-brand-silver-highlight">
@@ -839,7 +839,7 @@ export const ManualJWorkflow = forwardRef<
                     <select
                       value={room.zone_id ?? ""}
                       onChange={(e) => handleQuickZoneChange(room.id, e.target.value)}
-                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-brand-silver outline-none focus:border-brand-bronze"
+                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-brand-silver outline-none focus:border-brand-gold"
                     >
                       <option value="">Unassigned</option>
                       {zones.map((zone) => (
@@ -853,7 +853,7 @@ export const ManualJWorkflow = forwardRef<
                         setEditingRoomId(room.id);
                         setShowAddForm(false);
                       }}
-                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
+                      className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-brand-gold-hover hover:text-brand-gold-hover"
                     >
                       Edit
                     </button>
@@ -871,8 +871,8 @@ export const ManualJWorkflow = forwardRef<
         )}
       </section>
 
-      <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
-        <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">
+      <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-gold">
           Manual J Results
         </h2>
 
@@ -899,7 +899,7 @@ export const ManualJWorkflow = forwardRef<
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-brand-grey-text">
+                <tr className="border-b border-brand-gold/50 text-left text-xs uppercase tracking-wide text-brand-grey-text">
                   <th className="py-2 pr-4">Room</th>
                   <th className="py-2 pr-4 text-right">Heating BTU/hr</th>
                   <th className="py-2 pr-4 text-right">Cooling Sensible</th>
@@ -927,7 +927,7 @@ export const ManualJWorkflow = forwardRef<
                 ))}
               </tbody>
               <tfoot>
-                <tr className="font-semibold text-brand-bronze-text">
+                <tr className="font-semibold text-brand-gold">
                   <td className="py-2 pr-4">Whole House Total</td>
                   <td className="py-2 pr-4 text-right">
                     {fmt(results.wholeHouse.heatingBtuh)}
@@ -969,12 +969,12 @@ export const ManualJWorkflow = forwardRef<
       </section>
 
       {canCalculate && results && results.zones.length > 0 && (
-        <section className="rounded-lg border border-zinc-800 bg-brand-bg p-6">
-          <h2 className="mb-4 text-lg font-semibold text-brand-silver-highlight">Zone Summary</h2>
+        <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+          <h2 className="mb-4 text-lg font-semibold text-brand-gold">Zone Summary</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-800 text-left text-xs uppercase tracking-wide text-brand-grey-text">
+                <tr className="border-b border-brand-gold/50 text-left text-xs uppercase tracking-wide text-brand-grey-text">
                   <th className="py-2 pr-4">Zone</th>
                   <th className="py-2 pr-4 text-right">Heating BTU/hr</th>
                   <th className="py-2 pr-4 text-right">Cooling Sensible</th>
@@ -988,7 +988,7 @@ export const ManualJWorkflow = forwardRef<
                     <td className="py-2 pr-4 text-brand-silver-highlight">
                       {zone.zoneName}
                       {zone.zoneId === null && (
-                        <span className="ml-2 rounded-full border border-brand-bronze/40 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-bronze-text">
+                        <span className="ml-2 rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-gold-hover">
                           No zone assigned
                         </span>
                       )}
@@ -1037,7 +1037,7 @@ function EnvelopeField({
         step="any"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
       />
     </div>
   );
@@ -1061,7 +1061,7 @@ function EnvelopeTextField({
         type="text"
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
       />
     </div>
   );
@@ -1084,7 +1084,7 @@ function EnvelopeSelectField({
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+        className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>
@@ -1113,19 +1113,19 @@ function ZoneRow({
 
   if (editing) {
     return (
-      <li className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3">
+      <li className="flex flex-wrap items-center gap-2 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3">
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="w-48 rounded-md border border-zinc-700 bg-brand-bg px-2 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+          className="w-48 rounded-md border border-zinc-700 bg-brand-bg px-2 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
         />
         <input
           type="text"
           placeholder="AHU label"
           value={ahuLabel}
           onChange={(e) => setAhuLabel(e.target.value)}
-          className="w-28 rounded-md border border-zinc-700 bg-brand-bg px-2 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze"
+          className="w-28 rounded-md border border-zinc-700 bg-brand-bg px-2 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
         />
         <button
           onClick={() => {
@@ -1133,7 +1133,7 @@ function ZoneRow({
             setEditing(false);
           }}
           disabled={name.trim() === ""}
-          className="rounded-md bg-brand-bronze px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+          className="rounded-md bg-brand-gold px-3 py-1.5 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
         >
           Save
         </button>
@@ -1143,7 +1143,7 @@ function ZoneRow({
             setAhuLabel(zone.ahu_label ?? "");
             setEditing(false);
           }}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500"
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-brand-gold-hover"
         >
           Cancel
         </button>
@@ -1152,7 +1152,7 @@ function ZoneRow({
   }
 
   return (
-    <li className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3">
+    <li className="flex items-center justify-between rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3">
       <div>
         <p className="font-medium text-brand-silver-highlight">
           {zone.name}
@@ -1165,7 +1165,7 @@ function ZoneRow({
       <div className="flex gap-2">
         <button
           onClick={() => setEditing(true)}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-brand-silver transition hover:border-brand-gold-hover hover:text-brand-gold-hover"
         >
           Rename
         </button>

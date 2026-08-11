@@ -5,39 +5,57 @@
   --foreground: #dad9d8;
 }
 
-/* Summit brand palette - sampled directly from public/brand/summit-logo.png
-   (not estimated from a description). Values were extracted by scripted
-   pixel sampling: background from the image corners; silver from the
-   SUMMIT wordmark (a brushed-metal texture, hence three tones rather than
-   one flat color); bronze/gold from the tagline + subtitle text; muted
-   grey from the "BUILT ON INTEGRITY..." subtext line.
+/* Summit brand palette. bg/silver/bronze/grey were sampled directly from
+   public/brand/summit-logo.png via scripted pixel sampling - see git
+   history for the extraction methodology and the two prior color passes.
 
-   brand-bronze and brand-grey are the exact sampled tones - correct for
-   borders, badge fills, icons, and large/heading text (WCAG's 3:1
-   threshold applies there), but both fall short of 4.5:1 against
-   brand-bg when used as normal body/caption text (bronze 3.64:1, grey
-   3.61:1). brand-bronze-text and brand-grey-text are lightness-adjusted
-   variants of the SAME hue (not a different color) tuned to clear 4.5:1
-   specifically for that use case - use them for any actual running text.
-   brand-bronze-hover is a distinct, moderate lightening of brand-bronze
-   for button hover states, chosen so white button text stays >=4.5:1 at
-   both the resting and hover fill (brand-bronze-text was tuned for text-
-   on-background, not background-behind-white-text, and reusing it here
-   would have dropped white-on-hover to ~4.3:1). Silver already clears
-   4.5:1 at its sampled core tone, so it has no separate text variant. */
+   Second gold pass (this one): the first brightened-gold pass still read
+   as flat grey-on-black in practice - accent color was present but too
+   restrained to register on first glance. This pass uses explicit,
+   user-specified values and applies them assertively - visible on every
+   card border, every section header, every primary button, every badge -
+   not as a rare accent. Three deliberately distinct tones, not one:
+     - brand-gold (#a67c52): the PRIMARY tone - headers, card/section
+       borders, CTA button fills, active states. 5.37:1 against brand-bg
+       (safe for text); black-on-it is 5.63:1 (safe for button fills -
+       white fails here at only 3.73:1, which is why buttons use black
+       label text, not white).
+     - brand-gold-hover (#c99a6b): brighter, for hover/active feedback on
+       every interactive element (buttons, links, badges) - 7.93:1 against
+       brand-bg, black-on-it 8.32:1.
+     - brand-gold-base (#8d6e4a): for badge/pill fills and borders
+       specifically. On its own as direct text it's only 4.26:1 (fails AA
+       4.5) - so it's never used as text color. Badges pair it as a
+       background (bg-brand-gold-base/25, i.e. a real visible warm tint,
+       not the ~5% wash the first pass used) with brand-gold-hover as the
+       label text, which holds a comfortable 6.2:1+ against that tinted
+       background - verified, not assumed.
+   Per instruction: any pairing that came up short was pushed brighter or
+   darker within this same gold family, never dropped back to grey.
+
+   brand-silver is now lighter (#c8c9ca, was #878584) for clearer
+   metal-on-black contrast on primary body text; brand-silver-highlight
+   is unchanged and still used for emphasis text (data values, input
+   text) - separate from the headers/titles that now use brand-gold.
+
+   brand-success (desaturated sage) replaces Tailwind's default emerald
+   for "resolved/confirmed/applied" states - unchanged from the prior
+   pass, not part of this round's request. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
 
   --color-brand-bg: #080808;
-  --color-brand-silver: #878584;
+  --color-brand-silver: #c8c9ca;
   --color-brand-silver-highlight: #dad9d8;
   --color-brand-silver-shadow: #4e4d4d;
   --color-brand-bronze: #806443;
-  --color-brand-bronze-hover: #8d6e4a;
-  --color-brand-bronze-text: #94744d;
+  --color-brand-gold: #a67c52;
+  --color-brand-gold-hover: #c99a6b;
+  --color-brand-gold-base: #8d6e4a;
   --color-brand-grey: #696868;
   --color-brand-grey-text: #7a7979;
+  --color-brand-success: #8ba888;
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);

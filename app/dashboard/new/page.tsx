@@ -88,8 +88,8 @@ export default function NewProjectPage() {
   if (savedProject) {
     return (
       <div className="mx-auto max-w-md">
-        <div className="rounded-lg border border-brand-bronze/40 bg-brand-bg p-6">
-          <h1 className="mb-1 text-lg font-semibold text-brand-silver-highlight">
+        <div className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+          <h1 className="mb-1 text-lg font-semibold text-brand-gold">
             Project created
           </h1>
           <p className="mb-6 text-sm text-brand-grey-text">
@@ -115,7 +115,7 @@ export default function NewProjectPage() {
           <div className="mt-6 flex gap-3">
             <Link
               href="/dashboard"
-              className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover"
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover"
             >
               Back to dashboard
             </Link>
@@ -124,7 +124,7 @@ export default function NewProjectPage() {
                 setForm(INITIAL_STATE);
                 setSavedProject(null);
               }}
-              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
+              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-brand-gold-hover hover:text-brand-gold-hover"
             >
               Add another
             </button>
@@ -136,11 +136,11 @@ export default function NewProjectPage() {
 
   return (
     <div className="mx-auto max-w-md">
-      <h1 className="mb-6 text-xl font-semibold text-brand-silver-highlight">New Project</h1>
+      <h1 className="mb-6 text-xl font-semibold text-brand-gold">New Project</h1>
 
       <form
         onSubmit={handleSubmit}
-        className="space-y-4 rounded-lg border border-zinc-800 bg-brand-bg p-6"
+        className="space-y-4 rounded-lg border border-brand-gold/50 bg-brand-bg p-6"
       >
         <Field label="Project name" htmlFor="name">
           <input
@@ -218,13 +218,13 @@ export default function NewProjectPage() {
           <button
             type="submit"
             disabled={loading}
-            className="rounded-md bg-brand-bronze px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-bronze-hover disabled:opacity-50"
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
           >
             {loading ? "Saving…" : "Save project"}
           </button>
           <Link
             href="/dashboard"
-            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-zinc-500 hover:text-brand-silver-highlight"
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-brand-gold-hover hover:text-brand-gold-hover"
           >
             Cancel
           </Link>
@@ -235,7 +235,7 @@ export default function NewProjectPage() {
 }
 
 const inputClass =
-  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-bronze";
+  "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold";
 
 function Field({
   label,
@@ -260,7 +260,7 @@ function Field({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between gap-4 border-b border-zinc-800 pb-2">
+    <div className="flex justify-between gap-4 border-b border-brand-gold/50 pb-2">
       <dt className="text-brand-grey-text">{label}</dt>
       <dd className="text-right font-medium text-brand-silver-highlight">{value}</dd>
     </div>

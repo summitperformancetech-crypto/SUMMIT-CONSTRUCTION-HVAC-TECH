@@ -121,7 +121,27 @@ const DUCT_RUN_COLUMNS =
 // "use client" runtime-value-across-the-boundary issue documented on
 // DUCT_RUN_COLUMNS above.
 const COMMERCIAL_ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc";
+  "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, ceiling_height_ft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc, cleanroom_class";
+
+// Duplicated from commercial-workflow.tsx rather than imported - same
+// "use client" runtime-value-across-the-boundary issue documented on
+// DUCT_RUN_COLUMNS above.
+const PROCESS_LOAD_COLUMNS =
+  "id, project_id, zone_id, load_type, description, sensible_btu_hr, latent_btu_hr, cfm, ach_required, source, notes";
+
+type ProcessLoadRow = {
+  id: string;
+  project_id: string;
+  zone_id: string | null;
+  load_type: "process_sensible" | "process_latent" | "makeup_air" | "exhaust" | "cleanroom_ach";
+  description: string;
+  sensible_btu_hr: number | null;
+  latent_btu_hr: number | null;
+  cfm: number | null;
+  ach_required: number | null;
+  source: "field_measured" | "manufacturer_spec" | "engineering_estimate";
+  notes: string | null;
+};
 
 type CommercialZoneDbRow = {
   id: string;
@@ -130,6 +150,8 @@ type CommercialZoneDbRow = {
   ahu_label: string | null;
   occupancy_type: string | null;
   floor_area_sqft: number | null;
+  ceiling_height_ft: number | null;
+  cleanroom_class: string | null;
   occupant_density_per_1000sqft: number | null;
   lighting_load_w_per_sqft: number | null;
   equipment_load_w_per_sqft: number | null;
@@ -227,30 +249,42 @@ export default async function ProjectDetailPage({
 
   const climateZone = climateZoneRows?.[0] ?? null;
 
-  if (project.project_type === "commercial") {
-    const [{ data: commercialZones }, { data: occupancyDefaultRows }, { data: stationMap }] =
-      await Promise.all([
-        supabase
-          .from("zones")
-          .select(COMMERCIAL_ZONE_COLUMNS)
-          .eq("project_id", project.id)
-          .order("created_at", { ascending: true })
-          .returns<CommercialZoneDbRow[]>(),
-        supabase
-          .from("commercial_occupancy_defaults")
-          .select(
-            "occupancy_type, default_occupant_density_per_1000sqft, default_ventilation_rp_cfm_per_person, default_ventilation_ra_cfm_per_sqft, default_lighting_w_per_sqft, default_equipment_w_per_sqft",
-          )
-          .returns<CommercialOccupancyDefaultDbRow[]>(),
-        resolvedCounty
-          ? supabase
-              .from("climate_station_county_map")
-              .select("station_id, climate_stations(station_name)")
-              .eq("state", project.state)
-              .eq("county", resolvedCounty)
-              .maybeSingle<{ station_id: string; climate_stations: { station_name: string } | null }>()
-          : Promise.resolve({ data: null }),
-      ]);
+  if (project.project_type === "commercial" || project.project_type === "industrial") {
+    const [
+      { data: commercialZones },
+      { data: occupancyDefaultRows },
+      { data: stationMap },
+      { data: processLoadRows },
+    ] = await Promise.all([
+      supabase
+        .from("zones")
+        .select(COMMERCIAL_ZONE_COLUMNS)
+        .eq("project_id", project.id)
+        .order("created_at", { ascending: true })
+        .returns<CommercialZoneDbRow[]>(),
+      supabase
+        .from("commercial_occupancy_defaults")
+        .select(
+          "occupancy_type, default_occupant_density_per_1000sqft, default_ventilation_rp_cfm_per_person, default_ventilation_ra_cfm_per_sqft, default_lighting_w_per_sqft, default_equipment_w_per_sqft",
+        )
+        .returns<CommercialOccupancyDefaultDbRow[]>(),
+      resolvedCounty
+        ? supabase
+            .from("climate_station_county_map")
+            .select("station_id, climate_stations(station_name)")
+            .eq("state", project.state)
+            .eq("county", resolvedCounty)
+            .maybeSingle<{ station_id: string; climate_stations: { station_name: string } | null }>()
+        : Promise.resolve({ data: null }),
+      project.project_type === "industrial"
+        ? supabase
+            .from("process_loads")
+            .select(PROCESS_LOAD_COLUMNS)
+            .eq("project_id", project.id)
+            .order("created_at", { ascending: true })
+            .returns<ProcessLoadRow[]>()
+        : Promise.resolve({ data: [] as ProcessLoadRow[] }),
+    ]);
 
     let hourlyTemps: HourlyTemperaturePoint[] = [];
     if (stationMap) {
@@ -283,6 +317,8 @@ export default async function ProjectDetailPage({
       ahu_label: z.ahu_label,
       occupancyType: z.occupancy_type,
       floorAreaSqft: z.floor_area_sqft,
+      ceilingHeightFt: z.ceiling_height_ft,
+      cleanroomClass: z.cleanroom_class,
       occupantDensityPer1000Sqft: z.occupant_density_per_1000sqft,
       lightingLoadWPerSqft: z.lighting_load_w_per_sqft,
       equipmentLoadWPerSqft: z.equipment_load_w_per_sqft,
@@ -336,8 +372,10 @@ export default async function ProjectDetailPage({
 
         <CommercialWorkflow
           projectId={project.id}
+          projectType={project.project_type as "commercial" | "industrial"}
           initialZones={commercialZoneInputs}
           occupancyDefaults={occupancyDefaults}
+          initialProcessLoads={processLoadRows ?? []}
           winterDesignTempF={climateZone?.winter_design_temp_f ?? null}
           summerDesignTempF={climateZone?.summer_design_temp_f ?? null}
           indoorDesignHeatingF={project.indoor_design_temp_heating_f}

@@ -8,6 +8,12 @@ export type CommercialZoneInput = {
   name: string;
   occupancyType: string | null;
   floorAreaSqft: number | null;
+  // Not used by the block-load calc itself (which is purely UA x deltaT +
+  // per-sqft internal gains, no volume term) - carried here because
+  // lib/manualIndustrial.ts needs zone volume (floorAreaSqft x
+  // ceilingHeightFt) for cleanroom ACH->CFM, and it's simpler to have one
+  // zone input shape than a separate industrial-only variant.
+  ceilingHeightFt: number | null;
   occupantDensityPer1000Sqft: number | null;
   lightingLoadWPerSqft: number | null;
   equipmentLoadWPerSqft: number | null;

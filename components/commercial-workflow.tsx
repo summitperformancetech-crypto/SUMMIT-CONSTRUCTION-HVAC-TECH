@@ -12,20 +12,75 @@ import {
   type HourlyTemperaturePoint,
   type ZoneSimulationResult,
 } from "@/lib/manualNSimulation";
+import {
+  computeIndustrialBuildingLoad,
+  type IndustrialZoneLoadResult,
+  type ProcessLoad,
+  type ProcessLoadSource,
+  type ProcessLoadType,
+} from "@/lib/manualIndustrial";
 
 export type CommercialZoneRow = CommercialZoneInput & {
   project_id: string;
   ahu_label: string | null;
+  cleanroomClass: string | null;
 };
 
 export const COMMERCIAL_ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc";
+  "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, ceiling_height_ft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc, cleanroom_class";
+
+export type ProcessLoadRow = {
+  id: string;
+  project_id: string;
+  zone_id: string | null;
+  load_type: ProcessLoadType;
+  description: string;
+  sensible_btu_hr: number | null;
+  latent_btu_hr: number | null;
+  cfm: number | null;
+  ach_required: number | null;
+  source: ProcessLoadSource;
+  notes: string | null;
+};
+
+export const PROCESS_LOAD_COLUMNS =
+  "id, project_id, zone_id, load_type, description, sensible_btu_hr, latent_btu_hr, cfm, ach_required, source, notes";
+
+const LOAD_TYPE_OPTIONS: { value: ProcessLoadType; label: string }[] = [
+  { value: "process_sensible", label: "Process sensible" },
+  { value: "process_latent", label: "Process latent" },
+  { value: "makeup_air", label: "Makeup air" },
+  { value: "exhaust", label: "Exhaust" },
+  { value: "cleanroom_ach", label: "Cleanroom ACH" },
+];
+
+const SOURCE_OPTIONS: { value: ProcessLoadSource; label: string }[] = [
+  { value: "field_measured", label: "Field measured" },
+  { value: "manufacturer_spec", label: "Manufacturer spec" },
+  { value: "engineering_estimate", label: "Engineering estimate" },
+];
+
+function processLoadToInput(row: ProcessLoadRow): ProcessLoad {
+  return {
+    id: row.id,
+    zoneId: row.zone_id,
+    loadType: row.load_type,
+    description: row.description,
+    sensibleBtuHr: row.sensible_btu_hr,
+    latentBtuHr: row.latent_btu_hr,
+    cfm: row.cfm,
+    achRequired: row.ach_required,
+    source: row.source,
+  };
+}
 
 type ZoneFormValues = {
   name: string;
   ahu_label: string;
   occupancy_type: string;
   floor_area_sqft: string;
+  ceiling_height_ft: string;
+  cleanroom_class: string;
   occupant_density_per_1000sqft: string;
   lighting_load_w_per_sqft: string;
   equipment_load_w_per_sqft: string;
@@ -43,6 +98,8 @@ const EMPTY_ZONE_FORM: ZoneFormValues = {
   ahu_label: "",
   occupancy_type: "",
   floor_area_sqft: "",
+  ceiling_height_ft: "",
+  cleanroom_class: "",
   occupant_density_per_1000sqft: "",
   lighting_load_w_per_sqft: "",
   equipment_load_w_per_sqft: "",
@@ -77,6 +134,8 @@ function formToPayload(values: ZoneFormValues) {
     ahu_label: toNullableString(values.ahu_label),
     occupancy_type: toNullableString(values.occupancy_type),
     floor_area_sqft: toNullableNumber(values.floor_area_sqft),
+    ceiling_height_ft: toNullableNumber(values.ceiling_height_ft),
+    cleanroom_class: toNullableString(values.cleanroom_class),
     occupant_density_per_1000sqft: toNullableNumber(values.occupant_density_per_1000sqft),
     lighting_load_w_per_sqft: toNullableNumber(values.lighting_load_w_per_sqft),
     equipment_load_w_per_sqft: toNullableNumber(values.equipment_load_w_per_sqft),
@@ -96,6 +155,7 @@ function zoneToInput(zone: CommercialZoneRow): CommercialZoneInput {
     name: zone.name,
     occupancyType: zone.occupancyType,
     floorAreaSqft: zone.floorAreaSqft,
+    ceilingHeightFt: zone.ceilingHeightFt,
     occupantDensityPer1000Sqft: zone.occupantDensityPer1000Sqft,
     lightingLoadWPerSqft: zone.lightingLoadWPerSqft,
     equipmentLoadWPerSqft: zone.equipmentLoadWPerSqft,
@@ -111,8 +171,10 @@ function zoneToInput(zone: CommercialZoneRow): CommercialZoneInput {
 
 export function CommercialWorkflow({
   projectId,
+  projectType,
   initialZones,
   occupancyDefaults,
+  initialProcessLoads,
   winterDesignTempF,
   summerDesignTempF,
   indoorDesignHeatingF,
@@ -121,8 +183,10 @@ export function CommercialWorkflow({
   stationName,
 }: {
   projectId: string;
+  projectType: "commercial" | "industrial";
   initialZones: CommercialZoneRow[];
   occupancyDefaults: CommercialOccupancyDefault[];
+  initialProcessLoads: ProcessLoadRow[];
   winterDesignTempF: number | null;
   summerDesignTempF: number | null;
   indoorDesignHeatingF: number;
@@ -137,6 +201,7 @@ export function CommercialWorkflow({
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [view, setView] = useState<"block" | "simulation">("block");
+  const [processLoads, setProcessLoads] = useState<ProcessLoadRow[]>(initialProcessLoads);
 
   const canCalculate = winterDesignTempF != null && summerDesignTempF != null;
 
@@ -172,6 +237,82 @@ export function CommercialWorkflow({
       indoorDesignCoolingF,
     );
   }, [zoneInputs, occupancyDefaults, hourlyTemps, indoorDesignHeatingF, indoorDesignCoolingF]);
+
+  const processLoadInputs: ProcessLoad[] = useMemo(
+    () => processLoads.map(processLoadToInput),
+    [processLoads],
+  );
+
+  const industrialLoad: IndustrialZoneLoadResult[] | null = useMemo(() => {
+    if (projectType !== "industrial" || !canCalculate) return null;
+    return computeIndustrialBuildingLoad(
+      zoneInputs,
+      occupancyDefaults,
+      processLoadInputs,
+      winterDesignTempF!,
+      summerDesignTempF!,
+      indoorDesignHeatingF,
+      indoorDesignCoolingF,
+    );
+  }, [
+    projectType,
+    zoneInputs,
+    occupancyDefaults,
+    processLoadInputs,
+    winterDesignTempF,
+    summerDesignTempF,
+    indoorDesignHeatingF,
+    indoorDesignCoolingF,
+    canCalculate,
+  ]);
+
+  async function handleAddProcessLoad(values: {
+    zone_id: string;
+    load_type: ProcessLoadType;
+    description: string;
+    sensible_btu_hr: string;
+    latent_btu_hr: string;
+    cfm: string;
+    ach_required: string;
+    source: ProcessLoadSource;
+    notes: string;
+  }) {
+    setError(null);
+    const supabase = createClient();
+    const { data, error: saveError } = await supabase
+      .from("process_loads")
+      .insert({
+        project_id: projectId,
+        zone_id: toNullableString(values.zone_id),
+        load_type: values.load_type,
+        description: values.description,
+        sensible_btu_hr: toNullableNumber(values.sensible_btu_hr),
+        latent_btu_hr: toNullableNumber(values.latent_btu_hr),
+        cfm: toNullableNumber(values.cfm),
+        ach_required: toNullableNumber(values.ach_required),
+        source: values.source,
+        notes: toNullableString(values.notes),
+      })
+      .select(PROCESS_LOAD_COLUMNS)
+      .single<ProcessLoadRow>();
+    if (saveError || !data) {
+      setError(saveError?.message ?? "Failed to add process load.");
+      return false;
+    }
+    setProcessLoads((prev) => [...prev, data]);
+    return true;
+  }
+
+  async function handleDeleteProcessLoad(id: string) {
+    if (!window.confirm("Delete this process load?")) return;
+    const supabase = createClient();
+    const { error: deleteError } = await supabase.from("process_loads").delete().eq("id", id);
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+    setProcessLoads((prev) => prev.filter((p) => p.id !== id));
+  }
 
   async function handleSaveZone() {
     setSaving(true);
@@ -218,6 +359,8 @@ export function CommercialWorkflow({
       ahu_label: row.ahu_label as string | null,
       occupancyType: row.occupancy_type as string | null,
       floorAreaSqft: row.floor_area_sqft as number | null,
+      ceilingHeightFt: row.ceiling_height_ft as number | null,
+      cleanroomClass: row.cleanroom_class as string | null,
       occupantDensityPer1000Sqft: row.occupant_density_per_1000sqft as number | null,
       lightingLoadWPerSqft: row.lighting_load_w_per_sqft as number | null,
       equipmentLoadWPerSqft: row.equipment_load_w_per_sqft as number | null,
@@ -239,6 +382,8 @@ export function CommercialWorkflow({
       ahu_label: zone.ahu_label ?? "",
       occupancy_type: zone.occupancyType ?? "",
       floor_area_sqft: zone.floorAreaSqft?.toString() ?? "",
+      ceiling_height_ft: zone.ceilingHeightFt?.toString() ?? "",
+      cleanroom_class: zone.cleanroomClass ?? "",
       occupant_density_per_1000sqft: zone.occupantDensityPer1000Sqft?.toString() ?? "",
       lighting_load_w_per_sqft: zone.lightingLoadWPerSqft?.toString() ?? "",
       equipment_load_w_per_sqft: zone.equipmentLoadWPerSqft?.toString() ?? "",
@@ -346,6 +491,15 @@ export function CommercialWorkflow({
         )}
       </section>
 
+      {projectType === "industrial" && (
+        <ProcessLoadsSection
+          zones={zones}
+          processLoads={processLoads}
+          onAdd={handleAddProcessLoad}
+          onDelete={handleDeleteProcessLoad}
+        />
+      )}
+
       {!canCalculate && (
         <p className="rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-4 text-sm text-brand-grey-text">
           Confirm climate zone data (winter/summer design temperatures) to compute loads.
@@ -355,7 +509,9 @@ export function CommercialWorkflow({
       {canCalculate && blockLoad && zones.length > 0 && (
         <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-brand-gold">Manual N Results</h2>
+            <h2 className="text-lg font-semibold text-brand-gold">
+              {projectType === "industrial" ? "Manual N + Process Load Results" : "Manual N Results"}
+            </h2>
             <div className="flex rounded-md border border-brand-gold/50 text-xs">
               <button
                 onClick={() => setView("block")}
@@ -373,7 +529,7 @@ export function CommercialWorkflow({
             </div>
           </div>
 
-          {view === "block" && (
+          {view === "block" && !industrialLoad && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -405,6 +561,53 @@ export function CommercialWorkflow({
                     <td className="py-2 pr-4 text-right">{fmt(blockLoad.building.coolingSensibleBtuh)}</td>
                     <td className="py-2 pr-4 text-right">{fmt(blockLoad.building.coolingLatentBtuh)}</td>
                     <td className="py-2 text-right">{fmt(blockLoad.building.coolingTotalBtuh)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+
+          {view === "block" && industrialLoad && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-brand-gold/50 text-left text-xs uppercase tracking-wide text-brand-grey-text">
+                    <th className="py-2 pr-4">Zone</th>
+                    <th className="py-2 pr-4 text-right">Envelope+Vent Heating</th>
+                    <th className="py-2 pr-4 text-right">Envelope+Vent Cooling</th>
+                    <th className="py-2 pr-4 text-right">Process Sensible</th>
+                    <th className="py-2 pr-4 text-right">Process Latent</th>
+                    <th className="py-2 text-right">Total Cooling</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {industrialLoad.map((z) => (
+                    <tr key={z.zoneId} className="border-b border-zinc-900">
+                      <td className="py-2 pr-4 text-brand-silver-highlight">{z.zoneName}</td>
+                      <td className="py-2 pr-4 text-right text-brand-silver">{fmt(z.heatingBtuh)}</td>
+                      <td className="py-2 pr-4 text-right text-brand-silver">
+                        {fmt(z.coolingSensibleBtuh + z.coolingLatentBtuh)}
+                      </td>
+                      <td className="py-2 pr-4 text-right text-brand-silver">
+                        {fmt(z.processSensibleBtuh)}
+                      </td>
+                      <td className="py-2 pr-4 text-right text-brand-silver">{fmt(z.processLatentBtuh)}</td>
+                      <td className="py-2 text-right text-brand-gold">{fmt(z.totalCoolingBtuh)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="font-semibold text-brand-gold">
+                    <td className="py-2 pr-4">Building Total (Heating)</td>
+                    <td className="py-2 pr-4 text-right" colSpan={5}>
+                      {fmt(industrialLoad.reduce((sum, z) => sum + z.totalHeatingBtuh, 0))} Btu/hr
+                    </td>
+                  </tr>
+                  <tr className="font-semibold text-brand-gold">
+                    <td className="py-2 pr-4">Building Total (Cooling)</td>
+                    <td className="py-2 pr-4 text-right" colSpan={5}>
+                      {fmt(industrialLoad.reduce((sum, z) => sum + z.totalCoolingBtuh, 0))} Btu/hr
+                    </td>
                   </tr>
                 </tfoot>
               </table>
@@ -547,6 +750,23 @@ function ZoneForm({
               onChange={(e) => update("floor_area_sqft", e.target.value)}
             />
           </Field>
+          <Field label="Ceiling height (ft)">
+            <input
+              type="number"
+              step="any"
+              className={inputClass}
+              value={form.ceiling_height_ft}
+              onChange={(e) => update("ceiling_height_ft", e.target.value)}
+            />
+          </Field>
+          <Field label="Cleanroom class (if applicable)">
+            <input
+              className={inputClass}
+              placeholder="e.g. ISO 7"
+              value={form.cleanroom_class}
+              onChange={(e) => update("cleanroom_class", e.target.value)}
+            />
+          </Field>
           <Field label="Occupant density (/1000sqft)">
             <input
               type="number"
@@ -665,5 +885,229 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <label className="mb-1 block text-xs font-medium text-brand-grey-text">{label}</label>
       {children}
     </div>
+  );
+}
+
+const EMPTY_PROCESS_LOAD_FORM = {
+  zone_id: "",
+  load_type: "process_sensible" as ProcessLoadType,
+  description: "",
+  sensible_btu_hr: "",
+  latent_btu_hr: "",
+  cfm: "",
+  ach_required: "",
+  source: "field_measured" as ProcessLoadSource,
+  notes: "",
+};
+
+function ProcessLoadsSection({
+  zones,
+  processLoads,
+  onAdd,
+  onDelete,
+}: {
+  zones: CommercialZoneRow[];
+  processLoads: ProcessLoadRow[];
+  onAdd: (values: typeof EMPTY_PROCESS_LOAD_FORM) => Promise<boolean>;
+  onDelete: (id: string) => void;
+}) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState(EMPTY_PROCESS_LOAD_FORM);
+  const [saving, setSaving] = useState(false);
+
+  const inputClass =
+    "w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold";
+
+  function zoneName(zoneId: string | null) {
+    if (!zoneId) return "Unassigned";
+    return zones.find((z) => z.id === zoneId)?.name ?? "Unknown zone";
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    const ok = await onAdd(form);
+    setSaving(false);
+    if (ok) {
+      setForm(EMPTY_PROCESS_LOAD_FORM);
+      setShowForm(false);
+    }
+  }
+
+  return (
+    <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-brand-gold">Process Loads</h2>
+        {!showForm && (
+          <button
+            onClick={() => setShowForm(true)}
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover"
+          >
+            Add Process Load
+          </button>
+        )}
+      </div>
+      <p className="mb-4 text-xs text-brand-grey-text">
+        Field-measured or manufacturer-spec loads (a specific oven, exhaust hood, or cleanroom
+        requirement) - entered directly, not computed from a generic formula. Makeup air/exhaust
+        loads are derived from CFM if no direct Btuh figure is given; cleanroom ACH loads are
+        derived from ACH x zone volume if the zone has floor area and ceiling height set.
+      </p>
+
+      {showForm && (
+        <div className="mb-4 space-y-3 rounded-lg border border-brand-gold/50 bg-zinc-900 p-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Field label="Zone">
+              <select
+                className={inputClass}
+                value={form.zone_id}
+                onChange={(e) => setForm((prev) => ({ ...prev, zone_id: e.target.value }))}
+              >
+                <option value="">Unassigned</option>
+                {zones.map((z) => (
+                  <option key={z.id} value={z.id}>
+                    {z.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Load type">
+              <select
+                className={inputClass}
+                value={form.load_type}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, load_type: e.target.value as ProcessLoadType }))
+                }
+              >
+                {LOAD_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Source (required)">
+              <select
+                className={inputClass}
+                value={form.source}
+                onChange={(e) =>
+                  setForm((prev) => ({ ...prev, source: e.target.value as ProcessLoadSource }))
+                }
+              >
+                {SOURCE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          <Field label="Description">
+            <input
+              className={inputClass}
+              placeholder="e.g. Paint booth #2 exhaust"
+              value={form.description}
+              onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
+            />
+          </Field>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Field label="Sensible (Btu/hr)">
+              <input
+                type="number"
+                className={inputClass}
+                value={form.sensible_btu_hr}
+                onChange={(e) => setForm((prev) => ({ ...prev, sensible_btu_hr: e.target.value }))}
+              />
+            </Field>
+            <Field label="Latent (Btu/hr)">
+              <input
+                type="number"
+                className={inputClass}
+                value={form.latent_btu_hr}
+                onChange={(e) => setForm((prev) => ({ ...prev, latent_btu_hr: e.target.value }))}
+              />
+            </Field>
+            <Field label="CFM">
+              <input
+                type="number"
+                className={inputClass}
+                value={form.cfm}
+                onChange={(e) => setForm((prev) => ({ ...prev, cfm: e.target.value }))}
+              />
+            </Field>
+            <Field label="ACH required">
+              <input
+                type="number"
+                className={inputClass}
+                value={form.ach_required}
+                onChange={(e) => setForm((prev) => ({ ...prev, ach_required: e.target.value }))}
+              />
+            </Field>
+          </div>
+          <Field label="Notes">
+            <input
+              className={inputClass}
+              value={form.notes}
+              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+            />
+          </Field>
+          <div className="flex gap-3">
+            <button
+              onClick={handleSave}
+              disabled={saving || form.description.trim() === ""}
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save Process Load"}
+            </button>
+            <button
+              onClick={() => {
+                setShowForm(false);
+                setForm(EMPTY_PROCESS_LOAD_FORM);
+              }}
+              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-silver transition hover:border-brand-gold-hover"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {processLoads.length === 0 && !showForm ? (
+        <p className="rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-6 text-center text-sm text-brand-grey-text">
+          No process loads yet.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {processLoads.map((load) => (
+            <li
+              key={load.id}
+              className="flex items-center justify-between rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3"
+            >
+              <div>
+                <p className="font-medium text-brand-silver-highlight">
+                  {load.description}
+                  <span className="ml-2 rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-gold-hover">
+                    {LOAD_TYPE_OPTIONS.find((o) => o.value === load.load_type)?.label}
+                  </span>
+                </p>
+                <p className="text-xs text-brand-grey-text">
+                  {zoneName(load.zone_id)} ·{" "}
+                  {SOURCE_OPTIONS.find((o) => o.value === load.source)?.label} ·{" "}
+                  {load.sensible_btu_hr != null && `${fmt(load.sensible_btu_hr)} Btu/hr sensible`}
+                  {load.latent_btu_hr != null && ` / ${fmt(load.latent_btu_hr)} Btu/hr latent`}
+                  {load.cfm != null && ` / ${fmt(load.cfm)} CFM`}
+                  {load.ach_required != null && ` / ${load.ach_required} ACH`}
+                </p>
+              </div>
+              <button
+                onClick={() => onDelete(load.id)}
+                className="text-xs text-red-400 hover:text-red-300"
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

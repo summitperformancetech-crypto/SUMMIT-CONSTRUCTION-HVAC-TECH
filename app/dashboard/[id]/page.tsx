@@ -13,6 +13,9 @@ import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
 import type { DuctRunRow } from "@/components/duct-design-section";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
+import { CommercialWorkflow, type CommercialZoneRow } from "@/components/commercial-workflow";
+import type { CommercialOccupancyDefault } from "@/lib/manualN";
+import type { HourlyTemperaturePoint } from "@/lib/manualNSimulation";
 import { resolveCounty } from "@/lib/countyLookup";
 import {
   countUnresolvedFields,
@@ -114,6 +117,40 @@ const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 
+// Duplicated from commercial-workflow.tsx rather than imported - same
+// "use client" runtime-value-across-the-boundary issue documented on
+// DUCT_RUN_COLUMNS above.
+const COMMERCIAL_ZONE_COLUMNS =
+  "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc";
+
+type CommercialZoneDbRow = {
+  id: string;
+  project_id: string;
+  name: string;
+  ahu_label: string | null;
+  occupancy_type: string | null;
+  floor_area_sqft: number | null;
+  occupant_density_per_1000sqft: number | null;
+  lighting_load_w_per_sqft: number | null;
+  equipment_load_w_per_sqft: number | null;
+  exterior_wall_area_sqft: number | null;
+  roof_area_sqft: number | null;
+  wall_u_value: number | null;
+  roof_u_value: number | null;
+  window_area_sqft: number | null;
+  window_u_value: number | null;
+  window_shgc: number | null;
+};
+
+type CommercialOccupancyDefaultDbRow = {
+  occupancy_type: string;
+  default_occupant_density_per_1000sqft: number | null;
+  default_ventilation_rp_cfm_per_person: number | null;
+  default_ventilation_ra_cfm_per_sqft: number;
+  default_lighting_w_per_sqft: number;
+  default_equipment_w_per_sqft: number;
+};
+
 type ClimateZoneReference = {
   state: string;
   county: string;
@@ -189,6 +226,128 @@ export default async function ProjectDetailPage({
     .returns<ClimateZoneReference[]>();
 
   const climateZone = climateZoneRows?.[0] ?? null;
+
+  if (project.project_type === "commercial") {
+    const [{ data: commercialZones }, { data: occupancyDefaultRows }, { data: stationMap }] =
+      await Promise.all([
+        supabase
+          .from("zones")
+          .select(COMMERCIAL_ZONE_COLUMNS)
+          .eq("project_id", project.id)
+          .order("created_at", { ascending: true })
+          .returns<CommercialZoneDbRow[]>(),
+        supabase
+          .from("commercial_occupancy_defaults")
+          .select(
+            "occupancy_type, default_occupant_density_per_1000sqft, default_ventilation_rp_cfm_per_person, default_ventilation_ra_cfm_per_sqft, default_lighting_w_per_sqft, default_equipment_w_per_sqft",
+          )
+          .returns<CommercialOccupancyDefaultDbRow[]>(),
+        resolvedCounty
+          ? supabase
+              .from("climate_station_county_map")
+              .select("station_id, climate_stations(station_name)")
+              .eq("state", project.state)
+              .eq("county", resolvedCounty)
+              .maybeSingle<{ station_id: string; climate_stations: { station_name: string } | null }>()
+          : Promise.resolve({ data: null }),
+      ]);
+
+    let hourlyTemps: HourlyTemperaturePoint[] = [];
+    if (stationMap) {
+      const { data: hourlyRows } = await supabase
+        .from("climate_hourly_normals")
+        .select("month, day, hour, temp_f")
+        .eq("station_id", stationMap.station_id)
+        .returns<{ month: number; day: number; hour: number; temp_f: number }[]>();
+      hourlyTemps = (hourlyRows ?? []).map((r) => ({
+        month: r.month,
+        day: r.day,
+        hour: r.hour,
+        tempF: r.temp_f,
+      }));
+    }
+
+    const occupancyDefaults: CommercialOccupancyDefault[] = (occupancyDefaultRows ?? []).map((r) => ({
+      occupancyType: r.occupancy_type,
+      defaultOccupantDensityPer1000Sqft: r.default_occupant_density_per_1000sqft,
+      defaultVentilationRpCfmPerPerson: r.default_ventilation_rp_cfm_per_person,
+      defaultVentilationRaCfmPerSqft: r.default_ventilation_ra_cfm_per_sqft,
+      defaultLightingWPerSqft: r.default_lighting_w_per_sqft,
+      defaultEquipmentWPerSqft: r.default_equipment_w_per_sqft,
+    }));
+
+    const commercialZoneInputs: CommercialZoneRow[] = (commercialZones ?? []).map((z) => ({
+      id: z.id,
+      project_id: z.project_id,
+      name: z.name,
+      ahu_label: z.ahu_label,
+      occupancyType: z.occupancy_type,
+      floorAreaSqft: z.floor_area_sqft,
+      occupantDensityPer1000Sqft: z.occupant_density_per_1000sqft,
+      lightingLoadWPerSqft: z.lighting_load_w_per_sqft,
+      equipmentLoadWPerSqft: z.equipment_load_w_per_sqft,
+      exteriorWallAreaSqft: z.exterior_wall_area_sqft,
+      roofAreaSqft: z.roof_area_sqft,
+      wallUValue: z.wall_u_value,
+      roofUValue: z.roof_u_value,
+      windowAreaSqft: z.window_area_sqft,
+      windowUValue: z.window_u_value,
+      windowShgc: z.window_shgc,
+    }));
+
+    return (
+      <div className="mx-auto max-w-3xl">
+        <Link
+          href="/dashboard"
+          className="mb-6 inline-block text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
+        >
+          ← Back to projects
+        </Link>
+
+        <div className="mb-6 rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+          <div className="mb-4 flex items-start justify-between">
+            <h1 className="text-xl font-semibold text-brand-gold">{project.name}</h1>
+            <span className="rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-3 py-1 text-xs font-medium text-brand-gold-hover">
+              {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
+            </span>
+          </div>
+          <p className="text-sm text-brand-grey-text">
+            {project.address_line1}, {project.city}, {project.state} {project.zip}
+          </p>
+        </div>
+
+        <div className="mb-6 rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+          <h2 className="mb-4 text-lg font-semibold text-brand-gold">Climate Zone</h2>
+          {climateZone ? (
+            <dl className="space-y-3 text-sm">
+              <Row label="County" value={climateZone.county} />
+              <Row label="IECC Zone" value={climateZone.iecc_zone} />
+              <Row label="Winter Design Temp" value={`${climateZone.winter_design_temp_f}°F`} />
+              <Row label="Summer Design Temp" value={`${climateZone.summer_design_temp_f}°F`} />
+            </dl>
+          ) : (
+            <p className="text-sm text-brand-grey-text">
+              {resolvedCounty
+                ? `No climate data found for ${resolvedCounty} County, ${project.state} yet.`
+                : `No climate data found for this state yet.`}
+            </p>
+          )}
+        </div>
+
+        <CommercialWorkflow
+          projectId={project.id}
+          initialZones={commercialZoneInputs}
+          occupancyDefaults={occupancyDefaults}
+          winterDesignTempF={climateZone?.winter_design_temp_f ?? null}
+          summerDesignTempF={climateZone?.summer_design_temp_f ?? null}
+          indoorDesignHeatingF={project.indoor_design_temp_heating_f}
+          indoorDesignCoolingF={project.indoor_design_temp_cooling_f}
+          hourlyTemps={hourlyTemps}
+          stationName={stationMap?.climate_stations?.station_name ?? null}
+        />
+      </div>
+    );
+  }
 
   // Independent of each other (and of the climate zone lookup above) - no
   // reason to wait on each round trip serially.

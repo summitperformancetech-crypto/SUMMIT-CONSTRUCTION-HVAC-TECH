@@ -11,6 +11,7 @@ import {
 import type { DuctRunRow } from "@/components/duct-design-section";
 import type { ManualJEnvelope, ManualJZone, RoomTypeDefault } from "@/lib/manualJ";
 import type { DuctSizingTableRow } from "@/lib/manualD";
+import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import type { DrawingRow } from "@/lib/drawingExtraction";
 import type { FieldResolution } from "@/lib/fieldResolutions";
 
@@ -33,6 +34,11 @@ export function ProjectWorkspace({
   initialSupplyAirTempF,
   initialDuctRuns,
   ductSizingTable,
+  summerCoincidentWetbulbF,
+  equipmentCatalog,
+  equipmentPerformancePoints,
+  initialSelectedEquipmentId,
+  initialEquipmentSelectionNotes,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -52,6 +58,11 @@ export function ProjectWorkspace({
   initialSupplyAirTempF: number | null;
   initialDuctRuns: DuctRunRow[];
   ductSizingTable: DuctSizingTableRow[];
+  summerCoincidentWetbulbF: number | null;
+  equipmentCatalog: EquipmentCatalogEntry[];
+  equipmentPerformancePoints: PerformancePoint[];
+  initialSelectedEquipmentId: string | null;
+  initialEquipmentSelectionNotes: string | null;
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -97,6 +108,11 @@ export function ProjectWorkspace({
         initialSupplyAirTempF={initialSupplyAirTempF}
         initialDuctRuns={initialDuctRuns}
         ductSizingTable={ductSizingTable}
+        summerCoincidentWetbulbF={summerCoincidentWetbulbF}
+        equipmentCatalog={equipmentCatalog}
+        equipmentPerformancePoints={equipmentPerformancePoints}
+        initialSelectedEquipmentId={initialSelectedEquipmentId}
+        initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
       />
     </>
   );

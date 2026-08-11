@@ -28,6 +28,8 @@ import {
 } from "@/components/room-form";
 import { DuctDesignSection, type DuctRunRow } from "@/components/duct-design-section";
 import type { DuctSizingTableRow } from "@/lib/manualD";
+import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
+import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 
 export type RoomRow = ManualJRoom & {
   project_id: string;
@@ -291,6 +293,11 @@ export const ManualJWorkflow = forwardRef<
     initialSupplyAirTempF: number | null;
     initialDuctRuns: DuctRunRow[];
     ductSizingTable: DuctSizingTableRow[];
+    summerCoincidentWetbulbF: number | null;
+    equipmentCatalog: EquipmentCatalogEntry[];
+    equipmentPerformancePoints: PerformancePoint[];
+    initialSelectedEquipmentId: string | null;
+    initialEquipmentSelectionNotes: string | null;
   }
 >(function ManualJWorkflow(
   {
@@ -309,6 +316,11 @@ export const ManualJWorkflow = forwardRef<
     initialSupplyAirTempF,
     initialDuctRuns,
     ductSizingTable,
+    summerCoincidentWetbulbF,
+    equipmentCatalog,
+    equipmentPerformancePoints,
+    initialSelectedEquipmentId,
+    initialEquipmentSelectionNotes,
   },
   ref,
 ) {
@@ -1145,6 +1157,35 @@ export const ManualJWorkflow = forwardRef<
           ductSizingTable={ductSizingTable}
         />
       )}
+
+      {canCalculate &&
+        results &&
+        winterDesignTempF != null &&
+        summerDesignTempF != null &&
+        summerCoincidentWetbulbF != null && (
+          <EquipmentSelectionSection
+            projectId={projectId}
+            catalog={equipmentCatalog}
+            performancePoints={equipmentPerformancePoints}
+            manualJCoolingTotalBtuh={results.wholeHouse.coolingTotalBtuh}
+            manualJHeatingBtuh={results.wholeHouse.heatingBtuh}
+            summerOutdoorDesignF={summerDesignTempF}
+            summerCoincidentWetbulbF={summerCoincidentWetbulbF}
+            winterOutdoorDesignF={winterDesignTempF}
+            initialSelectedEquipmentId={initialSelectedEquipmentId}
+            initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
+          />
+        )}
+      {canCalculate &&
+        results &&
+        winterDesignTempF != null &&
+        summerDesignTempF != null &&
+        summerCoincidentWetbulbF == null && (
+          <p className="rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3 text-sm text-brand-grey-text">
+            Equipment Selection (Manual S) needs a summer coincident wet-bulb design temperature,
+            which isn&apos;t in climate_zone_reference for this project&apos;s location yet.
+          </p>
+        )}
     </div>
   );
 });

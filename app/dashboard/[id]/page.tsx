@@ -12,6 +12,7 @@ import type {
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
 import type { DuctRunRow } from "@/components/duct-design-section";
 import type { DuctSizingTableRow } from "@/lib/manualD";
+import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import { resolveCounty } from "@/lib/countyLookup";
 import {
   countUnresolvedFields,
@@ -46,6 +47,8 @@ type Project = {
   window_count: number | null;
   available_static_pressure_iwc: number | null;
   supply_air_temp_f: number | null;
+  selected_equipment_id: string | null;
+  equipment_selection_notes: string | null;
 };
 
 type DuctSizingTableDbRow = {
@@ -54,6 +57,37 @@ type DuctSizingTableDbRow = {
   cfm: number;
   velocity_fpm: number;
 };
+
+type EquipmentCatalogDbRow = {
+  id: string;
+  manufacturer: string;
+  model_number: string;
+  equipment_type: EquipmentCatalogEntry["equipmentType"];
+  stage_type: EquipmentCatalogEntry["stageType"];
+  nominal_cooling_capacity_btu: number | null;
+  nominal_heating_capacity_btu: number | null;
+  rated_cfm: number | null;
+  source_document: string;
+};
+
+type EquipmentPerformancePointDbRow = {
+  equipment_id: string;
+  mode: "cooling" | "heating";
+  outdoor_temp_f: number;
+  indoor_entering_temp_f: number;
+  indoor_entering_wetbulb_f: number | null;
+  sensible_capacity_btu: number;
+  total_capacity_btu: number;
+  input_power_kw: number;
+};
+
+// Duplicated from equipment-selection-section.tsx rather than imported -
+// same "use client" runtime-value-across-the-boundary issue documented on
+// DUCT_RUN_COLUMNS above.
+const EQUIPMENT_CATALOG_COLUMNS =
+  "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document";
+const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
+  "equipment_id, mode, outdoor_temp_f, indoor_entering_temp_f, indoor_entering_wetbulb_f, sensible_capacity_btu, total_capacity_btu, input_power_kw";
 
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
@@ -108,7 +142,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, selected_equipment_id, equipment_selection_notes",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -154,6 +188,8 @@ export default async function ProjectDetailPage({
     { data: fieldResolutions },
     { data: ductRuns },
     { data: ductSizingRows },
+    { data: equipmentCatalogRows },
+    { data: equipmentPerformancePointRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -197,7 +233,42 @@ export default async function ProjectDetailPage({
       .select("friction_rate, diameter_in, cfm, velocity_fpm")
       .eq("duct_type", "round")
       .returns<DuctSizingTableDbRow[]>(),
+    // Global reference data, not project-scoped - see migration
+    // 20260811022434_add_manual_s.sql for sourcing/citations.
+    supabase
+      .from("equipment_catalog")
+      .select(EQUIPMENT_CATALOG_COLUMNS)
+      .returns<EquipmentCatalogDbRow[]>(),
+    supabase
+      .from("equipment_performance_points")
+      .select(EQUIPMENT_PERFORMANCE_POINT_COLUMNS)
+      .returns<EquipmentPerformancePointDbRow[]>(),
   ]);
+
+  const equipmentCatalog: EquipmentCatalogEntry[] = (equipmentCatalogRows ?? []).map((r) => ({
+    id: r.id,
+    manufacturer: r.manufacturer,
+    modelNumber: r.model_number,
+    equipmentType: r.equipment_type,
+    stageType: r.stage_type,
+    nominalCoolingCapacityBtu: r.nominal_cooling_capacity_btu,
+    nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
+    ratedCfm: r.rated_cfm,
+    sourceDocument: r.source_document,
+  }));
+
+  const equipmentPerformancePoints: PerformancePoint[] = (equipmentPerformancePointRows ?? []).map(
+    (r) => ({
+      equipmentId: r.equipment_id,
+      mode: r.mode,
+      outdoorTempF: r.outdoor_temp_f,
+      indoorEnteringTempF: r.indoor_entering_temp_f,
+      indoorEnteringWetbulbF: r.indoor_entering_wetbulb_f,
+      sensibleCapacityBtu: r.sensible_capacity_btu,
+      totalCapacityBtu: r.total_capacity_btu,
+      inputPowerKw: r.input_power_kw,
+    }),
+  );
 
   const ductSizingTable: DuctSizingTableRow[] = (ductSizingRows ?? []).map((r) => ({
     frictionRate: r.friction_rate,
@@ -308,6 +379,11 @@ export default async function ProjectDetailPage({
         initialSupplyAirTempF={project.supply_air_temp_f}
         initialDuctRuns={ductRuns ?? []}
         ductSizingTable={ductSizingTable}
+        summerCoincidentWetbulbF={climateZone?.summer_coincident_wetbulb_f ?? null}
+        equipmentCatalog={equipmentCatalog}
+        equipmentPerformancePoints={equipmentPerformancePoints}
+        initialSelectedEquipmentId={project.selected_equipment_id}
+        initialEquipmentSelectionNotes={project.equipment_selection_notes}
       />
     </div>
   );

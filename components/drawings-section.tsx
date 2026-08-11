@@ -180,6 +180,35 @@ export function DrawingsSection({
     return resolution?.final_value ?? rawValue;
   }
 
+  // Same "prefer the human-resolved value" rule as resolvedEnvelopeNumber/
+  // resolvedEnvelopeString above, applied to a room's per-drawing duct
+  // fields (table_name="drawings", field_name="room[<index>].duct_*" - see
+  // migration 20260810195313_add_field_resolutions.sql). Without this,
+  // clicking "Accept"/"Override" on a duct Unresolved badge only recorded
+  // an audit row and never changed what "Apply to Form" actually sends
+  // through to the room record.
+  function resolvedRoom(drawingId: string, index: number, room: ExtractedRoom): ExtractedRoom {
+    const locResolution = resolutionMap.get(
+      resolutionKey("drawings", drawingId, `room[${index}].duct_location`),
+    );
+    const rResolution = resolutionMap.get(
+      resolutionKey("drawings", drawingId, `room[${index}].duct_insulation_r_value`),
+    );
+    if (!locResolution && !rResolution) return room;
+    return {
+      ...room,
+      duct_location: locResolution
+        ? { value: locResolution.final_value, unresolved: false }
+        : room.duct_location,
+      duct_insulation_r_value: rResolution
+        ? {
+            value: rResolution.final_value != null ? Number(rResolution.final_value) : null,
+            unresolved: false,
+          }
+        : room.duct_insulation_r_value,
+    };
+  }
+
   async function handleApply(drawing: DrawingRow) {
     if (!drawing.extracted_data) return;
     setApplying(true);
@@ -204,7 +233,10 @@ export function DrawingsSection({
       ),
     };
 
-    const result = await onApply(envelope, drawing.extracted_data.rooms);
+    const resolvedRooms = drawing.extracted_data.rooms.map((room, index) =>
+      resolvedRoom(drawing.id, index, room),
+    );
+    const result = await onApply(envelope, resolvedRooms);
 
     const supabase = createClient();
     await supabase
@@ -219,10 +251,11 @@ export function DrawingsSection({
     const parts: string[] = [];
     if (result.appliedEnvelope) parts.push("filled blank Building Envelope fields");
     if (result.roomsCreated > 0) parts.push(`created ${result.roomsCreated} room(s)`);
+    if (result.roomsUpdated > 0) parts.push(`updated ducts on ${result.roomsUpdated} room(s)`);
     setApplyMessage(
       parts.length > 0
-        ? `Applied: ${parts.join(" and ")}.`
-        : "Nothing to apply — Building Envelope fields were already filled and rooms already exist.",
+        ? `Applied: ${parts.join(", ")}.`
+        : "Nothing to apply — Building Envelope fields were already filled, rooms already exist, and no duct data matched an existing room by name.",
     );
     setApplying(false);
   }

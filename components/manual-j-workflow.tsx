@@ -79,6 +79,7 @@ export type ExtractableEnvelopeFields = {
 export type ApplyExtractedDataResult = {
   appliedEnvelope: boolean;
   roomsCreated: number;
+  roomsUpdated: number;
 };
 
 export type ManualJWorkflowHandle = {
@@ -467,6 +468,7 @@ export const ManualJWorkflow = forwardRef<
       });
 
       let roomsCreated = 0;
+      let roomsUpdated = 0;
       if (rooms.length === 0 && extractedRooms.length > 0) {
         const supabase = createClient();
         // Rooms created from a drawing extraction default to the project's
@@ -515,6 +517,58 @@ export const ManualJWorkflow = forwardRef<
           setRooms(data);
           roomsCreated = data.length;
         }
+      } else if (extractedRooms.length > 0) {
+        // Project already has rooms - don't duplicate them, but extracted
+        // (or human-resolved, see drawings-section.tsx's handleApply) duct
+        // data must still reach the actual room record, or the calc keeps
+        // silently using whatever was there before (the bug this branch
+        // fixes). Match by exact room name (case-insensitive): the only
+        // correlation available, since a drawing extraction's room array
+        // has no stable index->room-id mapping (see migration
+        // 20260810195313_add_field_resolutions.sql). Skip a room whose name
+        // is missing, unmatched, or ambiguous (shared by more than one
+        // existing room) rather than guess which one it means.
+        const supabase = createClient();
+        const nameCounts = new Map<string, number>();
+        for (const existing of rooms) {
+          const key = existing.name.trim().toLowerCase();
+          nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+        }
+
+        const updatedRooms: RoomRow[] = [];
+        for (const extractedRoom of extractedRooms) {
+          const ductLocation = extractedRoom.duct_location?.value ?? null;
+          const ductR = extractedRoom.duct_insulation_r_value?.value ?? null;
+          if (ductLocation == null && ductR == null) continue;
+
+          const key = extractedRoom.name?.trim().toLowerCase();
+          if (!key || nameCounts.get(key) !== 1) continue;
+          const target = rooms.find((r) => r.name.trim().toLowerCase() === key);
+          if (!target) continue;
+
+          const { data, error } = await supabase
+            .from("rooms")
+            .update({
+              duct_location: ductLocation,
+              duct_insulation_r_value: ductR,
+              duct_source: extractedRoom.duct_source ?? null,
+              duct_confidence: extractedRoom.duct_confidence ?? null,
+            })
+            .eq("id", target.id)
+            .select(ROOM_COLUMNS)
+            .single<RoomRow>();
+
+          if (!error && data) {
+            updatedRooms.push(data);
+            roomsUpdated += 1;
+          }
+        }
+
+        if (updatedRooms.length > 0) {
+          setRooms((prev) =>
+            prev.map((r) => updatedRooms.find((u) => u.id === r.id) ?? r),
+          );
+        }
       }
 
       requestAnimationFrame(() => {
@@ -524,7 +578,7 @@ export const ManualJWorkflow = forwardRef<
         });
       });
 
-      return { appliedEnvelope, roomsCreated };
+      return { appliedEnvelope, roomsCreated, roomsUpdated };
     },
   }));
 

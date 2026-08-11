@@ -191,6 +191,18 @@ const ASHRAE_622_BEDROOM_FACTOR = 7.5;
 // for anything load-critical.
 const BUFFER_DELTA_T_FACTOR = 0.5;
 
+// R-value of 0 is real data - an uninsulated wall/ceiling/floor/duct - and
+// must compute a UA/duct-loss much higher than an insulated assembly, not
+// zero. But UA = area / R is undefined (Infinity) exactly at R=0, and the
+// linear R8/R duct scaling below blows up the same way. Clamp every R-value
+// denominator to this practical floor - roughly the resistance of bare
+// framing/sheathing plus boundary air films, i.e. the lowest R a real
+// building assembly has even with zero added insulation - before dividing,
+// so R=0 yields a large, finite, non-zero load instead of Infinity/NaN.
+// null/undefined (no data entered yet) is handled separately by each caller
+// and must still short-circuit to 0, not fall through to this floor.
+const MIN_R_VALUE = 0.5;
+
 // APPROXIMATION, not the certified ACCA Manual J 8th Edition duct-loss
 // procedure. The spec's suggested formula (supply CFM x 1.1 x delta-T x
 // duct loss factor) isn't implementable here: this app has no supply-CFM
@@ -239,8 +251,13 @@ const DUCT_UNCONDITIONED_LOCATIONS = new Set([
 function ductRScaleFactor(room: ManualJRoom): number {
   if (!room.duct_location || !DUCT_UNCONDITIONED_LOCATIONS.has(room.duct_location)) return 0;
   const r = room.duct_insulation_r_value;
-  if (r == null || r <= 0) return 0;
-  return DUCT_INSULATION_R_BASELINE / r;
+  // null/undefined means no data yet - skip (0 duct loss), don't guess. A
+  // literal 0 (or any value below the practical floor) is real data - a
+  // bare/uninsulated duct - and must scale toward the highest loss, not 0.
+  // See MIN_R_VALUE above for why the denominator is clamped instead of
+  // used raw.
+  if (r == null) return 0;
+  return DUCT_INSULATION_R_BASELINE / Math.max(r, MIN_R_VALUE);
 }
 
 function n(value: number | null | undefined): number {
@@ -356,9 +373,13 @@ function computeRoom(
       totalWallLenFt > 0 ? totalDoorAreaSqft * (lenFt / totalWallLenFt) : 0;
     const netWallAreaSqft = Math.max(grossWallAreaSqft - windowArea - doorAreaShare, 0);
 
-    const wallUA = envelope.wall_insulation_r_value
-      ? netWallAreaSqft / envelope.wall_insulation_r_value
-      : 0;
+    // A literal R=0 (uninsulated wall) is real data, not "no data" - only
+    // null/undefined skips this term. See MIN_R_VALUE above for the
+    // divide-by-zero floor.
+    const wallUA =
+      envelope.wall_insulation_r_value != null
+        ? netWallAreaSqft / Math.max(envelope.wall_insulation_r_value, MIN_R_VALUE)
+        : 0;
     const windowUA = windowArea * n(envelope.window_u_value);
     const doorUA = doorAreaShare * doorUValue;
 
@@ -386,16 +407,18 @@ function computeRoom(
   // original full-delta-T behavior.
   const atticFactor =
     envelope.attic_construction_type === "sealed_conditioned" ? BUFFER_DELTA_T_FACTOR : 1;
+  // Same null-vs-0 distinction as wallUA above: R=0 is a real uninsulated
+  // ceiling/floor, not missing data.
   const ceilingUA =
-    room.ceiling_exposed && envelope.ceiling_insulation_r_value
-      ? n(room.floor_area_sqft) / envelope.ceiling_insulation_r_value
+    room.ceiling_exposed && envelope.ceiling_insulation_r_value != null
+      ? n(room.floor_area_sqft) / Math.max(envelope.ceiling_insulation_r_value, MIN_R_VALUE)
       : 0;
   envelopeHeatingBtuh += ceilingUA * heatingDeltaT * atticFactor;
   envelopeCoolingBtuh += ceilingUA * coolingDeltaT * atticFactor;
 
   const floorUA =
-    room.floor_exposed && envelope.floor_insulation_r_value
-      ? n(room.floor_area_sqft) / envelope.floor_insulation_r_value
+    room.floor_exposed && envelope.floor_insulation_r_value != null
+      ? n(room.floor_area_sqft) / Math.max(envelope.floor_insulation_r_value, MIN_R_VALUE)
       : 0;
   envelopeHeatingBtuh += floorUA * heatingDeltaT;
   envelopeCoolingBtuh += floorUA * coolingDeltaT;

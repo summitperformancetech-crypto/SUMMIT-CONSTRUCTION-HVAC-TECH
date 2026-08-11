@@ -60,7 +60,7 @@ export function ProjectWorkspace({
             initialFieldResolutions={initialFieldResolutions}
             onApply={(envelope, rooms) =>
               manualJRef.current?.applyExtractedData(envelope, rooms) ??
-              Promise.resolve({ appliedEnvelope: false, roomsCreated: 0 })
+              Promise.resolve({ appliedEnvelope: false, roomsCreated: 0, roomsUpdated: 0 })
             }
           />
         </div>

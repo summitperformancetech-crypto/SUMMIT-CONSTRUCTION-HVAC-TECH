@@ -17,9 +17,12 @@ import type { RoomRow } from "@/components/manual-j-workflow";
 import {
   computeManualD,
   computeRequiredCfmForRooms,
+  checkDuctInsulationCompliance,
   type DuctSizingResult,
   type DuctSizingTableRow,
+  type DuctInsulationComplianceResult,
 } from "./manualD";
+import { buildCodeMinimumsByLocation } from "./constants/ductLocations";
 import type { DuctRunRow } from "@/components/duct-design-section";
 import {
   evaluateEquipment,
@@ -64,6 +67,16 @@ export type ReportData = {
   project: ReportProject;
   climateZone: ReportClimateZone | null;
   generatedAt: string;
+  // Data Integrity Addendum, Section 1: null when this ReportData was just
+  // freshly computed from live tables and hasn't been written to
+  // calculation_snapshots yet (the normal state for every caller of
+  // getReportData() itself, since snapshotting is the report route's job,
+  // not this aggregation function's - see app/api/reports/route.ts). Once
+  // a project has a snapshot, route.ts loads snapshot_data (this exact
+  // shape, previously stored) and fills this field in before rendering,
+  // so the templates can show "data frozen as of <date>, v<n>" instead of
+  // silently implying every PDF reflects live data.
+  snapshot: { version: number; createdAt: string; reason: string | null } | null;
   residential: {
     envelope: ManualJEnvelope;
     manualJ: ManualJResult;
@@ -74,6 +87,10 @@ export type ReportData = {
     equipmentEvaluations: EquipmentEvaluation[];
     selectedEquipment: EquipmentEvaluation | null;
     equipmentSelectionNotes: string | null;
+    // Data Integrity Addendum, Section 3 - one entry per branch run with a
+    // resolvable room/location (see checkDuctInsulationCompliance in
+    // lib/manualD.ts for why trunk runs are never included).
+    ductInsulationCompliance: DuctInsulationComplianceResult[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -123,6 +140,15 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     .select(FIELD_RESOLUTION_COLUMNS)
     .eq("project_id", projectId)
     .returns<FieldResolution[]>();
+
+  // Data Integrity Addendum, Section 3 - global reference data, not
+  // project-scoped (same pattern as duct_sizing_tables/equipment_catalog
+  // above).
+  const { data: codeMinimumRows } = await supabase
+    .from("duct_insulation_code_minimums")
+    .select("duct_location, min_r_value")
+    .returns<{ duct_location: string; min_r_value: number }[]>();
+  const codeMinimumsByLocation = buildCodeMinimumsByLocation(codeMinimumRows ?? []);
 
   let residential: ReportData["residential"] = null;
   let commercial: ReportData["commercial"] = null;
@@ -177,6 +203,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       climateZone.summer_design_temp_f,
       roomTypeDefaults ?? [],
       zones ?? [],
+      codeMinimumsByLocation,
     );
 
     let ductSchedule: DuctSizingResult[] = [];
@@ -288,6 +315,29 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     const selectedEquipment =
       equipmentEvaluations.find((e) => e.equipment.id === project.selected_equipment_id) ?? null;
 
+    const roomsById = new Map(
+      (rooms ?? []).map((r) => [
+        r.id,
+        { duct_location: r.duct_location, duct_insulation_r_value: r.duct_insulation_r_value },
+      ]),
+    );
+    const ductInsulationCompliance = [
+      ...checkDuctInsulationCompliance(
+        (ductRuns ?? []).map((r) => ({
+          id: r.id,
+          zoneId: r.zone_id,
+          runType: r.run_type,
+          roomId: r.room_id,
+          lengthFt: r.length_ft,
+          fittingEquivalentLengthFt: r.fitting_equivalent_length_ft,
+          ductShape: r.duct_shape,
+          targetHeightIn: r.target_height_in,
+        })),
+        roomsById,
+        codeMinimumsByLocation,
+      ).values(),
+    ];
+
     residential = {
       envelope,
       manualJ,
@@ -298,6 +348,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       equipmentEvaluations,
       selectedEquipment,
       equipmentSelectionNotes: project.equipment_selection_notes,
+      ductInsulationCompliance,
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&
@@ -445,6 +496,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     },
     climateZone,
     generatedAt: new Date().toISOString(),
+    snapshot: null,
     residential,
     commercial,
     fieldResolutions: fieldResolutions ?? [],

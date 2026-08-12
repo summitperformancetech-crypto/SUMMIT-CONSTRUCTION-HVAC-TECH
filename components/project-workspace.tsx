@@ -41,6 +41,7 @@ export function ProjectWorkspace({
   initialEquipmentSelectionNotes,
   preferredEquipmentIds,
   exclusiveEquipmentIds,
+  ductInsulationCodeMinimums,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -67,6 +68,7 @@ export function ProjectWorkspace({
   initialEquipmentSelectionNotes: string | null;
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
+  ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -119,6 +121,7 @@ export function ProjectWorkspace({
         initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
         preferredEquipmentIds={preferredEquipmentIds}
         exclusiveEquipmentIds={exclusiveEquipmentIds}
+        ductInsulationCodeMinimums={ductInsulationCodeMinimums}
       />
     </>
   );

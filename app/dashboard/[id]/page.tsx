@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
-import { GenerateReportsButton } from "@/components/generate-reports-button";
+import { GenerateReportsButton, type SnapshotStatus } from "@/components/generate-reports-button";
+import { StalenessBanner } from "@/components/staleness-banner";
 import type { RoomRow } from "@/components/manual-j-workflow";
 import type {
   AtticConstructionType,
@@ -24,6 +25,7 @@ import {
   FIELD_RESOLUTION_COLUMNS,
   type FieldResolution,
 } from "@/lib/fieldResolutions";
+import { computeStaleItems, type StaleItem } from "@/lib/staleness";
 
 type Project = {
   id: string;
@@ -34,6 +36,9 @@ type Project = {
   state: string;
   zip: string;
   climate_confirmed: boolean;
+  // Data Integrity Addendum, Section 2 - the "project's start" marker the
+  // staleness banner compares reference-table updated_at values against.
+  created_at: string;
   wall_insulation_r_value: number | null;
   ceiling_insulation_r_value: number | null;
   floor_insulation_r_value: number | null;
@@ -181,6 +186,7 @@ type ClimateZoneReference = {
   winter_design_temp_f: number;
   summer_design_temp_f: number;
   summer_coincident_wetbulb_f: number;
+  updated_at: string;
 };
 
 const PROJECT_TYPE_LABEL: Record<string, string> = {
@@ -214,7 +220,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, selected_equipment_id, equipment_selection_notes",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, selected_equipment_id, equipment_selection_notes",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -233,7 +239,7 @@ export default async function ProjectDetailPage({
   let climateZoneQuery = supabase
     .from("climate_zone_reference")
     .select(
-      "state, county, iecc_zone, winter_design_temp_f, summer_design_temp_f, summer_coincident_wetbulb_f",
+      "state, county, iecc_zone, winter_design_temp_f, summer_design_temp_f, summer_coincident_wetbulb_f, updated_at",
     )
     .eq("state", project.state);
 
@@ -249,6 +255,86 @@ export default async function ProjectDetailPage({
     .returns<ClimateZoneReference[]>();
 
   const climateZone = climateZoneRows?.[0] ?? null;
+
+  // Data Integrity Addendum, Section 1 - drives both the GenerateReports-
+  // Button status line and (via its presence/absence) whether the Section
+  // 2 staleness banner is even relevant (a finalized project's live-table
+  // changes no longer matter to its reports).
+  const { data: latestSnapshotRow } = await supabase
+    .from("calculation_snapshots")
+    .select("version, created_at, reason")
+    .eq("project_id", project.id)
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ version: number; created_at: string; reason: string | null }>();
+  const latestSnapshot: SnapshotStatus | null = latestSnapshotRow
+    ? { version: latestSnapshotRow.version, createdAt: latestSnapshotRow.created_at, reason: latestSnapshotRow.reason }
+    : null;
+
+  let staleItems: StaleItem[] = [];
+  if (!latestSnapshot) {
+    const [
+      { data: equipmentCatalogLatest },
+      { data: equipmentPointsLatest },
+      { data: ductSizingLatest },
+      { data: roomDefaultsLatest },
+      { data: codeMinimumsLatest },
+      { data: dismissals },
+    ] = await Promise.all([
+      supabase
+        .from("equipment_catalog")
+        .select("updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ updated_at: string }>(),
+      supabase
+        .from("equipment_performance_points")
+        .select("updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ updated_at: string }>(),
+      supabase
+        .from("duct_sizing_tables")
+        .select("updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ updated_at: string }>(),
+      supabase
+        .from("room_type_defaults")
+        .select("updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ updated_at: string }>(),
+      supabase
+        .from("duct_insulation_code_minimums")
+        .select("updated_at")
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ updated_at: string }>(),
+      supabase
+        .from("staleness_banner_dismissals")
+        .select("reference_table, dismissed_at")
+        .eq("project_id", project.id)
+        .returns<{ reference_table: string; dismissed_at: string }[]>(),
+    ]);
+
+    const equipmentLatest = [equipmentCatalogLatest?.updated_at, equipmentPointsLatest?.updated_at]
+      .filter((v): v is string => v != null)
+      .sort()
+      .at(-1);
+
+    staleItems = computeStaleItems(
+      project.created_at,
+      {
+        equipment: equipmentLatest ?? null,
+        duct_sizing: ductSizingLatest?.updated_at ?? null,
+        climate: climateZone?.updated_at ?? null,
+        room_defaults: roomDefaultsLatest?.updated_at ?? null,
+        duct_insulation_code_minimums: codeMinimumsLatest?.updated_at ?? null,
+      },
+      dismissals ?? [],
+    );
+  }
 
   if (project.project_type === "commercial" || project.project_type === "industrial") {
     const [
@@ -371,7 +457,8 @@ export default async function ProjectDetailPage({
           )}
         </div>
 
-        <GenerateReportsButton projectId={project.id} />
+        <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
+        <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} />
 
         <CommercialWorkflow
           projectId={project.id}
@@ -403,6 +490,7 @@ export default async function ProjectDetailPage({
     { data: equipmentCatalogRows },
     { data: equipmentPerformancePointRows },
     { data: equipmentPreferenceRows },
+    { data: ductInsulationCodeMinimumRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -467,6 +555,13 @@ export default async function ProjectDetailPage({
           .eq("org_id", profile.org_id)
           .returns<EquipmentOrgPreferenceDbRow[]>()
       : Promise.resolve({ data: [] as EquipmentOrgPreferenceDbRow[] }),
+    // Global reference data, not project-scoped - Data Integrity Addendum,
+    // Section 3 (see migration 20260811222500_add_duct_insulation_code_
+    // minimums.sql for sourcing/citations).
+    supabase
+      .from("duct_insulation_code_minimums")
+      .select("duct_location, min_r_value")
+      .returns<{ duct_location: string; min_r_value: number }[]>(),
   ]);
 
   const preferredEquipmentIds = new Set(
@@ -591,7 +686,8 @@ export default async function ProjectDetailPage({
         )}
       </div>
 
-      <GenerateReportsButton projectId={project.id} />
+      <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
+      <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} />
 
       <ProjectWorkspace
         projectId={project.id}
@@ -619,6 +715,7 @@ export default async function ProjectDetailPage({
         initialEquipmentSelectionNotes={project.equipment_selection_notes}
         preferredEquipmentIds={preferredEquipmentIds}
         exclusiveEquipmentIds={exclusiveEquipmentIds}
+        ductInsulationCodeMinimums={ductInsulationCodeMinimumRows ?? []}
       />
     </div>
   );

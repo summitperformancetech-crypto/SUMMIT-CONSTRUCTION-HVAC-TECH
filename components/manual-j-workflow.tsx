@@ -18,7 +18,7 @@ import {
   type WallExposureType,
 } from "@/lib/manualJ";
 import type { ExtractedRoom } from "@/lib/drawingExtraction";
-import { normalizeDuctLocation } from "@/lib/constants/ductLocations";
+import { normalizeDuctLocation, buildCodeMinimumsByLocation } from "@/lib/constants/ductLocations";
 import {
   RoomForm,
   EMPTY_ROOM_FORM,
@@ -300,6 +300,7 @@ export const ManualJWorkflow = forwardRef<
     initialEquipmentSelectionNotes: string | null;
     preferredEquipmentIds: ReadonlySet<string>;
     exclusiveEquipmentIds: ReadonlySet<string>;
+    ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
   }
 >(function ManualJWorkflow(
   {
@@ -325,6 +326,7 @@ export const ManualJWorkflow = forwardRef<
     initialEquipmentSelectionNotes,
     preferredEquipmentIds,
     exclusiveEquipmentIds,
+    ductInsulationCodeMinimums,
   },
   ref,
 ) {
@@ -361,6 +363,11 @@ export const ManualJWorkflow = forwardRef<
 
   const canCalculate = winterDesignTempF != null && summerDesignTempF != null;
 
+  const codeMinimumsByLocation = useMemo(
+    () => buildCodeMinimumsByLocation(ductInsulationCodeMinimums),
+    [ductInsulationCodeMinimums],
+  );
+
   const results = useMemo(() => {
     if (!canCalculate) return null;
     return computeManualJ(
@@ -370,8 +377,18 @@ export const ManualJWorkflow = forwardRef<
       summerDesignTempF!,
       roomTypeDefaults,
       zones,
+      codeMinimumsByLocation,
     );
-  }, [rooms, envelope, winterDesignTempF, summerDesignTempF, canCalculate, roomTypeDefaults, zones]);
+  }, [
+    rooms,
+    envelope,
+    winterDesignTempF,
+    summerDesignTempF,
+    canCalculate,
+    roomTypeDefaults,
+    zones,
+    codeMinimumsByLocation,
+  ]);
 
   function updateEnvelopeField<K extends keyof EnvelopeFormValues>(
     key: K,
@@ -1159,6 +1176,7 @@ export const ManualJWorkflow = forwardRef<
           initialSupplyAirTempF={initialSupplyAirTempF}
           initialDuctRuns={initialDuctRuns}
           ductSizingTable={ductSizingTable}
+          ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         />
       )}
 

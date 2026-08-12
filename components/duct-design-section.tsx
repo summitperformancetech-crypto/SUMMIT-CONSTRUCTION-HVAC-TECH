@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   computeManualD,
   computeRequiredCfmForRooms,
+  checkDuctInsulationCompliance,
   type DuctRunInput,
   type DuctSizingTableRow,
 } from "@/lib/manualD";
@@ -103,6 +104,7 @@ export function DuctDesignSection({
   initialSupplyAirTempF,
   initialDuctRuns,
   ductSizingTable,
+  ductInsulationCodeMinimums,
 }: {
   projectId: string;
   rooms: RoomRow[];
@@ -113,6 +115,12 @@ export function DuctDesignSection({
   initialSupplyAirTempF: number | null;
   initialDuctRuns: DuctRunRow[];
   ductSizingTable: DuctSizingTableRow[];
+  // Data Integrity Addendum, Section 3 - duct_location -> current code
+  // minimum R-value, for the compliance badge below. Plain array (not the
+  // Map lib/manualD.ts's checkDuctInsulationCompliance ultimately wants)
+  // since props cross a server/client boundary that only survives plain
+  // JSON-shaped values.
+  ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
 }) {
   const [staticPressureForm, setStaticPressureForm] = useState(
     initialAvailableStaticPressureIwc?.toString() ?? "",
@@ -148,6 +156,29 @@ export function DuctDesignSection({
     [ductRunInputs, requiredCfmByRoom, availableStaticPressureIwc, ductSizingTable],
   );
   const resultByRunId = useMemo(() => new Map(results.map((r) => [r.runId, r])), [results]);
+
+  // Data Integrity Addendum, Section 3 - Manual D compliance check, purely
+  // additive to the sizing results above (see lib/manualD.ts's
+  // checkDuctInsulationCompliance comment for why this is kept separate
+  // from computeManualD/sizeDuctRun rather than folded in).
+  const roomsById = useMemo(
+    () =>
+      new Map(
+        rooms.map((r) => [
+          r.id,
+          { duct_location: r.duct_location, duct_insulation_r_value: r.duct_insulation_r_value },
+        ]),
+      ),
+    [rooms],
+  );
+  const codeMinimumsByLocation = useMemo(
+    () => new Map(ductInsulationCodeMinimums.map((r) => [r.duct_location, r.min_r_value])),
+    [ductInsulationCodeMinimums],
+  );
+  const complianceByRunId = useMemo(
+    () => checkDuctInsulationCompliance(ductRunInputs, roomsById, codeMinimumsByLocation),
+    [ductRunInputs, roomsById, codeMinimumsByLocation],
+  );
 
   function roomName(roomId: string | null): string {
     if (!roomId) return "—";
@@ -477,6 +508,7 @@ export function DuctDesignSection({
                     <th className="py-2 pr-4 text-right">Friction rate</th>
                     <th className="py-2 pr-4 text-right">Size</th>
                     <th className="py-2 pr-4 text-right">Velocity</th>
+                    <th className="py-2 pr-4">Insulation</th>
                     <th className="py-2 pr-4">Material</th>
                     <th className="py-2 pr-4" />
                   </tr>
@@ -527,6 +559,25 @@ export function DuctDesignSection({
                               Oversized load
                             </span>
                           )}
+                        </td>
+                        <td className="py-2 pr-4 text-brand-silver">
+                          {(() => {
+                            const compliance = complianceByRunId.get(run.id);
+                            if (!compliance || compliance.actualRValue == null) return "—";
+                            return (
+                              <>
+                                {`R-${compliance.actualRValue}`}
+                                {compliance.belowCodeMinimum && (
+                                  <span
+                                    className="ml-2 rounded-full border border-red-800 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-red-400"
+                                    title={`Below the current${compliance.minRValue != null ? ` R-${compliance.minRValue}` : ""} code minimum for this duct's location`}
+                                  >
+                                    Below code min
+                                  </span>
+                                )}
+                              </>
+                            );
+                          })()}
                         </td>
                         <td className="py-2 pr-4 text-brand-silver">
                           {MATERIAL_OPTIONS.find((m) => m.value === run.material)?.label}

@@ -73,10 +73,21 @@ ${footerHtml}
 // Internal engineering report - full detail, for the file / code officials.
 // ---------------------------------------------------------------------------
 export function renderInternalReportHtml(data: ReportData): string {
+  // Data Integrity Addendum, Section 1: "Generated" is always this PDF
+  // file's own render time; "Data frozen as of" is when the underlying
+  // figures were snapshotted (calculation_snapshots) and stays fixed
+  // across every future regeneration until an explicit revision - see
+  // app/api/reports/route.ts. data.snapshot is only ever null if this
+  // ReportData somehow reached the template without going through that
+  // route (shouldn't happen in practice, but not asserted away).
+  const snapshotLine = data.snapshot
+    ? `Data frozen as of ${new Date(data.snapshot.createdAt).toLocaleString()} (v${data.snapshot.version}${data.snapshot.reason ? ` — ${esc(data.snapshot.reason)}` : ""})`
+    : "Data not yet snapshotted";
   const header = `
     <div style="padding:16px 24px;border-bottom:3px solid ${BRAND.gold};">
       <h1 style="font-size:18px;">${esc(data.project.name)}</h1>
       <p class="muted">${projectAddress(data)} · ${PROJECT_TYPE_LABEL[data.project.project_type] ?? data.project.project_type} · Internal Engineering Report · Generated ${new Date(data.generatedAt).toLocaleString()}</p>
+      <p class="muted">${snapshotLine}</p>
     </div>
   `;
 
@@ -100,10 +111,18 @@ export function renderInternalReportHtml(data: ReportData): string {
 
   let residentialSections = "";
   if (data.residential) {
-    const { manualJ, ductSchedule, ductRuns, rooms, selectedEquipment, equipmentSelectionNotes } =
-      data.residential;
+    const {
+      manualJ,
+      ductSchedule,
+      ductRuns,
+      rooms,
+      selectedEquipment,
+      equipmentSelectionNotes,
+      ductInsulationCompliance,
+    } = data.residential;
     const roomNameById = new Map(rooms.map((r) => [r.id, r.name]));
     const ductRunById = new Map(ductRuns.map((r) => [r.id, r]));
+    const complianceByRunId = new Map(ductInsulationCompliance.map((c) => [c.runId, c]));
     function ductRunLabel(runId: string): string {
       const run = ductRunById.get(runId);
       if (!run) return runId;
@@ -164,17 +183,24 @@ export function renderInternalReportHtml(data: ReportData): string {
           ? `<section>
               <div class="section-title">Manual D — Duct Schedule</div>
               <table>
-                <thead><tr><th>Run</th><th class="num">CFM</th><th class="num">Friction Rate</th><th>Size</th><th class="num">Velocity (fpm)</th></tr></thead>
+                <thead><tr><th>Run</th><th class="num">CFM</th><th class="num">Friction Rate</th><th>Size</th><th class="num">Velocity (fpm)</th><th>Insulation</th></tr></thead>
                 <tbody>${ductSchedule
-                  .map(
-                    (d) => `<tr>
+                  .map((d) => {
+                    const compliance = complianceByRunId.get(d.runId);
+                    const insulationCell = compliance
+                      ? compliance.actualRValue != null
+                        ? `R-${compliance.actualRValue}${compliance.belowCodeMinimum ? ` <span class="badge badge-overridden" title="Below the current ${compliance.minRValue != null ? `R-${compliance.minRValue}` : ""} code minimum for this duct's location">below code min</span>` : ""}`
+                        : "—"
+                      : "—";
+                    return `<tr>
                       <td>${esc(ductRunLabel(d.runId))}</td>
                       <td class="num">${fmt(d.cfm)}</td>
                       <td class="num">${d.frictionRate.toFixed(2)}</td>
                       <td>${d.ductShape === "round" ? `${d.diameterIn}" round` : `${d.widthIn?.toFixed(1)}" × ${d.heightIn}" rect`}</td>
                       <td class="num">${fmt(d.velocityFpm)}${d.velocityWarning ? ` <span class="badge badge-overridden">over limit</span>` : ""}</td>
-                    </tr>`,
-                  )
+                      <td>${insulationCell}</td>
+                    </tr>`;
+                  })
                   .join("")}</tbody>
               </table>
             </section>`

@@ -1,5 +1,43 @@
 import type { RoomLoadResult } from "./manualJ";
 
+// Data Integrity Addendum, Section 3 - a new Manual D COMPLIANCE check
+// (insulation R-value vs. current code minimum), deliberately separate
+// from sizeDuctRun/computeManualD above: duct sizing (diameter/friction
+// rate) math is pure aerodynamics and is unaffected by insulation R-value,
+// so it needs no change. This only flags a run whose associated room has
+// BOTH a specified duct_insulation_r_value AND a location with a known
+// code minimum, and the former is below the latter - a room with no
+// entered R-value yet is "not specified", not "non-compliant", so it's
+// never flagged (same "null means no data, don't guess" convention
+// ductRScaleFactor in lib/manualJ.ts already uses). Trunk runs (and any
+// branch run with no room_id) have no single room to resolve a
+// location/R-value from - this app's schema doesn't model per-trunk-run
+// insulation, so trunk runs are always skipped, never flagged.
+export type DuctInsulationComplianceResult = {
+  runId: string;
+  belowCodeMinimum: boolean;
+  minRValue: number | null;
+  actualRValue: number | null;
+};
+
+export function checkDuctInsulationCompliance(
+  ductRuns: DuctRunInput[],
+  roomsById: ReadonlyMap<string, { duct_location: string | null; duct_insulation_r_value: number | null }>,
+  codeMinimumsByLocation: ReadonlyMap<string, number>,
+): Map<string, DuctInsulationComplianceResult> {
+  const result = new Map<string, DuctInsulationComplianceResult>();
+  for (const run of ductRuns) {
+    if (run.runType !== "branch" || !run.roomId) continue;
+    const room = roomsById.get(run.roomId);
+    const location = room?.duct_location ?? null;
+    const actualRValue = room?.duct_insulation_r_value ?? null;
+    const minRValue = location != null ? (codeMinimumsByLocation.get(location) ?? null) : null;
+    const belowCodeMinimum = actualRValue != null && minRValue != null && actualRValue < minRValue;
+    result.set(run.id, { runId: run.id, belowCodeMinimum, minRValue, actualRValue });
+  }
+  return result;
+}
+
 export type DuctSizingTableRow = {
   frictionRate: number;
   diameterIn: number;

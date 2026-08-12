@@ -243,7 +243,21 @@ const DUCT_GAIN_FACTOR_COOLING_LATENT_R8 = 0.8107;
 // temperatures. Attic-Conditioned/Basement-Conditioned/Conditioned-Space
 // (and null/unset) are treated as 0 duct loss - ducts fully inside the
 // conditioned envelope, or no data yet.
-function ductRScaleFactor(room: ManualJRoom): number {
+//
+// Data Integrity Addendum, Section 3: when a room has no measured
+// duct_insulation_r_value, this used to silently mean "0 duct loss" -
+// treating an unmeasured duct as if it doesn't exist. That's wrong: an
+// unmeasured duct still has SOME insulation (code requires at least a
+// minimum), so the honest default is "assume it meets the current code
+// minimum for its location", not "assume no duct". codeMinimumsByLocation
+// (from duct_insulation_code_minimums, see lib/reportData.ts/page.tsx for
+// how it's fetched) supplies that default; a location with no seeded
+// minimum still falls back to 0 (can't assume a number that doesn't
+// exist).
+function ductRScaleFactor(
+  room: ManualJRoom,
+  codeMinimumsByLocation: ReadonlyMap<string, number>,
+): number {
   // room.duct_location is a plain string at the type level (it comes from
   // the DB via ManualJRoom, not the narrower DuctLocation type) even
   // though the check constraint guarantees it's one of the enum values -
@@ -253,12 +267,14 @@ function ductRScaleFactor(room: ManualJRoom): number {
     !DUCT_UNCONDITIONED_LOCATIONS.has(room.duct_location as DuctLocation)
   )
     return 0;
-  const r = room.duct_insulation_r_value;
-  // null/undefined means no data yet - skip (0 duct loss), don't guess. A
-  // literal 0 (or any value below the practical floor) is real data - a
-  // bare/uninsulated duct - and must scale toward the highest loss, not 0.
-  // See MIN_R_VALUE above for why the denominator is clamped instead of
-  // used raw.
+  const r = room.duct_insulation_r_value ?? codeMinimumsByLocation.get(room.duct_location) ?? null;
+  // Still null after the code-minimum fallback means genuinely no data
+  // available anywhere (no measured value AND no seeded minimum for this
+  // location) - skip (0 duct loss) rather than guess. A literal 0 (or any
+  // value below the practical floor) is real measured data - a bare/
+  // uninsulated duct - and must scale toward the highest loss, not 0. See
+  // MIN_R_VALUE above for why the denominator is clamped instead of used
+  // raw.
   if (r == null) return 0;
   return DUCT_INSULATION_R_BASELINE / Math.max(r, MIN_R_VALUE);
 }
@@ -342,6 +358,7 @@ function computeRoom(
   winterOutdoorF: number,
   summerOutdoorF: number,
   roomTypeDefaults: RoomTypeDefault[],
+  codeMinimumsByLocation: ReadonlyMap<string, number>,
 ): RoomLoadResult {
   const heatingDeltaT = envelope.indoor_design_temp_heating_f - winterOutdoorF;
   const coolingDeltaT = summerOutdoorF - envelope.indoor_design_temp_cooling_f;
@@ -449,7 +466,7 @@ function computeRoom(
   // gains are added (internal gains aren't structure/infiltration load,
   // and the reference report's own "Structure + Infiltration" base for
   // Ducts excludes its "Internal gains" line too).
-  const ductScale = ductRScaleFactor(room);
+  const ductScale = ductRScaleFactor(room, codeMinimumsByLocation);
   const ductHeatingBtuh =
     ductScale * DUCT_LOSS_FACTOR_HEATING_R8 * (envelopeHeatingBtuh + infiltrationHeatingBtuh);
   const ductCoolingSensibleBtuh =
@@ -580,6 +597,14 @@ export function computeManualJ(
   summerOutdoorF: number,
   roomTypeDefaults: RoomTypeDefault[],
   zones: ManualJZone[] = [],
+  // Data Integrity Addendum, Section 3 - duct_location -> current code
+  // minimum R-value (from duct_insulation_code_minimums), used as the
+  // duct-loss default when a room has no measured duct_insulation_r_value.
+  // Defaults to empty (old "0 duct loss when unmeasured" behavior) so any
+  // caller that genuinely has no code-minimum data available still gets a
+  // safe, defined result rather than a crash - every real caller in this
+  // app passes the live table's contents (see reportData.ts/page.tsx).
+  codeMinimumsByLocation: ReadonlyMap<string, number> = new Map(),
 ): ManualJResult {
   // Unconditioned rooms (garages, unconditioned attics, etc.) have no HVAC
   // load target - Manual J doesn't size equipment or registers for them.
@@ -589,7 +614,14 @@ export function computeManualJ(
   const conditionedRooms = rooms.filter((room) => room.is_conditioned);
 
   const roomResults = conditionedRooms.map((room) =>
-    computeRoom(room, envelope, winterOutdoorF, summerOutdoorF, roomTypeDefaults),
+    computeRoom(
+      room,
+      envelope,
+      winterOutdoorF,
+      summerOutdoorF,
+      roomTypeDefaults,
+      codeMinimumsByLocation,
+    ),
   );
 
   // Group conditioned rooms (and their matching results - same array order

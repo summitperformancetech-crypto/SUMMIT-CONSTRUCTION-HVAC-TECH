@@ -82,3 +82,19 @@ export function normalizeDuctLocation(raw: string | null | undefined): DuctLocat
   if (isDuctLocation(raw)) return raw;
   return DUCT_LOCATION_ALIASES[raw.trim().toLowerCase()] ?? null;
 }
+
+// Data Integrity Addendum, Section 3: shared shape/builder for
+// duct_insulation_code_minimums rows, since lib/manualJ.ts (duct-loss
+// default), lib/manualD.ts (compliance check), lib/reportData.ts, and
+// page.tsx/duct-design-section.tsx all need the same duct_location ->
+// min_r_value lookup built from the same raw rows.
+export type DuctInsulationCodeMinimumRow = {
+  duct_location: string;
+  min_r_value: number;
+};
+
+export function buildCodeMinimumsByLocation(
+  rows: DuctInsulationCodeMinimumRow[],
+): Map<string, number> {
+  return new Map(rows.map((r) => [r.duct_location, r.min_r_value]));
+}

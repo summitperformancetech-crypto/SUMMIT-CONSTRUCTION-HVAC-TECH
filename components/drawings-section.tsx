@@ -343,6 +343,13 @@ export function DrawingsSection({
               <div className="flex items-center gap-3">
                 <span
                   className={`rounded-full border px-3 py-1 text-xs font-medium ${STATUS_CLASS[drawing.extraction_status]}`}
+                  title={
+                    drawing.extraction_status === "failed" && drawing.extraction_error
+                      ? drawing.extraction_error.stop_reason === "max_tokens"
+                        ? `This drawing has too much content for the model to fully describe in one response (used all ${drawing.extraction_error.output_tokens} output tokens).`
+                        : `Extraction failed (stop_reason: ${drawing.extraction_error.stop_reason ?? "unknown"}).`
+                      : undefined
+                  }
                 >
                   {STATUS_LABEL[drawing.extraction_status]}
                 </span>

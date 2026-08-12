@@ -55,6 +55,19 @@ export type DrawingExtractionStatus = "pending" | "completed" | "failed";
 // lives on the storage object and the file_name extension, not here.
 export type DrawingFileType = "pdf" | "image";
 
+// Diagnostic detail persisted on a failed extraction (see app/api/drawings/
+// extract/route.ts) - stop_reason distinguishes a truncated response
+// (max_tokens ceiling hit mid-JSON) from a genuinely malformed one; the
+// full raw_response is kept so a future failure never again requires
+// manually reproducing the API call outside the app to see what actually
+// happened.
+export type DrawingExtractionError = {
+  stop_reason: string | null;
+  output_tokens: number | null;
+  raw_response: string;
+  diagnosed_at: string;
+};
+
 export type DrawingRow = {
   id: string;
   file_name: string;
@@ -63,10 +76,11 @@ export type DrawingRow = {
   extracted_data: DrawingExtraction | null;
   unresolved_items: string[] | null;
   applied_to_field_data: boolean;
+  extraction_error: DrawingExtractionError | null;
 };
 
 export const DRAWING_COLUMNS =
-  "id, file_name, file_type, extraction_status, extracted_data, unresolved_items, applied_to_field_data";
+  "id, file_name, file_type, extraction_status, extracted_data, unresolved_items, applied_to_field_data, extraction_error";
 
 export const ACCEPTED_DRAWING_MIME_TYPES = [
   "application/pdf",

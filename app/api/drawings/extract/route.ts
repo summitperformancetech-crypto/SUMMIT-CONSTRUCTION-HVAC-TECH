@@ -105,10 +105,21 @@ export async function POST(request: Request) {
   const anthropic = new Anthropic({ apiKey });
 
   let rawText: string;
+  let stopReason: string | null;
+  let outputTokens: number | undefined;
   try {
     const message = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 4096,
+      // Room-dense drawings (20+ rooms - real, not hypothetical: a 26-room
+      // architectural set hit this exact ceiling and got cut off mid-JSON
+      // at the previous 4096 limit, diagnosed 2026-08-12 by reproducing
+      // the API call directly and inspecting stop_reason) need more output
+      // budget than a small single-family floor plan. 8192 gave ~40%
+      // headroom over what that drawing actually needed (4872 tokens).
+      // Cost/latency is billed on tokens actually generated, not this
+      // ceiling, so there's no downside to the higher limit going unused
+      // on smaller drawings.
+      max_tokens: 8192,
       messages: [
         {
           role: "user",
@@ -134,6 +145,8 @@ export async function POST(request: Request) {
 
     const textBlock = message.content.find((block) => block.type === "text");
     rawText = textBlock && "text" in textBlock ? textBlock.text : "";
+    stopReason = message.stop_reason;
+    outputTokens = message.usage?.output_tokens;
   } catch (err) {
     await supabase
       .from("drawings")
@@ -147,12 +160,32 @@ export async function POST(request: Request) {
   try {
     extraction = JSON.parse(stripJsonFences(rawText));
   } catch {
+    // Persist what actually happened (this used to be discarded entirely,
+    // making a real failure - a drawing hitting the max_tokens ceiling -
+    // undiagnosable without manually reproducing the exact API call
+    // outside the app). stop_reason distinguishes "ran out of output
+    // budget mid-response" (max_tokens) from a genuinely malformed
+    // response (any other stop_reason) - these need different fixes and
+    // shouldn't share one generic message.
+    const truncated = stopReason === "max_tokens";
     await supabase
       .from("drawings")
-      .update({ extraction_status: "failed" })
+      .update({
+        extraction_status: "failed",
+        extraction_error: {
+          stop_reason: stopReason,
+          output_tokens: outputTokens ?? null,
+          raw_response: rawText,
+          diagnosed_at: new Date().toISOString(),
+        },
+      })
       .eq("id", drawingId);
     return NextResponse.json(
-      { error: "The model did not return valid JSON" },
+      {
+        error: truncated
+          ? "This drawing has too much content for the model to fully describe in one response - contact support, this needs a larger output limit or a smaller upload."
+          : "The model did not return valid JSON",
+      },
       { status: 502 },
     );
   }
@@ -171,6 +204,10 @@ export async function POST(request: Request) {
       extracted_data: extraction,
       unresolved_items: unresolvedItems,
       extraction_status: "completed",
+      // A retry that succeeds after a previous failure should stop
+      // showing that stale error - extraction_error is only ever written
+      // on failure above, so it has to be explicitly cleared here.
+      extraction_error: null,
     })
     .eq("id", drawingId);
 

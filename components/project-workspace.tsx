@@ -14,6 +14,7 @@ import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import type { DrawingRow } from "@/lib/drawingExtraction";
 import type { FieldResolution } from "@/lib/fieldResolutions";
+import type { Compass8 } from "@/lib/constants/compass";
 
 export function ProjectWorkspace({
   projectId,
@@ -42,6 +43,7 @@ export function ProjectWorkspace({
   preferredEquipmentIds,
   exclusiveEquipmentIds,
   ductInsulationCodeMinimums,
+  initialBuildingFrontFaces,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -69,6 +71,7 @@ export function ProjectWorkspace({
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
   ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
+  initialBuildingFrontFaces: Compass8 | null;
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
@@ -91,7 +94,13 @@ export function ProjectWorkspace({
             initialFieldResolutions={initialFieldResolutions}
             onApply={(envelope, rooms) =>
               manualJRef.current?.applyExtractedData(envelope, rooms) ??
-              Promise.resolve({ appliedEnvelope: false, roomsCreated: 0, roomsUpdated: 0, error: null })
+              Promise.resolve({
+                appliedEnvelope: false,
+                roomsCreated: 0,
+                roomsUpdated: 0,
+                error: null,
+                unmatchedRoomNotes: [],
+              })
             }
           />
         </div>
@@ -122,6 +131,7 @@ export function ProjectWorkspace({
         preferredEquipmentIds={preferredEquipmentIds}
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimums}
+        initialBuildingFrontFaces={initialBuildingFrontFaces}
       />
     </>
   );

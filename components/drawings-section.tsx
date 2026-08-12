@@ -272,11 +272,19 @@ export function DrawingsSection({
       const parts: string[] = [];
       if (result.appliedEnvelope) parts.push("filled blank Building Envelope fields");
       if (result.roomsCreated > 0) parts.push(`created ${result.roomsCreated} room(s)`);
-      if (result.roomsUpdated > 0) parts.push(`updated ducts on ${result.roomsUpdated} room(s)`);
+      // Covers duct and/or drawing-relative wall data (building-
+      // orientation-driven wall auto-population) - a room can be updated
+      // for either, both, or neither.
+      if (result.roomsUpdated > 0) parts.push(`updated ${result.roomsUpdated} existing room(s)`);
+      const unmatchedNote =
+        result.unmatchedRoomNotes.length > 0
+          ? ` ${result.unmatchedRoomNotes.length} room(s) need manual review: ${result.unmatchedRoomNotes.join("; ")}`
+          : "";
       setApplyMessage(
-        parts.length > 0
+        (parts.length > 0
           ? `Applied: ${parts.join(", ")}.`
-          : "Nothing to apply — Building Envelope fields were already filled, rooms already exist, and no duct data matched an existing room by name.",
+          : "Nothing to apply — Building Envelope fields were already filled, rooms already exist, and no duct or wall data matched an existing room by name.") +
+          unmatchedNote,
       );
     }
     setApplying(false);

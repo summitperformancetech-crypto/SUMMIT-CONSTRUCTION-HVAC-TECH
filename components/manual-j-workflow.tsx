@@ -30,6 +30,8 @@ import { DuctDesignSection, type DuctRunRow } from "@/components/duct-design-sec
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
+import { BuildingOrientationSection } from "@/components/building-orientation-section";
+import type { Compass8 } from "@/lib/constants/compass";
 
 export type RoomRow = ManualJRoom & {
   project_id: string;
@@ -39,6 +41,17 @@ export type RoomRow = ManualJRoom & {
   // dirty-tracking in formToRoomPayload below.
   duct_source: string | null;
   duct_confidence: number | null;
+  // Building-orientation-driven wall auto-population (see
+  // lib/orientation.ts) - drawing-relative wall lengths, only ever
+  // populated when the compass wall_north/south/east/west_len_ft fields
+  // above are null. Not consumed by computeManualJ (hence not on
+  // ManualJRoom itself, same reasoning as duct_source above) - only read
+  // by the orientation transform, which writes the real compass fields
+  // computeManualJ does read.
+  wall_front_len_ft: number | null;
+  wall_rear_len_ft: number | null;
+  wall_left_len_ft: number | null;
+  wall_right_len_ft: number | null;
 };
 
 const ATTIC_CONSTRUCTION_OPTIONS = [
@@ -72,8 +85,8 @@ type EnvelopeFormValues = {
   window_count: string;
 };
 
-const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+export const ROOM_COLUMNS =
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
 
 const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
 
@@ -103,6 +116,12 @@ export type ApplyExtractedDataResult = {
   // rooms_duct_location_check) looked identical in the UI to "already
   // up to date".
   error: string | null;
+  // Building-orientation-driven wall auto-population: re-extracting onto
+  // a project that already has rooms matches by name (+ floor area for
+  // wall data specifically, see below) rather than guessing - a room this
+  // couldn't confidently match lands here with a human-readable reason,
+  // instead of silently doing nothing.
+  unmatchedRoomNotes: string[];
 };
 
 export type ManualJWorkflowHandle = {
@@ -271,6 +290,20 @@ function fmt(value: number): string {
   return Math.round(value).toLocaleString();
 }
 
+// Re-extracting onto a project that already has rooms matches purely by
+// name (see the "existing rooms" branch of applyExtractedData below) -
+// two independent extraction passes over the same drawing can format an
+// otherwise-identical room name slightly differently (seen in practice:
+// "Bedroom 2" vs. "Bedroom #2"). Stripping "#" and collapsing whitespace
+// isn't a guess about WHICH room something is - "#2" and "2" are the same
+// number regardless of drawing - it just avoids flagging predictable
+// formatting noise as an unmatched room a human has to review for no
+// reason. Genuine name differences (a room renamed, split, or newly
+// found) still fail to match and get reported, unchanged.
+function normalizeRoomNameForMatch(name: string): string {
+  return name.replace(/#/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function levelLabel(level: string): string {
   return ROOM_LEVEL_OPTIONS.find((option) => option.value === level)?.label ?? level;
 }
@@ -301,6 +334,7 @@ export const ManualJWorkflow = forwardRef<
     preferredEquipmentIds: ReadonlySet<string>;
     exclusiveEquipmentIds: ReadonlySet<string>;
     ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
+    initialBuildingFrontFaces: Compass8 | null;
   }
 >(function ManualJWorkflow(
   {
@@ -327,6 +361,7 @@ export const ManualJWorkflow = forwardRef<
     preferredEquipmentIds,
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
+    initialBuildingFrontFaces,
   },
   ref,
 ) {
@@ -586,6 +621,7 @@ export const ManualJWorkflow = forwardRef<
 
       let roomsCreated = 0;
       let roomsUpdated = 0;
+      const unmatchedRoomNotes: string[] = [];
       let applyError: string | null = null;
       if (rooms.length === 0 && extractedRooms.length > 0) {
         const supabase = createClient();
@@ -626,6 +662,15 @@ export const ManualJWorkflow = forwardRef<
           wall_south_len_ft: room.wall_south_len_ft,
           wall_east_len_ft: room.wall_east_len_ft,
           wall_west_len_ft: room.wall_west_len_ft,
+          // Building-orientation-driven wall auto-population: real
+          // drawing-relative data even when the compass fields above are
+          // null (see lib/orientation.ts) - the tech applies the project's
+          // Building Orientation selector once to convert these into the
+          // compass fields computeManualJ actually reads.
+          wall_front_len_ft: room.wall_front_len_ft,
+          wall_rear_len_ft: room.wall_rear_len_ft,
+          wall_left_len_ft: room.wall_left_len_ft,
+          wall_right_len_ft: room.wall_right_len_ft,
           window_north_area_sqft: null,
           window_south_area_sqft: null,
           window_east_area_sqft: null,
@@ -648,20 +693,32 @@ export const ManualJWorkflow = forwardRef<
       } else if (extractedRooms.length > 0) {
         // Project already has rooms - don't duplicate them, but extracted
         // (or human-resolved, see drawings-section.tsx's handleApply) duct
-        // data must still reach the actual room record, or the calc keeps
-        // silently using whatever was there before (the bug this branch
-        // fixes). Match by exact room name (case-insensitive): the only
-        // correlation available, since a drawing extraction's room array
-        // has no stable index->room-id mapping (see migration
-        // 20260810195313_add_field_resolutions.sql). Skip a room whose name
-        // is missing, unmatched, or ambiguous (shared by more than one
-        // existing room) rather than guess which one it means.
+        // and wall data must still reach the actual room record, or the
+        // calc keeps silently using whatever was there before (the bug
+        // this branch originally fixed for ducts, now also covers
+        // building-orientation-driven wall auto-population). Match by
+        // exact room name (case-insensitive): the only correlation
+        // available, since a drawing extraction's room array has no
+        // stable index->room-id mapping (see migration
+        // 20260810195313_add_field_resolutions.sql). Skip (and report,
+        // rather than silently drop) a room whose name is missing,
+        // ambiguous (shared by more than one existing room), or - for
+        // wall data specifically, per the same "don't guess" standard -
+        // whose re-extracted floor area doesn't reasonably match the
+        // existing room's, since a name match alone isn't proof it's the
+        // same physical room across two independent extraction passes.
         const supabase = createClient();
         const nameCounts = new Map<string, number>();
         for (const existing of rooms) {
-          const key = existing.name.trim().toLowerCase();
+          const key = normalizeRoomNameForMatch(existing.name);
           nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
         }
+
+        // Small rounding differences between two independent extraction
+        // passes reading the same drawing are expected and not a sign of
+        // a mismatched room; anything beyond this is treated as "probably
+        // not the same room" rather than trusted.
+        const FLOOR_AREA_MISMATCH_TOLERANCE_SQFT = 15;
 
         const updatedRooms: RoomRow[] = [];
         const updateErrors: string[] = [];
@@ -674,21 +731,61 @@ export const ManualJWorkflow = forwardRef<
           // location text was unmappable while its R-value is still good.
           const ductLocation = normalizeDuctLocation(rawDuctLocation);
           const ductR = extractedRoom.duct_insulation_r_value?.value ?? null;
-          if (rawDuctLocation == null && ductR == null) continue;
+          const hasDuctData = rawDuctLocation != null || ductR != null;
+          const hasWallData =
+            extractedRoom.wall_front_len_ft != null ||
+            extractedRoom.wall_rear_len_ft != null ||
+            extractedRoom.wall_left_len_ft != null ||
+            extractedRoom.wall_right_len_ft != null;
+          if (!hasDuctData && !hasWallData) continue;
 
-          const key = extractedRoom.name?.trim().toLowerCase();
-          if (!key || nameCounts.get(key) !== 1) continue;
-          const target = rooms.find((r) => r.name.trim().toLowerCase() === key);
+          const key = extractedRoom.name ? normalizeRoomNameForMatch(extractedRoom.name) : "";
+          if (!key || nameCounts.get(key) !== 1) {
+            if (extractedRoom.name) {
+              unmatchedRoomNotes.push(
+                `"${extractedRoom.name}" - name missing or matches more than one existing room, skipped`,
+              );
+            }
+            continue;
+          }
+          const target = rooms.find((r) => normalizeRoomNameForMatch(r.name) === key);
           if (!target) continue;
+
+          const floorAreaMismatch =
+            hasWallData &&
+            extractedRoom.floor_area_sqft != null &&
+            target.floor_area_sqft != null &&
+            Math.abs(extractedRoom.floor_area_sqft - target.floor_area_sqft) >
+              FLOOR_AREA_MISMATCH_TOLERANCE_SQFT;
+          if (floorAreaMismatch) {
+            unmatchedRoomNotes.push(
+              `"${target.name}" - name matched, but floor area differs (existing ${target.floor_area_sqft} sqft vs. re-extracted ${extractedRoom.floor_area_sqft} sqft) - wall data not applied, review manually`,
+            );
+          }
+
+          // Only ever include a field group when this pass actually has
+          // data for it - matches the pre-existing duct behavior (never
+          // null out a room's existing duct data just because this
+          // extraction pass didn't see any) and extends the same
+          // invariant to wall data.
+          const updatePayload: Record<string, unknown> = {};
+          if (hasDuctData) {
+            updatePayload.duct_location = ductLocation;
+            updatePayload.duct_insulation_r_value = ductR;
+            updatePayload.duct_source = extractedRoom.duct_source ?? null;
+            updatePayload.duct_confidence = extractedRoom.duct_confidence ?? null;
+          }
+          if (hasWallData && !floorAreaMismatch) {
+            updatePayload.wall_front_len_ft = extractedRoom.wall_front_len_ft;
+            updatePayload.wall_rear_len_ft = extractedRoom.wall_rear_len_ft;
+            updatePayload.wall_left_len_ft = extractedRoom.wall_left_len_ft;
+            updatePayload.wall_right_len_ft = extractedRoom.wall_right_len_ft;
+          }
+          if (Object.keys(updatePayload).length === 0) continue;
 
           const { data, error } = await supabase
             .from("rooms")
-            .update({
-              duct_location: ductLocation,
-              duct_insulation_r_value: ductR,
-              duct_source: extractedRoom.duct_source ?? null,
-              duct_confidence: extractedRoom.duct_confidence ?? null,
-            })
+            .update(updatePayload)
             .eq("id", target.id)
             .select(ROOM_COLUMNS)
             .single<RoomRow>();
@@ -701,7 +798,7 @@ export const ManualJWorkflow = forwardRef<
           }
         }
         if (updateErrors.length > 0) {
-          applyError = `Failed to update duct data on ${updateErrors.length} room(s): ${updateErrors.join("; ")}`;
+          applyError = `Failed to update ${updateErrors.length} room(s): ${updateErrors.join("; ")}`;
         }
 
         if (updatedRooms.length > 0) {
@@ -718,12 +815,21 @@ export const ManualJWorkflow = forwardRef<
         });
       });
 
-      return { appliedEnvelope, roomsCreated, roomsUpdated, error: applyError };
+      return { appliedEnvelope, roomsCreated, roomsUpdated, error: applyError, unmatchedRoomNotes };
     },
   }));
 
   return (
     <div className="space-y-6">
+      <BuildingOrientationSection
+        projectId={projectId}
+        rooms={rooms}
+        onRoomsUpdated={(updated) =>
+          setRooms((prev) => prev.map((r) => updated.find((u) => u.id === r.id) ?? r))
+        }
+        initialBuildingFrontFaces={initialBuildingFrontFaces}
+      />
+
       <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
         <h2 className="mb-4 text-lg font-semibold text-brand-gold">
           Building Envelope

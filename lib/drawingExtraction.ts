@@ -21,6 +21,17 @@ export type ExtractedRoom = {
   wall_south_len_ft: number | null;
   wall_east_len_ft: number | null;
   wall_west_len_ft: number | null;
+  // Building-orientation-driven wall auto-population: real, drawable
+  // wall-position data even when no true-north marker exists on the
+  // drawing - see EXTRACTION_PROMPT STEP 2's "standing outside facing the
+  // front entry" convention (must match lib/orientation.ts's transform
+  // exactly) and migration 20260812094002_add_building_orientation.sql.
+  // Only ever populated when the compass fields above are null (the
+  // no-orientation-detected case) - never both at once for the same room.
+  wall_front_len_ft: number | null;
+  wall_rear_len_ft: number | null;
+  wall_left_len_ft: number | null;
+  wall_right_len_ft: number | null;
   window_count: number | null;
   door_count: number | null;
   unresolved: boolean;
@@ -119,6 +130,10 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "wall_south_len_ft": number | null,
       "wall_east_len_ft": number | null,
       "wall_west_len_ft": number | null,
+      "wall_front_len_ft": number | null,
+      "wall_rear_len_ft": number | null,
+      "wall_left_len_ft": number | null,
+      "wall_right_len_ft": number | null,
       "window_count": number | null,
       "door_count": number | null,
       "unresolved": boolean,
@@ -130,11 +145,15 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
   ]
 }
 
-STEP 1 — Orientation. Before estimating any room geometry, look specifically for a north arrow or another explicit orientation indicator (e.g. elevations labeled "North Elevation", "South Elevation", a compass rose, a site plan with a labeled north). Set "orientation.detected" to whether you found one, and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
+STEP 1 — Orientation. Before estimating any room geometry, look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
 
 STEP 2 — Room geometry, conditioned on Step 1:
-- If orientation WAS detected: estimate each room's wall_north_len_ft / wall_south_len_ft / wall_east_len_ft / wall_west_len_ft from the drawing's geometry relative to that orientation, and estimate door_count from the room's drawn openings.
-- If orientation was NOT detected: set wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft to null for every room. Do not guess which side of a room faces which compass direction — an incorrect guess here silently corrupts solar gain calculations downstream. Set that room's "unresolved" to true and "reason" to exactly "no orientation marker - exposure cannot be determined".
+- If orientation WAS detected: estimate each room's wall_north_len_ft / wall_south_len_ft / wall_east_len_ft / wall_west_len_ft from the drawing's geometry relative to that orientation, and estimate door_count from the room's drawn openings. Leave wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, and wall_right_len_ft null in this case — they exist only for the no-orientation case below.
+- If orientation was NOT detected, do BOTH (a) and (b) below for every room — they are two separate instructions, not alternatives:
+  (a) Set wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft to null. Do not guess which side of a room faces which TRUE COMPASS direction — an incorrect guess here silently corrupts solar gain calculations downstream.
+  (b) REQUIRED, not optional, and NOT the same kind of guess as (a): estimate wall_front_len_ft / wall_rear_len_ft / wall_left_len_ft / wall_right_len_ft for every room whose wall layout is visible in the floor plan. This does not require knowing true north at all — only the building's own front entry as drawn on the page (the main entry door, a "FRONT ELEVATION" label, or the obviously front-facing facade). If a room has visible wall dimensions, or is clearly positioned toward the front vs. back of the house or the left vs. right side, estimate these four fields the same confident way you would estimate wall_north_len_ft in the orientation-detected case above — do not leave them null just because true compass direction happens to be unknown. Only leave one of these four fields null when that room genuinely has no wall on that particular side (e.g. an interior room bordered by other rooms on 3 sides) or its position truly cannot be determined from anything in this sheet set — not out of general caution.
+  Convention for front/rear/left/right (must be followed exactly, the whole feature depends on this): imagine a person standing OUTSIDE the building, FACING the front entry door (looking at the house, about to walk in — not exiting it). "Front" = the wall containing or facing the main entry, as seen by that person. "Rear" = the opposite wall. "Left" = the side on that person's left hand. "Right" = the side on that person's right hand.
+  Either way, set that room's "unresolved" to true and "reason" to exactly "no orientation marker - exposure cannot be determined" — front/rear/left/right is not a substitute for true compass exposure, a human still resolves that via the project's building orientation selector.
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
 
 STEP 3 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to EXACTLY ONE of these values (case-sensitive, no other text): ${DUCT_LOCATION_VALUES.map((v) => `"${v}"`).join(", ")} — use "Attic-Unconditioned" for a plain vented attic, "Attic-Conditioned" for a sealed/spray-foamed attic, "Basement-Unconditioned"/"Basement-Conditioned" the same way, "Conditioned-Space" for ducts run inside living space (e.g. a dropped soffit or interior chase), and "Exterior-Wall" for ducts run in an exterior wall cavity. Also set "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess, and never output a location outside the exact list above. A server-side fallback fills a construction-based default afterward; that is not your job.

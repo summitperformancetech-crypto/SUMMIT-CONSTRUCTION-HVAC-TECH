@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
+import { GenerateReportsButton } from "@/components/generate-reports-button";
 import type { RoomRow } from "@/components/manual-j-workflow";
 import type {
   AtticConstructionType,
@@ -370,6 +371,8 @@ export default async function ProjectDetailPage({
           )}
         </div>
 
+        <GenerateReportsButton projectId={project.id} />
+
         <CommercialWorkflow
           projectId={project.id}
           projectType={project.project_type as "commercial" | "industrial"}
@@ -587,6 +590,8 @@ export default async function ProjectDetailPage({
           </p>
         )}
       </div>
+
+      <GenerateReportsButton projectId={project.id} />
 
       <ProjectWorkspace
         projectId={project.id}

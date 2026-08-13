@@ -414,3 +414,139 @@ regress duct defaults or calculation snapshotting.
 
 Not touching floor-area UPDATE-branch gap or provenance cleanup yet, per
 instruction, pending direction on the wall-length question above.
+
+## Status: read the real Kinsela PDF directly, produced proposed corrections (no writes)
+
+- 2026-08-14 01:00 — User confirmed `building_front_faces = West` (front
+  porch/entry both face West) and gave a fixed page-side -> compass rule
+  derived from the drawing's own layout (Front Porch at page-bottom, Rear
+  Porch at page-top): bottom->West, top->East, left->North, right->South.
+  Asked me to read the actual PDF (not the extraction JSON) for the 9
+  flagged rooms and produce a proposed correction per room for John to
+  review through the app's Accept/Override UI - explicitly no DB writes.
+- 2026-08-14 01:05 — Downloaded the real PDF from Supabase Storage
+  (`drawings.file_path`) via the service-role client, rendered pages with
+  PyMuPDF (no `poppler`/`brew` available in this environment - confirmed,
+  used the pure-Python renderer instead), found sheet A1.1 = the main
+  floor plan containing all 9 rooms. Front Porch at page-bottom, Rear
+  Porch at page-top on this sheet - matches the user's stated rule
+  exactly, confirming I have the right sheet and orientation.
+- 2026-08-14 01:15 — Cropped and visually inspected each of the 9 rooms at
+  high resolution (published room-size labels, e.g. "3-CAR GARAGE 24'-10"
+  X 37'-4"", cross-checked against directly-dimensioned wall segments
+  where visible). Result, full reasoning in the chat report:
+  - **Kitchen, Foyer, Home Office, Bedroom 2, Mud Room, Hidden Pantry (6
+    rooms): the drawing CONFIRMS the current DB values are already
+    correct.** These were 5 of the 6 "clean axis swap" rooms found
+    earlier by comparing two independent AI extraction runs - the
+    drawing itself sides with run #1 (what's already applied), not with
+    my fresh re-extraction from this session. No correction needed; the
+    re-extraction's version should NOT be applied for these rooms.
+  - **3-Car Garage: genuinely wrong in the DB, needs correction.** Both
+    the published room label and a directly-dimensioned wall segment
+    (7'-0"+12'-0"+12'-0"+6'-8"=37'-8") independently confirm the ~37.5'
+    dimension runs page-vertically (left/right walls -> North/South), not
+    page-horizontally as currently stored. Proposed: North=South=37.67,
+    East=West=24.83 (currently North=South=22.17, East=West=37.67 - fully
+    swapped, and 22.17 doesn't match anything measured on the drawing
+    either, a separate estimation error on top of the swap).
+  - **Rear Porch: current DB is correct as far as it goes, just
+    incomplete.** Published "44' X 18'-7"" confirms East=44, North=18.58
+    match what's already stored; the previously-null West and South can
+    be filled with the same values (44 and 18.58 respectively) by
+    symmetry.
+  - **Bath 3: LOWER CONFIDENCE, not resolved.** No printed W x H label
+    found for this room on any sheet checked, and it's a small, fixture-
+    crowded interior room where wall boundaries were hard to trace
+    precisely from the drawing - my rough measurement suggested a more
+    nearly-square room than either the current DB (4.25 x 6.33) or the
+    fresh extraction (6.33 x 4.25) implies. Flagging rather than guessing
+    - recommend a direct look, low priority given it's a small interior
+    bath with minimal solar-gain impact either way.
+- Reported all of the above to the user as a proposed correction with
+  per-room reasoning, for review through the existing Accept/Override UI.
+  **No writes made to `rooms` or `drawings` this checkpoint** - PDF read
+  and crops only, all cleaned up from the scratchpad afterward.
+
+## Status: production pipeline audit + full 13-page inventory (per user direction, no schema built yet)
+
+- 2026-08-14 01:20 — User reframed this as a standing requirement, not a
+  one-off: every page of an uploaded drawing set must be opened and
+  analyzed, every project, permanently - no page skipped by assumption.
+  Asked for a production-route audit BEFORE any change.
+- 2026-08-14 01:25 — Audited `app/api/drawings/extract/route.ts` and
+  `lib/drawingExtraction.ts` (current, post-session-edits state).
+  Finding, reported in full to the user:
+  - **No code-level page skipping** - the whole uploaded PDF is sent as
+    one `type: "document"` block in a single API call. Nothing in the
+    route selects, samples, or drops pages.
+  - **But nothing demands or verifies exhaustive per-page review either**
+    - `EXTRACTION_PROMPT` is entirely field-oriented (find X, estimate Y),
+    never instructs "review every page," and the schema has no per-page
+    coverage concept at all. Demonstrated this is a real failure mode,
+    not theoretical - I did the same thing myself two turns earlier,
+    treating only the floor plan sheet as relevant until told otherwise.
+  - **Schema has no landing field for most of what a full architectural
+    set contains** - window/door schedules, attic construction/insulation
+    type, mechanical/plumbing/structural notes, per-story plate heights
+    are all either unextracted or only partially captured today.
+- 2026-08-14 01:30 — User rejected one-field-at-a-time schema growth as
+  the wrong premise. Asked for a first-pass category inventory across
+  ALL 13 Kinsela pages before any schema work, so nothing gets missed
+  again by assumption.
+- 2026-08-14 01:35 — Re-downloaded the real PDF, rendered all 13 pages
+  (not just the two opened before), read every one visually. Full 25-row
+  category table with Manual J/D/S relevance delivered to the user in
+  chat (not reproduced here - see conversation). Headline findings:
+  - **Cover Sheet (page 1, sheet C.S) and the Cross Section / wall
+    section detail sheets (A1.3, REF-2) were never opened before this
+    pass** - they contain the actual wall assembly stack-up (2x6 @ 16"
+    o.c., R-19 batt, 1/2" OSB, brick veneer - real whole-wall build-up,
+    not just a nominal R-value), multiple named per-area plate/ceiling
+    heights (10' main, 9' garage, 9' bonus room, 15' Great Room plate,
+    Master Bedroom vaulted @ 8:12), and the original designer's HVAC
+    zoning (Unit A: 2005 sqft, Unit B: 1872 sqft, Unit C/bonus: 2 tons) -
+    none of which the current schema captures at all.
+  - **Live, concrete conflict found, not hypothetical**: ceiling
+    insulation is R-38 on two A-series sheets (A1.3, REF-2), R-30 in the
+    current extraction, R-50 in a Cover Sheet boilerplate note. Three
+    different numbers, none reconciled.
+  - Window schedule (13 marks, A1.2) and door schedule (22 marks, A1.2)
+    exist in full per-mark detail and are currently not captured beyond a
+    single rolled-up `window_type` string.
+  - REF-1/REF-2 carry an explicit "FOR REFERENCE USE ONLY... may not
+    correspond with the other sheets" disclaimer - a provenance/
+    confidence signal the schema has no way to record either.
+  - Not building schema yet, per instruction - awaiting the user's review
+    of the category list.
+
+## Status: flagged ceiling insulation conflict for Kinsela specifically (small, targeted change)
+
+- 2026-08-14 01:45 — User confirmed: flag `ceiling_insulation_r_value` as
+  unresolved for Kinsela with the R-38/R-30/R-50 conflict documented as
+  the reason. Explicitly: don't auto-resolve to R-38 despite majority
+  support, don't change the stored value - they'll confirm it themselves
+  in the review panel.
+- Found the review UI had no way to show *why* an envelope field is
+  unresolved (unlike rooms, which already have a `reason`) - added
+  `reason?: string | null` to `ExtractedField<T>` (`lib/drawingExtraction.ts`,
+  optional so it doesn't affect any other field or the AI's existing JSON
+  output shape) and wired `FieldRow` (`components/drawings-section.tsx`)
+  to display it when present, same styling as the room-level reason text.
+  Deliberately did NOT change `EXTRACTION_PROMPT` to ask the model to
+  populate this going forward - that's part of the still-open Phase 2
+  schema conversation, not this narrow fix.
+- Wrote the reason text directly to Kinsela's `drawings.extracted_data`
+  (asserted the current value was exactly `{value: 30, unresolved: true}`
+  before writing, to avoid clobbering anything unexpected - it was).
+  `value` and `unresolved` left untouched, only `reason` added.
+  Independently re-read after writing (separate query): confirmed present,
+  confirmed every other envelope field on the same object is byte-for-byte
+  unchanged.
+- **Notable side-finding during verification**: `projects.ceiling_insulation_r_value`
+  is already `30` live in the database - this disputed value isn't inert,
+  it's the number actively feeding Kinsela's current Manual J calculation
+  right now (written during an earlier checkpoint this session, before
+  this conflict was discovered). Reported to the user.
+- `npx tsc --noEmit`: clean. Committing this code change (the DB write
+  itself isn't a file, so it's captured here in the log, not in git).

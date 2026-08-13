@@ -3,6 +3,16 @@ import { DUCT_LOCATION_VALUES, normalizeDuctLocation } from "./constants/ductLoc
 export type ExtractedField<T> = {
   value: T | null;
   unresolved: boolean;
+  // Optional, unlike ExtractedRoom's reason (always present there) - most
+  // envelope fields are unresolved for the generic "not confidently
+  // labeled" reason the UI already implies, not worth a sentence every
+  // time. Exists for the cases that do need one: e.g. a value disputed
+  // across multiple sheets, where "unresolved: true" alone gives a human
+  // reviewer no way to tell WHY without independently re-deriving what I
+  // already found. Not populated by the extraction prompt today - written
+  // directly when a specific conflict is diagnosed (see Kinsela's
+  // ceiling_insulation_r_value, 2026-08-14).
+  reason?: string | null;
 };
 
 export type ExtractedEnvelope = {

@@ -638,29 +638,34 @@ function FieldRow({
   onResolved,
 }: {
   label: string;
-  field: { value: string | number | null; unresolved: boolean };
+  field: { value: string | number | null; unresolved: boolean; reason?: string | null };
   projectId: string;
   fieldName: string;
   resolutionMap: Map<string, FieldResolution>;
   onResolved: (resolution: FieldResolution) => void;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-brand-gold/50 pb-2">
-      <dt className="text-brand-grey-text">{label}</dt>
-      <dd className="flex items-center gap-2 text-right font-medium text-brand-silver-highlight">
-        {field.value ?? "—"}
-        {field.unresolved && (
-          <FieldResolutionBadge
-            projectId={projectId}
-            tableName="projects"
-            recordId={projectId}
-            fieldName={fieldName}
-            aiExtractedValue={field.value != null ? String(field.value) : null}
-            resolution={resolutionMap.get(resolutionKey("projects", projectId, fieldName))}
-            onResolved={onResolved}
-          />
-        )}
-      </dd>
+    <div className="border-b border-brand-gold/50 pb-2">
+      <div className="flex items-center justify-between gap-4">
+        <dt className="text-brand-grey-text">{label}</dt>
+        <dd className="flex items-center gap-2 text-right font-medium text-brand-silver-highlight">
+          {field.value ?? "—"}
+          {field.unresolved && (
+            <FieldResolutionBadge
+              projectId={projectId}
+              tableName="projects"
+              recordId={projectId}
+              fieldName={fieldName}
+              aiExtractedValue={field.value != null ? String(field.value) : null}
+              resolution={resolutionMap.get(resolutionKey("projects", projectId, fieldName))}
+              onResolved={onResolved}
+            />
+          )}
+        </dd>
+      </div>
+      {field.unresolved && field.reason && (
+        <p className="mt-1 text-right text-xs text-brand-gold">{field.reason}</p>
+      )}
     </div>
   );
 }

@@ -5,6 +5,9 @@ import {
   EXTRACTION_PROMPT,
   collectUnresolvedItems,
   applyDuctFallbackDefaults,
+  flagWaterHeaterLoadRisk,
+  flagRoomCeilingHeightConflicts,
+  flagWindowScheduleForVerification,
   type DrawingExtraction,
 } from "@/lib/drawingExtraction";
 
@@ -223,6 +226,15 @@ export async function POST(request: Request) {
   // applyDuctFallbackDefaults for why it's a uniform default rather than
   // branching per room by foundation type.
   extraction = applyDuctFallbackDefaults(extraction);
+  // Phase 2 deterministic post-processing - each covers a case where
+  // asking the model to get a judgment right in prose proved unreliable,
+  // so code decides instead. Order doesn't matter between these three;
+  // each only touches its own slice of the extraction (water_heaters,
+  // rooms, window_schedule respectively) and none read a field another
+  // one writes.
+  extraction = flagWaterHeaterLoadRisk(extraction);
+  extraction = flagRoomCeilingHeightConflicts(extraction);
+  extraction = flagWindowScheduleForVerification(extraction);
 
   const unresolvedItems = collectUnresolvedItems(extraction);
 

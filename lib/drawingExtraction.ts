@@ -133,6 +133,21 @@ export type ExtractedRoom = {
   // own unresolved/reason (not a separate mechanism) to flag that, same
   // as any other AI estimate pending human confirmation.
   ceiling_height_ft: number | null;
+  // Diagnosed 2026-08-14 against Kinsela's 3-Car Garage: the floor plan's
+  // own room label ("10' CEILING") and an elevation's ceiling-elevation
+  // callout ("CEILG GARAGE: +9'-0"", relative to the building's 0'-0"
+  // datum) can describe the SAME room's ceiling height two structurally
+  // different ways that don't actually agree - and asking the model to
+  // notice that disagreement in prose failed twice in a row. This field
+  // captures the SECOND candidate as its own number - ceiling elevation
+  // minus that room's floor elevation relative to the same datum (a real
+  // step-down/up, e.g. "4" STEP UP INTO HOUSE" on the foundation plan,
+  // not assumed to be zero) - only when an elevation/section sheet
+  // actually gives enough to compute it. flagRoomCeilingHeightConflicts
+  // below then diffs this against ceiling_height_ft deterministically -
+  // the model no longer has to correctly notice and narrate the
+  // conflict itself, only supply both raw numbers when it has them.
+  ceiling_height_ft_elevation_derived: number | null;
   // Phase 2 standing requirement (where a fact came from). Which sheet
   // this room's data was actually read from - useful when a project has
   // multiple floor-plan sheets (Kinsela has two: A1.1 main floor, A1.2
@@ -169,11 +184,30 @@ export type ExtractedSheet = {
 // this phase) - capturing the schedule table is step one; per-room/
 // per-direction window area via mark correlation is a distinct, larger
 // follow-up, not built here.
+//
+// unresolved/reason exist here for a different reason than everywhere
+// else in this file: diagnosed 2026-08-14 against Kinsela's actual
+// window schedule (a 12-row table, marks A-M) - across three extraction
+// runs, per-row transcription (size/quantity/description, and initially
+// even the mark format itself) was measurably unreliable on this dense a
+// table, including one run that invented a sheet reference ("A4.0")
+// nowhere in the source document. flagWindowScheduleForVerification below
+// force-sets every entry's unresolved to true UNCONDITIONALLY,
+// independent of the model's own confidence - this isn't a per-entry
+// judgment call the model makes (contrast every other unresolved/reason
+// pair in this file, which the MODEL decides); it's a standing, blanket
+// low-confidence-by-construction status for this entire category, on
+// every project, until table-transcription accuracy is separately proven
+// reliable. Not applied to ExtractedDoorScheduleEntry below - the door
+// schedule hasn't shown the same failure pattern, so it isn't tarred with
+// the same blanket distrust without its own evidence.
 export type ExtractedWindowScheduleEntry = {
   mark: string;
   size: string | null;
   description: string | null;
   quantity: number | null;
+  unresolved: boolean;
+  reason: string | null;
 };
 
 // Phase 2, item 7. Same shape and same reference-only status as the
@@ -388,6 +422,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "window_count": number | null,
       "door_count": number | null,
       "ceiling_height_ft": number | null,
+      "ceiling_height_ft_elevation_derived": number | null,
       "source_sheet": string | null,
       "unresolved": boolean,
       "reason": string | null,
@@ -434,7 +469,8 @@ STEP 4 — Window area, per room, same north/south/east/west vs. front/rear/left
 
 STEP 5 — Ceiling height. Two levels:
 - Building-wide default: look for a plate height or ceiling height labeled on a wall section, a building section, an elevation, or a general note (e.g. "9'-0" PLATE HT.", "8' CEILINGS TYP."). Set "building_envelope.ceiling_height_ft" to that value only if it is actually labeled — do not infer a typical residential height. If the drawing labels different heights per story, use the ground-floor/primary living-area figure and set "unresolved": true.
-- Per-room override, independent of the above: if a cross-section, elevation, or the floor plan itself states an explicit height tied to a SPECIFIC NAMED ROOM that differs from the general figure (e.g. a bonus room, garage, or vaulted room labeled with its own ceiling or plate height), set that room's own "ceiling_height_ft" to that value - this overrides the building-wide default for that room only. For a vaulted or sloped ceiling, use the wall plate height as an approximation (not a true average), and set that room's "unresolved": true with "reason" noting the ceiling is vaulted and the height is an approximation (append after existing reason text the same way STEP 3's wall-orientation caveat is appended, don't replace it). Leave a room's own "ceiling_height_ft" null when nothing room-specific is labeled - the building-wide default covers it downstream.
+- Per-room override, independent of the above: if the floor plan itself directly labels a SPECIFIC NAMED ROOM with its own ceiling height (e.g. "10' CEILING" printed on that room, a bonus room, garage, or vaulted room) that differs from the general figure, set that room's own "ceiling_height_ft" to that value - this overrides the building-wide default for that room only. For a vaulted or sloped ceiling, use the wall plate height as an approximation (not a true average), and set that room's "unresolved": true with "reason" noting the ceiling is vaulted and the height is an approximation (append after existing reason text, don't replace it). Leave a room's own "ceiling_height_ft" null when nothing room-specific is labeled on the floor plan - the building-wide default covers it downstream.
+- Separately, elevation-derived candidate: if an elevation or section sheet gives a ceiling-elevation callout tied to a specific named room (e.g. "CEILG GARAGE: +9'-0"") AND that same sheet (or the foundation plan) gives enough to determine that room's floor elevation relative to the same datum (the building's "FIN. FLOOR ELEV: 0'-0"" reference, adjusted for any explicit step-up/step-down noted for that room - do not assume the step is zero, and do not assume it's some other value either; only use a step you can actually find labeled), compute ceiling elevation minus room floor elevation and set that room's "ceiling_height_ft_elevation_derived" to the result. Leave it null whenever this can't actually be computed from labeled numbers - do not estimate it from the floor-plan label instead, that defeats the purpose of having two independent candidates. Do not try to reconcile this against "ceiling_height_ft" yourself, and do not skip setting "ceiling_height_ft" just because this second value exists or disagrees with it - report both raw values; reconciling them is handled automatically downstream, not by you.
 
 STEP 6 — Exterior wall assembly, building-wide. Look for a wall-section detail, a typical wall section, or a general materials note (often on a cover sheet or construction-details sheet) describing the PRIMARY exterior wall construction - the assembly most of the building's exterior walls actually use, not a single interior partition. Only fill a field when it is explicitly labeled: "exterior_wall_stud_size" (e.g. "2x6"), "exterior_wall_stud_spacing_in" (e.g. 16, from "16" O.C."), "exterior_wall_sheathing" (e.g. "1/2\" OSB"), "exterior_wall_exterior_finish" (e.g. "brick veneer", or multiple materials if the drawing shows a mix, e.g. "brick veneer, Hardie board and batten"). A house can have more than one exterior wall assembly (e.g. R-13 2x4 walls in addition to R-19 2x6 walls) - describe the DOMINANT one; do not average or invent a blend.
 
@@ -448,7 +484,7 @@ STEP 10 — HVAC equipment and zoning, from the mechanical plan's HVAC notes. If
 
 STEP 11 — HVAC equipment location, document-level. A short description of where air handlers and condensing units are located or routed (e.g. "attic-routed", "air handlers in attic, condensers roof-mounted") - used only as a cross-check against the per-room duct-routing default from STEP 8. Set "hvac_equipment_location".
 
-STEP 12 — Window schedule. If the drawing set includes a window schedule table (a list of marks, typically lettered, each with a size/description/quantity), transcribe it verbatim into "window_schedule": one entry per mark, with "mark", "size" (as printed, e.g. "3'0\" X 7'0\""), "description", and "quantity". Do not invent a mark that isn't in the table, and do not attempt to determine which room uses which mark - that correlation is not part of this extraction.
+STEP 12 — Window schedule. If the drawing set includes a window schedule table, transcribe it verbatim into "window_schedule": one entry per row, with "mark", "size" (as printed, e.g. "3'0\" X 7'0\""), "description", and "quantity". Read the MARK column of THIS specific table and transcribe exactly what character is printed for each row - window schedule marks are conventionally LETTERS (A, B, C..., typically skipping "I" to avoid confusion with the numeral "1"), while a DOOR SCHEDULE elsewhere on the same sheet conventionally uses NUMBERS (1, 2, 3...) - these are two different tables with two different marking conventions on the same page, and neither the door schedule's numbering nor any other numbered callout on the sheet (room reference circles, detail markers) belongs in the window schedule's mark column. If a description references another sheet (e.g. "SEE SHEET A2.0"), transcribe that reference exactly as printed, character by character - never substitute, round, or "correct" a sheet number to one that looks more familiar from your STEP 1 inventory, even if the printed one seems unexpected; report it exactly as drawn, not as a guess. Do not invent a mark that isn't in the table, and do not attempt to determine which room uses which mark - that correlation is not part of this extraction.
 
 STEP 13 — Door schedule. Same treatment as STEP 12, into "door_schedule", if a door schedule table is present.
 
@@ -458,9 +494,11 @@ STEP 15 — Water heater(s). For each water heater shown (there may be more than
 
 Other rules:
 - Only fill an insulation R-value if it is visibly labeled on the drawing (e.g. "R-19 batt", "R-38 ceiling"). Do not infer a code-minimum or typical value — leave it null instead.
-- Provenance: for every building_envelope field, set "source_sheet" to the sheet (from your STEP 1 inventory) the value actually came from.
-- Conflicts across sheets: if the same fact appears on more than one sheet with DIFFERENT values, do not silently pick one. Resolve to whichever value is best-supported (e.g. it appears on more sheets, or a more authoritative sheet type), but always populate "reason" describing the conflict - name the sheets and the values you found on each - and set "source_sheet" to the sheet the CHOSEN value came from.
-- Reference-only sheets: if a fact's ONLY source is a sheet you marked "hasReferenceOnlyDisclaimer": true in STEP 1, and no other sheet corroborates it, set "unresolved": true regardless of how clearly labeled the value looks on that sheet, with "reason" noting it's single-sourced from a reference-only sheet.
+- Provenance: for every building_envelope field, and for every room's "source_sheet" (STEP 3) and per-room "ceiling_height_ft" override (STEP 5), set "source_sheet" to the sheet (from your STEP 1 inventory) the value actually came from.
+- Conflicts across sheets (building_envelope fields only - a room's own ceiling height has its own dedicated two-candidate mechanism in STEP 5, do not also apply this section to "ceiling_height_ft"/"ceiling_height_ft_elevation_derived", that would be redundant effort covering the same ground twice). Three cases, handled differently:
+  - Single-sourced from a reference-only sheet: if a fact's ONLY source is a sheet you marked "hasReferenceOnlyDisclaimer": true in STEP 1, with no other sheet mentioning it at all, mark it unresolved regardless of how clearly labeled it looks there, with a reason noting it's single-sourced from a reference-only sheet.
+  - Disclaimed sheet vs. non-disclaimed sheet (a real hierarchy, not a guess): if the ONLY disagreement on a fact is between a reference-only sheet and a sheet that isn't reference-only, the non-disclaimed sheet's value may be used - the source documents themselves flagged one sheet as less authoritative, so preferring the other isn't arbitrary. Still record the disclaimed sheet's differing value in "reason". Before applying this hierarchy, you MUST check whether the reference-only sheet's value ALSO appears, independently, on some OTHER non-disclaimed sheet - a value is not "just the disclaimed sheet's value" merely because that's where you happened to notice it first. If it does turn up on another non-disclaimed sheet too, this is actually the peer-conflict case below, not this one, even though a disclaimed sheet is also involved.
+  - Peer conflict - two or more NON-disclaimed sheets disagree with each other: this is the case that must NOT be silently resolved, because there is no principled way to prefer one equally-authoritative source over another. Leave "value" null and set "unresolved": true, with "reason" stating BOTH (or all) values found and which sheet each came from. The goal is for a human, ideally someone who can field-verify on site, to make the final call - not for the system to guess and hide the disagreement behind one confident-looking number.
 - window_count and door_count are simple counts, not areas.
 - Set "unresolved": true on the building envelope object, or on any individual room, whenever the drawing is ambiguous, illegible, or you are guessing rather than reading a clearly labeled figure. Whenever you set "unresolved": true on a room, always fill "reason" with a short, specific explanation a field technician can act on (e.g. "no orientation marker - exposure cannot be determined", "room label illegible", "floor area not dimensioned"). Leave "reason" null only when "unresolved" is false.
 - Do not invent room names if none are labeled — use a generic label like "Room 1" and mark it unresolved with an appropriate reason.
@@ -507,6 +545,19 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
       items.push(wh.reason ? `${label} - ${wh.reason}` : label);
     }
   });
+
+  // One summary item, not one per row: every window_schedule entry is
+  // unconditionally unresolved by construction (see
+  // flagWindowScheduleForVerification), so N near-identical per-row items
+  // here would just be noise - unlike rooms/water_heaters above, where
+  // unresolved is a genuine per-item judgment worth surfacing
+  // individually, this is a single standing category-level caveat.
+  const windowScheduleEntries = extraction.window_schedule ?? [];
+  if (windowScheduleEntries.length > 0) {
+    items.push(
+      `window_schedule: ${windowScheduleEntries.length} entries need verification against the source drawing - table-transcription accuracy not yet proven reliable`,
+    );
+  }
 
   return items;
 }
@@ -599,5 +650,63 @@ export function flagWaterHeaterLoadRisk(extraction: DrawingExtraction): DrawingE
         reason: `${wh.type} water heater in conditioned space - potential minor internal sensible/latent gain from standby jacket loss and combustion moisture. Consider a small internal gain allowance.`,
       };
     }),
+  };
+}
+
+// Diagnosed 2026-08-14 against Kinsela's 3-Car Garage: the floor plan's own
+// room label (10' CEILING) and an elevation's ceiling-elevation callout
+// (CEILG GARAGE: +9'-0", which only reconciles to ~9'-4" once the real 4"
+// step-down from the foundation plan is applied - not 10') can disagree by
+// a real, non-trivial amount for the same room. Prompt-only fixes asking
+// the model to notice and narrate this failed twice in a row - same
+// reasoning as flagWaterHeaterLoadRisk above: a numeric comparison should
+// never depend on the model getting the narration right when code can
+// just diff the two numbers it already asked for (see
+// ceiling_height_ft_elevation_derived's own comment on ExtractedRoom).
+//
+// A tolerance, not exact equality, because architectural dimensions round
+// to the nearest labeled increment on two independently-drawn sheets - a
+// 9'-6" vs 10' difference from ordinary rounding shouldn't trip this, but
+// a 9' vs 10' difference (Kinsela's actual case) should. 0.5 ft (6") is
+// generous enough to absorb that rounding without absorbing a real
+// foot-scale disagreement.
+const CEILING_HEIGHT_CONFLICT_TOLERANCE_FT = 0.5;
+
+export function flagRoomCeilingHeightConflicts(extraction: DrawingExtraction): DrawingExtraction {
+  return {
+    ...extraction,
+    rooms: extraction.rooms.map((room) => {
+      if (room.ceiling_height_ft == null || room.ceiling_height_ft_elevation_derived == null) {
+        return room;
+      }
+      const diff = Math.abs(room.ceiling_height_ft - room.ceiling_height_ft_elevation_derived);
+      if (diff <= CEILING_HEIGHT_CONFLICT_TOLERANCE_FT) return room;
+      const conflictReason = `ceiling_height_ft conflict: floor plan labels this room ${room.ceiling_height_ft}' but the elevation-derived calculation gives ${room.ceiling_height_ft_elevation_derived}' - a ${diff.toFixed(1)}' disagreement between two independent, non-disclaimed sources. Not auto-resolved - field-verify on site.`;
+      return {
+        ...room,
+        unresolved: true,
+        reason: room.reason ? `${room.reason} · ${conflictReason}` : conflictReason,
+      };
+    }),
+  };
+}
+
+// See ExtractedWindowScheduleEntry's comment for why this exists and why
+// it's unconditional, unlike every other unresolved/reason pair in this
+// file. Not asked for in EXTRACTION_PROMPT's JSON shape (the model isn't
+// asked to self-assess this - there would be no point, since this
+// overwrites whatever it said regardless) - this is the only place
+// window_schedule entries' unresolved/reason ever get set.
+const WINDOW_SCHEDULE_VERIFICATION_REASON =
+  "Window schedule transcription accuracy has not been proven reliable on dense tables (diagnosed 2026-08-14) - verify mark, size, description, and quantity against the actual drawing before trusting this row.";
+
+export function flagWindowScheduleForVerification(extraction: DrawingExtraction): DrawingExtraction {
+  return {
+    ...extraction,
+    window_schedule: (extraction.window_schedule ?? []).map((entry) => ({
+      ...entry,
+      unresolved: true,
+      reason: WINDOW_SCHEDULE_VERIFICATION_REASON,
+    })),
   };
 }

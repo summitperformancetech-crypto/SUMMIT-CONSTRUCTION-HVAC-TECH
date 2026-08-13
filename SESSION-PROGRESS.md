@@ -550,3 +550,45 @@ instruction, pending direction on the wall-length question above.
   this conflict was discovered). Reported to the user.
 - `npx tsc --noEmit`: clean. Committing this code change (the DB write
   itself isn't a file, so it's captured here in the log, not in git).
+
+## Status: Phase 2 approved, building in sequence (migration -> schema -> prompt -> apply -> UI, checkpoint after each)
+
+- 2026-08-14 02:00 — Full Phase 2 plan approved after two rounds of
+  clarifying questions (water-heater conditional-risk design, hvac
+  equipment/zoning kept as separate arrays, wall-assembly fields JSONB-
+  only, extraction-history preserved rather than single-timestamp-only).
+  User explicitly accepted the two-sequential-writes-not-a-transaction
+  tradeoff for the history insert, matching this codebase's existing
+  reliability bar elsewhere. Instructed to build one piece at a time with
+  a report-back checkpoint after each - starting with the migration.
+- 2026-08-14 02:05 — Read the live RLS policy on `drawings` and
+  `field_resolutions` directly via `pg_policies` (no migration file
+  defines them - like several other tables this session, they were set up
+  outside tracked migrations). `field_resolutions` denormalizes
+  `project_id` directly on itself rather than joining through a parent
+  table for its RLS check - mirrored that exact pattern for
+  `drawing_extraction_history` rather than inventing a join-through-
+  drawings variant.
+- 2026-08-14 02:10 — Wrote and applied
+  `supabase/migrations/20260813172100_add_drawing_extraction_history.sql`:
+  - `drawings.extraction_completed_at timestamptz` (new column)
+  - `drawing_extraction_history` (new table: id, drawing_id FK, project_id
+    FK, extracted_data jsonb, unresolved_items text[],
+    extraction_completed_at) with an index on
+    `(drawing_id, extraction_completed_at desc)` and RLS enabled with a
+    policy identical in shape to `field_resolutions`'.
+  - Applied directly to the live DB via `pg` + `SUPABASE_DB_URL` (same
+    method used for every migration this session).
+- 2026-08-14 02:12 — Verified against the live schema (not just "the SQL
+  ran without error"): re-queried `information_schema.columns` for both
+  the new column and every column of the new table, confirmed both
+  foreign keys via `information_schema.table_constraints`, confirmed the
+  index via `pg_indexes`, confirmed RLS is enabled and the policy text
+  matches the intended shape via `pg_policies`. Then did a full functional
+  round-trip - inserted a real row (via the service-role client, real
+  `drawing_id`/`project_id` from Kinsela), read it back, deleted it,
+  and confirmed the table is empty afterward (0 real rows - `route.ts`
+  hasn't been touched yet, so nothing should have written here for real).
+- 2026-08-14 02:15 — `npx tsc --noEmit`: clean (no TS files touched yet,
+  this checkpoint is pure SQL). Committing the migration file now, per
+  instruction to report back before moving to schema.

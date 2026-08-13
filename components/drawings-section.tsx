@@ -248,11 +248,10 @@ export function DrawingsSection({
     );
     const result = await onApply(envelope, resolvedRooms);
 
-    // Only mark applied_to_field_data on an actual (even partial) success -
-    // this permanently disables the Apply button (see the "Already
-    // applied" state below), so marking it after a failed insert would
-    // strand the drawing with no way to retry once the underlying issue
-    // (e.g. a bad duct_location value) is fixed.
+    // applied_to_field_data only drives the button's label below - it must
+    // not gate whether the button can be clicked, since onApply's
+    // insert-vs-update branch already decides independently (based on
+    // whether rooms exist yet) whether re-running is safe.
     if (!result.error) {
       const supabase = createClient();
       await supabase
@@ -601,13 +600,13 @@ function ReviewPanel({
       <div className="flex items-center gap-3">
         <button
           onClick={onApply}
-          disabled={applying || drawing.applied_to_field_data}
+          disabled={applying}
           className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
         >
           {applying
             ? "Applying…"
             : drawing.applied_to_field_data
-              ? "Already applied"
+              ? "Re-Apply / Update Form"
               : "Apply to Form"}
         </button>
         {applyMessage && (

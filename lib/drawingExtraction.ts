@@ -12,6 +12,17 @@ export type ExtractedEnvelope = {
   window_type: ExtractedField<string>;
   window_count: ExtractedField<number>;
   foundation_type: ExtractedField<string>;
+  // One building-wide plate height, not a per-room extraction - a floor
+  // plan set rarely labels ceiling height per room (vaults/trays are the
+  // exception, and remain a manual room-form correction), but a wall
+  // section or elevation sheet commonly labels one figure for the whole
+  // house/story. Applied downstream to every room that doesn't already
+  // have a ceiling_height_ft (see applyExtractedData in
+  // manual-j-workflow.tsx) - never overwrites a tech's per-room entry,
+  // unlike the unconditional overwrite wall/duct data gets, since a vault
+  // or drop ceiling is exactly the kind of per-room exception a human is
+  // likely to have hand-corrected.
+  ceiling_height_ft: ExtractedField<number>;
 };
 
 export type ExtractedRoom = {
@@ -32,6 +43,21 @@ export type ExtractedRoom = {
   wall_rear_len_ft: number | null;
   wall_left_len_ft: number | null;
   wall_right_len_ft: number | null;
+  // Same compass/drawing-relative split as the wall_* fields above, same
+  // reason (STEP 2 below), applied to window glazing area instead of wall
+  // length - see migration 20260813030300_add_window_drawing_relative_area.sql.
+  // Only ever populated when a window opening is actually visible on this
+  // room's wall in the floor plan AND a height reference (schedule, spec
+  // note) lets the model turn that opening into an area - see STEP 4's
+  // "don't guess" rule, same standard as duct routing.
+  window_north_area_sqft: number | null;
+  window_south_area_sqft: number | null;
+  window_east_area_sqft: number | null;
+  window_west_area_sqft: number | null;
+  window_front_area_sqft: number | null;
+  window_rear_area_sqft: number | null;
+  window_left_area_sqft: number | null;
+  window_right_area_sqft: number | null;
   window_count: number | null;
   door_count: number | null;
   unresolved: boolean;
@@ -120,7 +146,8 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "floor_insulation_r_value": { "value": number | null, "unresolved": boolean },
     "window_type": { "value": string | null, "unresolved": boolean },
     "window_count": { "value": number | null, "unresolved": boolean },
-    "foundation_type": { "value": string | null, "unresolved": boolean }
+    "foundation_type": { "value": string | null, "unresolved": boolean },
+    "ceiling_height_ft": { "value": number | null, "unresolved": boolean }
   },
   "rooms": [
     {
@@ -134,6 +161,14 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "wall_rear_len_ft": number | null,
       "wall_left_len_ft": number | null,
       "wall_right_len_ft": number | null,
+      "window_north_area_sqft": number | null,
+      "window_south_area_sqft": number | null,
+      "window_east_area_sqft": number | null,
+      "window_west_area_sqft": number | null,
+      "window_front_area_sqft": number | null,
+      "window_rear_area_sqft": number | null,
+      "window_left_area_sqft": number | null,
+      "window_right_area_sqft": number | null,
       "window_count": number | null,
       "door_count": number | null,
       "unresolved": boolean,
@@ -156,7 +191,11 @@ STEP 2 — Room geometry, conditioned on Step 1:
   Either way, set that room's "unresolved" to true and "reason" to exactly "no orientation marker - exposure cannot be determined" — front/rear/left/right is not a substitute for true compass exposure, a human still resolves that via the project's building orientation selector.
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
 
-STEP 3 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to EXACTLY ONE of these values (case-sensitive, no other text): ${DUCT_LOCATION_VALUES.map((v) => `"${v}"`).join(", ")} — use "Attic-Unconditioned" for a plain vented attic, "Attic-Conditioned" for a sealed/spray-foamed attic, "Basement-Unconditioned"/"Basement-Conditioned" the same way, "Conditioned-Space" for ducts run inside living space (e.g. a dropped soffit or interior chase), and "Exterior-Wall" for ducts run in an exterior wall cavity. Also set "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess, and never output a location outside the exact list above. A server-side fallback fills a construction-based default afterward; that is not your job.
+STEP 3 — Window area, per room, same north/south/east/west vs. front/rear/left/right split as STEP 2, governed by the SAME orientation-detected/not-detected branch (do not re-decide it here). This is a much harder read than wall length — most floor plans mark a window opening as a gap in the wall line with a width, but not a height, so only fill a side's window area when you can combine an actual opening on that room's wall (visible in the floor plan) with an actual height reference for that opening (a window schedule entry, a labeled window size like "3068" i.e. 3'-0" x 6'-8", or a spec note) - width times height. If a room clearly has a window on a given side but you have no way to size it, leave that side null rather than assume a typical size - this is the same "don't guess" standard as duct routing (STEP 5) and R-values, not an exception to it. It is expected and fine for most or all window area fields to come back null when a drawing doesn't include a window schedule or labeled sizes; a false area is worse than a missing one, since it would silently misstate solar gain rather than leave it visibly unresolved. When you do fill any window area for a room, set that room's "unresolved" to true with "reason" noting it's an AI-estimated window area pending confirmation (unless the room is already unresolved for another reason, in which case leave the existing reason as-is).
+
+STEP 4 — Ceiling height, building-wide (not per room). Look for a plate height or ceiling height labeled on a wall section, a building section, an elevation, or a general note (e.g. "9'-0" PLATE HT.", "8' CEILINGS TYP."). Set "building_envelope.ceiling_height_ft" to that value only if it is actually labeled — do not infer a typical residential height. If the drawing labels different heights per story, use the ground-floor/primary living-area figure and set "unresolved": true (a per-room exception like a vaulted great room or a raised second-floor ceiling still needs a human's manual correction on that specific room - this field is only ever a starting default for rooms that don't already have one).
+
+STEP 5 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to EXACTLY ONE of these values (case-sensitive, no other text): ${DUCT_LOCATION_VALUES.map((v) => `"${v}"`).join(", ")} — use "Attic-Unconditioned" for a plain vented attic, "Attic-Conditioned" for a sealed/spray-foamed attic, "Basement-Unconditioned"/"Basement-Conditioned" the same way, "Conditioned-Space" for ducts run inside living space (e.g. a dropped soffit or interior chase), and "Exterior-Wall" for ducts run in an exterior wall cavity. Also set "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess, and never output a location outside the exact list above. A server-side fallback fills a construction-based default afterward; that is not your job.
 
 Other rules:
 - Only fill an insulation R-value if it is visibly labeled on the drawing (e.g. "R-19 batt", "R-38 ceiling"). Do not infer a code-minimum or typical value — leave it null instead.

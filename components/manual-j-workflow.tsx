@@ -52,6 +52,16 @@ export type RoomRow = ManualJRoom & {
   wall_rear_len_ft: number | null;
   wall_left_len_ft: number | null;
   wall_right_len_ft: number | null;
+  // Window-area counterpart to wall_front/rear/left/right_len_ft above,
+  // same reasoning (see migration
+  // 20260813030300_add_window_drawing_relative_area.sql) - not consumed by
+  // computeManualJ (window_north/south/east/west_area_sqft on ManualJRoom
+  // are what it reads), only populated when the compass window fields are
+  // null.
+  window_front_area_sqft: number | null;
+  window_rear_area_sqft: number | null;
+  window_left_area_sqft: number | null;
+  window_right_area_sqft: number | null;
 };
 
 const ATTIC_CONSTRUCTION_OPTIONS = [
@@ -86,7 +96,7 @@ type EnvelopeFormValues = {
 };
 
 export const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, window_front_area_sqft, window_rear_area_sqft, window_left_area_sqft, window_right_area_sqft, door_count";
 
 const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
 
@@ -103,6 +113,10 @@ export type ExtractableEnvelopeFields = {
   foundation_type: string | null;
   window_type: string | null;
   window_count: number | null;
+  // Unlike the fields above, this isn't a projects column - applyExtractedData
+  // below uses it as a per-room default (see ExtractedEnvelope.ceiling_height_ft
+  // in lib/drawingExtraction.ts), not as part of envelopeForm/handleSaveEnvelope.
+  ceiling_height_ft: number | null;
 };
 
 export type ApplyExtractedDataResult = {
@@ -635,7 +649,12 @@ export const ManualJWorkflow = forwardRef<
           level: "single_story",
           zone_id: defaultZoneId,
           floor_area_sqft: room.floor_area_sqft,
-          ceiling_height_ft: null,
+          // Building-wide default from the drawing's building_envelope
+          // (see ExtractedEnvelope.ceiling_height_ft) - a new room has
+          // nothing of its own to override it with yet, unlike the
+          // UPDATE branch below which only fills an existing room's
+          // ceiling_height_ft if it's still empty.
+          ceiling_height_ft: extractedEnvelope.ceiling_height_ft,
           ceiling_exposed: false,
           floor_exposed: false,
           // Bedroom status/room type/occupants are never inferred from a
@@ -671,10 +690,16 @@ export const ManualJWorkflow = forwardRef<
           wall_rear_len_ft: room.wall_rear_len_ft,
           wall_left_len_ft: room.wall_left_len_ft,
           wall_right_len_ft: room.wall_right_len_ft,
-          window_north_area_sqft: null,
-          window_south_area_sqft: null,
-          window_east_area_sqft: null,
-          window_west_area_sqft: null,
+          // Same compass-vs-drawing-relative split as the wall fields
+          // above, same reason (see ExtractedRoom's window_* fields).
+          window_north_area_sqft: room.window_north_area_sqft,
+          window_south_area_sqft: room.window_south_area_sqft,
+          window_east_area_sqft: room.window_east_area_sqft,
+          window_west_area_sqft: room.window_west_area_sqft,
+          window_front_area_sqft: room.window_front_area_sqft,
+          window_rear_area_sqft: room.window_rear_area_sqft,
+          window_left_area_sqft: room.window_left_area_sqft,
+          window_right_area_sqft: room.window_right_area_sqft,
           door_count: room.door_count ?? 0,
         }));
 
@@ -737,9 +762,39 @@ export const ManualJWorkflow = forwardRef<
             extractedRoom.wall_rear_len_ft != null ||
             extractedRoom.wall_left_len_ft != null ||
             extractedRoom.wall_right_len_ft != null;
-          if (!hasDuctData && !hasWallData) continue;
+          const hasWindowData =
+            extractedRoom.window_north_area_sqft != null ||
+            extractedRoom.window_south_area_sqft != null ||
+            extractedRoom.window_east_area_sqft != null ||
+            extractedRoom.window_west_area_sqft != null ||
+            extractedRoom.window_front_area_sqft != null ||
+            extractedRoom.window_rear_area_sqft != null ||
+            extractedRoom.window_left_area_sqft != null ||
+            extractedRoom.window_right_area_sqft != null;
 
+          // Name-match first (needed below regardless) so a possible
+          // ceiling-height fill-in can be checked against the matched
+          // room - unlike duct/wall/window above, a room with only a
+          // ceiling-height gap to fill still needs to reach the "no data
+          // at all" skip below.
           const key = extractedRoom.name ? normalizeRoomNameForMatch(extractedRoom.name) : "";
+          const target =
+            key && nameCounts.get(key) === 1
+              ? rooms.find((r) => normalizeRoomNameForMatch(r.name) === key)
+              : undefined;
+
+          // Only ever a fill-if-empty default (see the INSERT branch's
+          // comment on ceiling_height_ft) - never overwrites a room's
+          // already-entered value, unlike duct/wall/window above, since a
+          // vaulted or dropped ceiling is exactly the kind of per-room
+          // exception a tech is likely to have hand-corrected.
+          const hasCeilingHeightFill =
+            extractedEnvelope.ceiling_height_ft != null &&
+            target != null &&
+            target.ceiling_height_ft == null;
+
+          if (!hasDuctData && !hasWallData && !hasWindowData && !hasCeilingHeightFill) continue;
+
           if (!key || nameCounts.get(key) !== 1) {
             if (extractedRoom.name) {
               unmatchedRoomNotes.push(
@@ -748,18 +803,17 @@ export const ManualJWorkflow = forwardRef<
             }
             continue;
           }
-          const target = rooms.find((r) => normalizeRoomNameForMatch(r.name) === key);
           if (!target) continue;
 
           const floorAreaMismatch =
-            hasWallData &&
+            (hasWallData || hasWindowData) &&
             extractedRoom.floor_area_sqft != null &&
             target.floor_area_sqft != null &&
             Math.abs(extractedRoom.floor_area_sqft - target.floor_area_sqft) >
               FLOOR_AREA_MISMATCH_TOLERANCE_SQFT;
           if (floorAreaMismatch) {
             unmatchedRoomNotes.push(
-              `"${target.name}" - name matched, but floor area differs (existing ${target.floor_area_sqft} sqft vs. re-extracted ${extractedRoom.floor_area_sqft} sqft) - wall data not applied, review manually`,
+              `"${target.name}" - name matched, but floor area differs (existing ${target.floor_area_sqft} sqft vs. re-extracted ${extractedRoom.floor_area_sqft} sqft) - wall/window data not applied, review manually`,
             );
           }
 
@@ -780,6 +834,19 @@ export const ManualJWorkflow = forwardRef<
             updatePayload.wall_rear_len_ft = extractedRoom.wall_rear_len_ft;
             updatePayload.wall_left_len_ft = extractedRoom.wall_left_len_ft;
             updatePayload.wall_right_len_ft = extractedRoom.wall_right_len_ft;
+          }
+          if (hasWindowData && !floorAreaMismatch) {
+            updatePayload.window_north_area_sqft = extractedRoom.window_north_area_sqft;
+            updatePayload.window_south_area_sqft = extractedRoom.window_south_area_sqft;
+            updatePayload.window_east_area_sqft = extractedRoom.window_east_area_sqft;
+            updatePayload.window_west_area_sqft = extractedRoom.window_west_area_sqft;
+            updatePayload.window_front_area_sqft = extractedRoom.window_front_area_sqft;
+            updatePayload.window_rear_area_sqft = extractedRoom.window_rear_area_sqft;
+            updatePayload.window_left_area_sqft = extractedRoom.window_left_area_sqft;
+            updatePayload.window_right_area_sqft = extractedRoom.window_right_area_sqft;
+          }
+          if (hasCeilingHeightFill && !floorAreaMismatch) {
+            updatePayload.ceiling_height_ft = extractedEnvelope.ceiling_height_ft;
           }
           if (Object.keys(updatePayload).length === 0) continue;
 

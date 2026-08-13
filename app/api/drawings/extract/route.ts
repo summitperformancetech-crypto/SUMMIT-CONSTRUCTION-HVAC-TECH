@@ -115,11 +115,17 @@ export async function POST(request: Request) {
       // at the previous 4096 limit, diagnosed 2026-08-12 by reproducing
       // the API call directly and inspecting stop_reason) need more output
       // budget than a small single-family floor plan. 8192 gave ~40%
-      // headroom over what that drawing actually needed (4872 tokens).
+      // headroom over what that drawing actually needed (4872 tokens) -
+      // but that was against the schema BEFORE STEP 3/4 added 8 window-area
+      // fields per room plus 1 envelope field. Re-diagnosed 2026-08-13 the
+      // same way: the same 25-room Kinsela set hit the (still-8192) ceiling
+      // again, truncating mid-response at room 22/25 (~369 tokens/room
+      // under the new schema, extrapolating to ~9500 tokens for all 25).
+      // 16000 keeps the same ~40%-headroom philosophy over that estimate.
       // Cost/latency is billed on tokens actually generated, not this
       // ceiling, so there's no downside to the higher limit going unused
       // on smaller drawings.
-      max_tokens: 8192,
+      max_tokens: 16000,
       messages: [
         {
           role: "user",

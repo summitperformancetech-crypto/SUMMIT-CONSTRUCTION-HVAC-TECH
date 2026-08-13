@@ -241,6 +241,13 @@ export function DrawingsSection({
         "window_count",
         drawing.extracted_data.building_envelope.window_count.value,
       ),
+      // Unlike its siblings above, this has no projects column - it's a
+      // building-wide default broadcast to rooms lacking one, not saved via
+      // handleSaveEnvelope. See ExtractedEnvelope.ceiling_height_ft.
+      ceiling_height_ft: resolvedEnvelopeNumber(
+        "ceiling_height_ft",
+        drawing.extracted_data.building_envelope.ceiling_height_ft.value,
+      ),
     };
 
     const resolvedRooms = drawing.extracted_data.rooms.map((room, index) =>

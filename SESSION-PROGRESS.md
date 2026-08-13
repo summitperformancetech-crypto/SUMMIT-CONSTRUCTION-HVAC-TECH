@@ -619,3 +619,86 @@ instruction, pending direction on the wall-length question above.
   array flags only the actually-risky entry. All 11 passed.
 - `npx tsc --noEmit`: clean. Committing now, per instruction to report
   back before moving to the prompt rewrite.
+- 2026-08-14 02:30 — User said GO. Rewrote `EXTRACTION_PROMPT` in full:
+  renumbered STEP 1-5 -> STEP 2-8 (updated the one internal cross-
+  reference, STEP 3's "same standard as duct routing" pointer), inserted
+  new STEP 1 (sheet inventory), STEP 6 (exterior wall assembly), STEP 7
+  (attic construction type), STEP 9 (duct spec), STEP 10 (HVAC equipment +
+  zoning, one table populating both arrays via a shared label), STEP 11
+  (HVAC equipment location), STEP 12/13 (window/door schedules,
+  transcribed verbatim, explicitly NOT correlated to rooms - flagged as
+  future work, not built now), STEP 14 (sqft summary), STEP 15 (water
+  heaters - explicitly told NOT to judge significance, that's
+  flagWaterHeaterLoadRisk's job downstream, not the model's). Extended
+  "Other rules" with the provenance/conflict/reference-only-sheet rules.
+  Reworded the opening framing to name all three manuals (was Manual J
+  only) and state the every-page mandate directly.
+- `npx tsc --noEmit`: clean. Running a real extraction against the actual
+  13-page Kinsela PDF now (same verification standard as every prompt
+  change this session) - this schema grew by ~30 keys across 15
+  building_envelope fields plus 7 new top-level arrays, and a prior
+  prompt expansion this session already caused one real max_tokens
+  regression, so measuring actual usage rather than assuming headroom.
+- 2026-08-14 02:45 — **First run at max_tokens: 16000 hit the ceiling
+  again**, as anticipated - truncated with only ~285 tokens of output
+  left (measured: 44609 chars produced at 16000 tokens = ~2.79 chars/
+  token; cut off inside hvac_zoning, only square_footage_summary +
+  water_heaters + closing braces remained). Real need ~16285 tokens.
+- 2026-08-14 02:48 — Bumped to 24000 (~40% headroom over the measured
+  need, matching this session's established philosophy) - hit a NEW,
+  different failure: the Anthropic SDK's `calculateNonstreamingTimeout`
+  hard-refuses any non-streaming request with `max_tokens > 21333`
+  (`(60min * maxTokens) / 128000 <= 10min`) - a client-side error thrown
+  before the request is even sent, not a slow response. This is a real
+  production bug, not just a test-script problem: `route.ts` uses the
+  same non-streaming call, so leaving it at 24000 would have made every
+  future extraction fail 100% of the time. Fixed immediately (before
+  waiting on anything else) to 20000 - safely under the hard ceiling,
+  ~23% headroom over the measured need (less than the usual ~40%, a
+  known, flagged compromise, not a final answer). True fix is streaming
+  support in `route.ts`, not another number - flagged to the user rather
+  than silently implemented mid-checkpoint (real scope beyond "rewrite
+  the prompt").
+- 2026-08-14 02:52 — Re-ran at 21000 (safe ceiling for a one-off
+  verification script) to get a complete, valid extraction to actually
+  review the new prompt's OUTPUT quality, not just confirm it doesn't
+  truncate. `stop_reason: end_turn`, `output_tokens: 15930`.
+  Cross-checked every new category against my own independent manual
+  read of the PDF from two turns ago:
+  - **Matches exactly**: `sheets[]` (all 13, REF-1/REF-2 correctly
+    flagged reference-only), `attic_construction_type` (vented,
+    correctly marked unresolved since it's inferred from vent symbols
+    not an explicit label), wall assembly (2x6 @ 16" o.c., 1/2" OSB,
+    brick veneer + Hardie board), `hvac_equipment`/`hvac_zoning`
+    (5-ton/5-ton/2-ton, 2005/1872 sqft), `square_footage_summary` (all
+    10 rows), `duct_insulation_spec`/`duct_minimum_diameter_in`,
+    `water_heaters` (correctly NOT flagged - gas-tankless/attic, outside
+    the risk condition, confirming the deterministic function behaves
+    correctly on real data, not just the 11 synthetic test cases).
+  - **21/26 rooms got a per-room `ceiling_height_ft` override** - more
+    than expected, but correct: this floor plan labels ceiling height on
+    nearly every room directly (not just vaulted exceptions as I'd
+    assumed when writing STEP 5), so the model applying the override
+    broadly is the right behavior, not overreach.
+  - **Two real findings surfaced, not yet resolved - reported to the
+    user rather than silently deciding either way**:
+    1. `window_schedule` came back as 11 numbered entries ("1,2,3...");
+       my own manual read two turns ago described 13 LETTERED entries
+       ("A-M"). One of the two reads is wrong. Not re-verified against
+       the PDF yet.
+    2. The "Other rules" conflict/provenance instructions are worded
+       "for every building_envelope field" specifically - they don't
+       reach room-level facts. Concrete consequence: this run picked
+       `3-Car Garage` ceiling_height_ft = 9 (from an elevation sheet)
+       silently, with no unresolved/reason flag, even though the floor
+       plan's own room label says 10' - the same shape of conflict the
+       envelope-level rule handles correctly (see
+       `ceiling_insulation_r_value`'s detailed conflict reason in this
+       same run), just not reachable by the current wording for rooms.
+  - Nothing written to Kinsela's live `drawings` row this checkpoint -
+    verification only, output saved to local scratch files and reviewed,
+    then deleted.
+- `npx tsc --noEmit`: clean. Committing the prompt rewrite + the
+  max_tokens safety fix now (both real, verified, necessary) - the two
+  findings above are reported to the user as open questions, not silently
+  resolved, before continuing to Apply-to-Form wiring.

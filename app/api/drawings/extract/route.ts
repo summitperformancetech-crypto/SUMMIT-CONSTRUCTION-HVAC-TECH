@@ -121,11 +121,33 @@ export async function POST(request: Request) {
       // same way: the same 25-room Kinsela set hit the (still-8192) ceiling
       // again, truncating mid-response at room 22/25 (~369 tokens/room
       // under the new schema, extrapolating to ~9500 tokens for all 25).
-      // 16000 keeps the same ~40%-headroom philosophy over that estimate.
-      // Cost/latency is billed on tokens actually generated, not this
-      // ceiling, so there's no downside to the higher limit going unused
-      // on smaller drawings.
-      max_tokens: 16000,
+      // 16000 kept the same ~40%-headroom philosophy over that estimate -
+      // then Phase 2 (sheet provenance, schedules, HVAC equipment/zoning,
+      // water heaters, ~30 new keys across 15 building_envelope fields)
+      // hit the SAME ceiling a third time, this time truncating with only
+      // ~285 tokens of output left (measured directly: 44609 chars at
+      // 16000 tokens = ~2.79 chars/token, and the response cut off inside
+      // the next-to-last array with just square_footage_summary,
+      // water_heaters, and closing braces remaining) - real need is
+      // ~16285 tokens, which the usual ~40% headroom would put at ~22800.
+      //
+      // That number is NOT usable, though: the Anthropic SDK enforces a
+      // hard ceiling on non-streaming requests - it refuses above 21333
+      // (`(60min * maxTokens) / 128000 <= 10min`, see
+      // node_modules/@anthropic-ai/sdk/src/client.ts's
+      // calculateNonstreamingTimeout) and throws before the request is
+      // even sent, not a slow response, an immediate client-side error.
+      // Confirmed by hitting it directly at max_tokens: 24000 while
+      // diagnosing this. 20000 is a deliberately conservative value under
+      // that ceiling (~23% headroom over the measured need, not the usual
+      // ~40%) - not a final answer. This app will keep adding extractable
+      // categories, and headroom this tight will need revisiting via
+      // actual streaming support (the SDK's own suggested fix), not
+      // another number bump - flagged to the user rather than guessed at
+      // silently. Cost/latency is billed on tokens actually generated,
+      // not this ceiling, so there's no downside to unused headroom on
+      // smaller drawings, right up until the ceiling itself.
+      max_tokens: 20000,
       messages: [
         {
           role: "user",

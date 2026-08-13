@@ -334,7 +334,9 @@ export const ACCEPTED_DRAWING_MIME_TYPES = [
 // Fields the model is permitted to fill on Building Envelope. ACH50, occupants,
 // and indoor design temps are deliberately excluded from the extraction prompt
 // and schema below — those must always be entered by a human.
-export const EXTRACTION_PROMPT = `You are reviewing an architectural or HVAC drawing (floor plan, elevation, or spec sheet) to help populate a Manual J residential load calculation.
+export const EXTRACTION_PROMPT = `You are reviewing a complete architectural drawing set - floor plans, elevations, cross sections, foundation plan, roof plan, electrical/mechanical/plumbing plans, schedules, cover sheet, and construction details - to help populate ACCA Manual J residential load calculations, Manual D duct design, and Manual S equipment selection.
+
+This document may have many pages of very different types. Review EVERY page before responding. Do not skip a page, or treat its content as irrelevant, because of what its sheet type usually contains - relevant facts have been found on pages a first guess would rule out (a cover sheet's general materials note, a wall-section detail between structural sheets, a mechanical plan's HVAC notes).
 
 Respond with STRICT JSON only — no markdown code fences, no commentary, nothing outside the JSON object. Match this exact shape:
 
@@ -343,14 +345,25 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "detected": boolean,
     "description": string | null
   },
+  "sheets": [
+    { "name": string, "hasReferenceOnlyDisclaimer": boolean }
+  ],
   "building_envelope": {
-    "wall_insulation_r_value": { "value": number | null, "unresolved": boolean },
-    "ceiling_insulation_r_value": { "value": number | null, "unresolved": boolean },
-    "floor_insulation_r_value": { "value": number | null, "unresolved": boolean },
-    "window_type": { "value": string | null, "unresolved": boolean },
-    "window_count": { "value": number | null, "unresolved": boolean },
-    "foundation_type": { "value": string | null, "unresolved": boolean },
-    "ceiling_height_ft": { "value": number | null, "unresolved": boolean }
+    "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "ceiling_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "floor_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "window_type": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "window_count": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "foundation_type": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "ceiling_height_ft": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "attic_construction_type": { "value": "vented_unconditioned" | "sealed_conditioned" | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "exterior_wall_stud_size": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "exterior_wall_stud_spacing_in": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "exterior_wall_sheathing": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "exterior_wall_exterior_finish": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "duct_insulation_spec": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "duct_minimum_diameter_in": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
+    "hvac_equipment_location": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null }
   },
   "rooms": [
     {
@@ -374,18 +387,40 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "window_right_area_sqft": number | null,
       "window_count": number | null,
       "door_count": number | null,
+      "ceiling_height_ft": number | null,
+      "source_sheet": string | null,
       "unresolved": boolean,
       "reason": string | null,
       "duct_location": { "value": string | null, "unresolved": boolean },
       "duct_insulation_r_value": { "value": number | null, "unresolved": boolean },
       "duct_confidence": number | null
     }
+  ],
+  "window_schedule": [
+    { "mark": string, "size": string | null, "description": string | null, "quantity": number | null }
+  ],
+  "door_schedule": [
+    { "mark": string, "size": string | null, "description": string | null, "quantity": number | null }
+  ],
+  "hvac_equipment": [
+    { "label": string, "equipment_type": string | null, "tonnage": number | null, "cooling_btu": number | null, "heating_type": string | null }
+  ],
+  "hvac_zoning": [
+    { "label": string, "serves_sqft": number | null }
+  ],
+  "square_footage_summary": [
+    { "label": string, "sqft": number | null }
+  ],
+  "water_heaters": [
+    { "type": "electric" | "gas-tankless" | "gas-tank" | "atmospheric-vent" | "power-vent" | "other" | null, "fuel": string | null, "location": "conditioned-space" | "attic" | "garage" | "outside" | "other" | null, "unresolved": boolean, "reason": string | null }
   ]
 }
 
-STEP 1 — Orientation. Before estimating any room geometry, look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
+STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"), and "hasReferenceOnlyDisclaimer": true if that sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent) - false otherwise. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
 
-STEP 2 — Room geometry, conditioned on Step 1:
+STEP 2 — Orientation. Look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
+
+STEP 3 — Room geometry, conditioned on Step 2:
 - If orientation WAS detected: estimate each room's wall_north_len_ft / wall_south_len_ft / wall_east_len_ft / wall_west_len_ft from the drawing's geometry relative to that orientation, and estimate door_count from the room's drawn openings. Leave wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, and wall_right_len_ft null in this case — they exist only for the no-orientation case below.
 - If orientation was NOT detected, do BOTH (a) and (b) below for every room — they are two separate instructions, not alternatives:
   (a) Set wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft to null. Do not guess which side of a room faces which TRUE COMPASS direction — an incorrect guess here silently corrupts solar gain calculations downstream.
@@ -393,15 +428,39 @@ STEP 2 — Room geometry, conditioned on Step 1:
   Convention for front/rear/left/right (must be followed exactly, the whole feature depends on this): imagine a person standing OUTSIDE the building, FACING the front entry door (looking at the house, about to walk in — not exiting it). "Front" = the wall containing or facing the main entry, as seen by that person. "Rear" = the opposite wall. "Left" = the side on that person's left hand. "Right" = the side on that person's right hand.
   The four LENGTH values are ordinary floor-plan geometry — read them the same confident way you'd read wall_north_len_ft in the orientation-detected case. WHICH wall you call "front," however, is a genuine guess whenever there is no true-north marker (that's exactly why this branch exists) — a "FRONT ELEVATION" label or an obvious main entry only tells you which facade the drawing's own author called the front, not which physical wall is actually the front by any confirmable standard. Do not treat that identification as confident just because a label exists. Every room where you fill any of these four fields is unresolved for this reason, in addition to any other reason it may already have: set "unresolved": true and include, verbatim, the sentence "${WALL_ORIENTATION_UNRESOLVED_REASON}" in "reason" (append it after a " · " separator if the room already has a different reason for something else, e.g. an illegible label — do not replace that other reason, add to it). This is not a substitute for true compass exposure either way — a human still resolves that via the project's building orientation selector, same as before, but now also still needs to confirm the front-entry axis itself before that selector's rotation can be trusted.
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
+- For every room, set "source_sheet" to the floor-plan sheet (from your STEP 1 inventory) its geometry actually came from - useful when a project has more than one floor-plan sheet (e.g. a main floor and a second-level/bonus-room plan).
 
-STEP 3 — Window area, per room, same north/south/east/west vs. front/rear/left/right split as STEP 2, governed by the SAME orientation-detected/not-detected branch (do not re-decide it here). This is a much harder read than wall length — most floor plans mark a window opening as a gap in the wall line with a width, but not a height, so only fill a side's window area when you can combine an actual opening on that room's wall (visible in the floor plan) with an actual height reference for that opening (a window schedule entry, a labeled window size like "3068" i.e. 3'-0" x 6'-8", or a spec note) - width times height. If a room clearly has a window on a given side but you have no way to size it, leave that side null rather than assume a typical size - this is the same "don't guess" standard as duct routing (STEP 5) and R-values, not an exception to it. It is expected and fine for most or all window area fields to come back null when a drawing doesn't include a window schedule or labeled sizes; a false area is worse than a missing one, since it would silently misstate solar gain rather than leave it visibly unresolved. When you do fill any window area for a room, set that room's "unresolved" to true with "reason" noting it's an AI-estimated window area pending confirmation (unless the room is already unresolved for another reason, in which case leave the existing reason as-is).
+STEP 4 — Window area, per room, same north/south/east/west vs. front/rear/left/right split as STEP 3, governed by the SAME orientation-detected/not-detected branch (do not re-decide it here). This is a much harder read than wall length — most floor plans mark a window opening as a gap in the wall line with a width, but not a height, so only fill a side's window area when you can combine an actual opening on that room's wall (visible in the floor plan) with an actual height reference for that opening (a window schedule entry, a labeled window size like "3068" i.e. 3'-0" x 6'-8", or a spec note) - width times height. If a room clearly has a window on a given side but you have no way to size it, leave that side null rather than assume a typical size - this is the same "don't guess" standard as duct routing (STEP 8) and R-values, not an exception to it. It is expected and fine for most or all window area fields to come back null when a drawing doesn't include a window schedule or labeled sizes; a false area is worse than a missing one, since it would silently misstate solar gain rather than leave it visibly unresolved. When you do fill any window area for a room, set that room's "unresolved" to true with "reason" noting it's an AI-estimated window area pending confirmation (unless the room is already unresolved for another reason, in which case leave the existing reason as-is).
 
-STEP 4 — Ceiling height, building-wide (not per room). Look for a plate height or ceiling height labeled on a wall section, a building section, an elevation, or a general note (e.g. "9'-0" PLATE HT.", "8' CEILINGS TYP."). Set "building_envelope.ceiling_height_ft" to that value only if it is actually labeled — do not infer a typical residential height. If the drawing labels different heights per story, use the ground-floor/primary living-area figure and set "unresolved": true (a per-room exception like a vaulted great room or a raised second-floor ceiling still needs a human's manual correction on that specific room - this field is only ever a starting default for rooms that don't already have one).
+STEP 5 — Ceiling height. Two levels:
+- Building-wide default: look for a plate height or ceiling height labeled on a wall section, a building section, an elevation, or a general note (e.g. "9'-0" PLATE HT.", "8' CEILINGS TYP."). Set "building_envelope.ceiling_height_ft" to that value only if it is actually labeled — do not infer a typical residential height. If the drawing labels different heights per story, use the ground-floor/primary living-area figure and set "unresolved": true.
+- Per-room override, independent of the above: if a cross-section, elevation, or the floor plan itself states an explicit height tied to a SPECIFIC NAMED ROOM that differs from the general figure (e.g. a bonus room, garage, or vaulted room labeled with its own ceiling or plate height), set that room's own "ceiling_height_ft" to that value - this overrides the building-wide default for that room only. For a vaulted or sloped ceiling, use the wall plate height as an approximation (not a true average), and set that room's "unresolved": true with "reason" noting the ceiling is vaulted and the height is an approximation (append after existing reason text the same way STEP 3's wall-orientation caveat is appended, don't replace it). Leave a room's own "ceiling_height_ft" null when nothing room-specific is labeled - the building-wide default covers it downstream.
 
-STEP 5 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to EXACTLY ONE of these values (case-sensitive, no other text): ${DUCT_LOCATION_VALUES.map((v) => `"${v}"`).join(", ")} — use "Attic-Unconditioned" for a plain vented attic, "Attic-Conditioned" for a sealed/spray-foamed attic, "Basement-Unconditioned"/"Basement-Conditioned" the same way, "Conditioned-Space" for ducts run inside living space (e.g. a dropped soffit or interior chase), and "Exterior-Wall" for ducts run in an exterior wall cavity. Also set "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess, and never output a location outside the exact list above. A server-side fallback fills a construction-based default afterward; that is not your job.
+STEP 6 — Exterior wall assembly, building-wide. Look for a wall-section detail, a typical wall section, or a general materials note (often on a cover sheet or construction-details sheet) describing the PRIMARY exterior wall construction - the assembly most of the building's exterior walls actually use, not a single interior partition. Only fill a field when it is explicitly labeled: "exterior_wall_stud_size" (e.g. "2x6"), "exterior_wall_stud_spacing_in" (e.g. 16, from "16" O.C."), "exterior_wall_sheathing" (e.g. "1/2\" OSB"), "exterior_wall_exterior_finish" (e.g. "brick veneer", or multiple materials if the drawing shows a mix, e.g. "brick veneer, Hardie board and batten"). A house can have more than one exterior wall assembly (e.g. R-13 2x4 walls in addition to R-19 2x6 walls) - describe the DOMINANT one; do not average or invent a blend.
+
+STEP 7 — Attic construction type, building-wide. Determine vented vs. sealed from what's actually drawn: continuous ridge vents, soffit vents, or gable vents shown on an elevation or roof plan mean "vented_unconditioned"; spray foam applied at the roof deck (rather than at the ceiling plane), or an explicit "sealed"/"conditioned attic" label, means "sealed_conditioned". Set "unresolved": true if you're inferring this from an indirect cue (e.g. insulation type alone) rather than an explicit vent or sealed callout.
+
+STEP 8 — Duct routing, per room. Most floor plans do NOT show ductwork - only attempt this when you can actually see duct runs, supply/return grille symbols, a mechanical/section drawing, or an explicit duct callout for that room's area. If you can see it: set "duct_location" to EXACTLY ONE of these values (case-sensitive, no other text): ${DUCT_LOCATION_VALUES.map((v) => `"${v}"`).join(", ")} — use "Attic-Unconditioned" for a plain vented attic, "Attic-Conditioned" for a sealed/spray-foamed attic, "Basement-Unconditioned"/"Basement-Conditioned" the same way, "Conditioned-Space" for ducts run inside living space (e.g. a dropped soffit or interior chase), and "Exterior-Wall" for ducts run in an exterior wall cavity. Also set "duct_insulation_r_value" only if an R-value is actually labeled near the ductwork, "duct_confidence" to a 0-1 estimate of how sure you are, and "duct_location.unresolved"/"duct_insulation_r_value.unresolved" to true (a human still needs to confirm this — it's an AI read, not a certainty either way). If you cannot see duct routing for a room (the common case), leave "duct_location", "duct_insulation_r_value", and "duct_confidence" all null — do not guess, and never output a location outside the exact list above. A server-side fallback fills a construction-based default afterward; that is not your job.
+
+STEP 9 — Duct specification, document-level (distinct from the per-room fields in STEP 8 - this is a general spec note, not tied to any one room). From the mechanical plan's HVAC notes, if present: "duct_insulation_spec" (e.g. "2\" fiberglass insulation"), "duct_minimum_diameter_in" (e.g. 8, from a note like "MIN. DUCT SIZE 8\" DIAMETER"). This is a cross-check value only, used to sanity-check the app's own duct-insulation default - only fill it if the mechanical plan states it explicitly.
+
+STEP 10 — HVAC equipment and zoning, from the mechanical plan's HVAC notes. If the plan lists individual units by a label (e.g. "A/C Unit 'A'", "Unit B"), add one entry per unit to BOTH "hvac_equipment" and "hvac_zoning", using the SAME "label" in both (e.g. "A") so they can be matched up later. In "hvac_equipment": "equipment_type" (e.g. "A/C condensing unit + gas furnace"), "tonnage", "cooling_btu", "heating_type" (e.g. "gas furnace") - only what's explicitly stated. In "hvac_zoning": "serves_sqft" if the plan states which square footage that unit serves (e.g. "Unit A serves 2005 SQ FT") - leave null if not stated. This is a cross-check against the app's own equipment selection, not something to compute or infer. If the plan explicitly disclaims the HVAC layout as schematic or non-final, still record what's shown - that disclaimer doesn't mean skip it, it means the human reviewing this cross-check should weigh it accordingly.
+
+STEP 11 — HVAC equipment location, document-level. A short description of where air handlers and condensing units are located or routed (e.g. "attic-routed", "air handlers in attic, condensers roof-mounted") - used only as a cross-check against the per-room duct-routing default from STEP 8. Set "hvac_equipment_location".
+
+STEP 12 — Window schedule. If the drawing set includes a window schedule table (a list of marks, typically lettered, each with a size/description/quantity), transcribe it verbatim into "window_schedule": one entry per mark, with "mark", "size" (as printed, e.g. "3'0\" X 7'0\""), "description", and "quantity". Do not invent a mark that isn't in the table, and do not attempt to determine which room uses which mark - that correlation is not part of this extraction.
+
+STEP 13 — Door schedule. Same treatment as STEP 12, into "door_schedule", if a door schedule table is present.
+
+STEP 14 — Square footage summary. If the drawing set includes its own printed summary table of square footage by area (e.g. "Main Living", "Front Porch", "3-Car Garage", "Total"), transcribe it into "square_footage_summary": one entry per row, with "label" (as printed) and "sqft". This is a cross-check against summed room floor areas, not a value applied anywhere.
+
+STEP 15 — Water heater(s). For each water heater shown (there may be more than one), add an entry to "water_heaters" with: "type" - exactly one of "electric", "gas-tankless", "gas-tank", "atmospheric-vent", "power-vent", "other" (use the venting method if that's what's labeled, e.g. "atmospheric-vent", rather than guessing a specific product type); "fuel" (e.g. "natural gas", "electric", "propane"); "location" - exactly one of "conditioned-space", "attic", "garage", "outside", "other", based on where it's actually drawn or labeled, not assumed. Only fill a field when confidently determinable; if the type or location genuinely can't be determined, leave it null and set that entry's "unresolved": true with a "reason" explaining what's missing. Do NOT attempt to judge whether this water heater matters for the load calculation - that judgment happens automatically, downstream, from the type/location facts you provide here. Your job is only to report what's actually drawn, not to compute significance.
 
 Other rules:
 - Only fill an insulation R-value if it is visibly labeled on the drawing (e.g. "R-19 batt", "R-38 ceiling"). Do not infer a code-minimum or typical value — leave it null instead.
+- Provenance: for every building_envelope field, set "source_sheet" to the sheet (from your STEP 1 inventory) the value actually came from.
+- Conflicts across sheets: if the same fact appears on more than one sheet with DIFFERENT values, do not silently pick one. Resolve to whichever value is best-supported (e.g. it appears on more sheets, or a more authoritative sheet type), but always populate "reason" describing the conflict - name the sheets and the values you found on each - and set "source_sheet" to the sheet the CHOSEN value came from.
+- Reference-only sheets: if a fact's ONLY source is a sheet you marked "hasReferenceOnlyDisclaimer": true in STEP 1, and no other sheet corroborates it, set "unresolved": true regardless of how clearly labeled the value looks on that sheet, with "reason" noting it's single-sourced from a reference-only sheet.
 - window_count and door_count are simple counts, not areas.
 - Set "unresolved": true on the building envelope object, or on any individual room, whenever the drawing is ambiguous, illegible, or you are guessing rather than reading a clearly labeled figure. Whenever you set "unresolved": true on a room, always fill "reason" with a short, specific explanation a field technician can act on (e.g. "no orientation marker - exposure cannot be determined", "room label illegible", "floor area not dimensioned"). Leave "reason" null only when "unresolved" is false.
 - Do not invent room names if none are labeled — use a generic label like "Room 1" and mark it unresolved with an appropriate reason.

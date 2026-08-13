@@ -311,6 +311,83 @@ regress duct defaults or calculation snapshotting.
   currently-working component; flagging it as an open question rather
   than guessing scope).
 
+## Status: implementing the code-level gate on BuildingOrientationSection
+
+- 2026-08-14 00:05 — User's direction: add a per-room gate to "Save &
+  Auto-Fill Walls" - block the transform on any room whose wall-orientation
+  flag is still unresolved, surface a clear message, and don't affect
+  rooms without the flag (or already resolved). Verify no regression on
+  the rooms that already transform correctly. Commit when clean.
+- 2026-08-14 00:10 — Extracted the swap-caveat sentence out of
+  `EXTRACTION_PROMPT`'s inline string into an exported constant,
+  `WALL_ORIENTATION_UNRESOLVED_REASON` (`lib/drawingExtraction.ts`), so the
+  prompt and the new gate check the identical text - one source of truth,
+  not two copies that could drift.
+- 2026-08-14 00:12 — Moved `normalizeRoomNameForMatch` out of
+  `manual-j-workflow.tsx` (was a private, unexported function) into
+  `lib/fieldResolutions.ts` and exported it, then updated
+  `manual-j-workflow.tsx` to import it from there instead of keeping its
+  own copy. Needed so the new gate matches a `rooms` table row to a
+  drawing's extraction room by name using the exact same rule
+  `applyExtractedData` already uses - two independent copies of this
+  logic could disagree about which extracted room a given row corresponds
+  to.
+- 2026-08-14 00:15 — Added `roomHasUnresolvedWallOrientation(roomName,
+  drawings, resolvedKeys)` to `lib/fieldResolutions.ts`, same shape/style
+  as the existing `countUnresolvedFields` (which was already the
+  reference pattern for "is `room[index]` in this drawing resolved yet" -
+  no new pattern invented). Checks every completed drawing's extraction
+  for a name match whose `reason` contains the swap caveat and is still
+  unresolved with no `field_resolutions` row - blocks only if such a match
+  exists. A room with no matching extraction (hand-added, or matched to a
+  differently-named room this run) is never blocked - nothing to confirm.
+- 2026-08-14 00:20 — Wired the gate into
+  `components/building-orientation-section.tsx`'s `handleApply`:
+  - Fetches `drawings` + `field_resolutions` fresh, live, right before the
+    per-room loop - deliberately NOT passed down as a prop from a parent.
+    `DrawingsSection` (several components away, where a tech actually
+    clicks Accept/Override) owns its own local state; a stale snapshot
+    threaded down through `ManualJWorkflow` would risk still blocking a
+    room the tech just resolved in the same session without a reload.
+    Matches this component's existing style (it already does live queries
+    for the room updates themselves) rather than the codebase's other,
+    looser precedent (the dashboard's `unresolvedFieldCount` badge, which
+    is explicitly documented as reload-only, not live) - the two features
+    have different consequences for being stale, so different tradeoffs
+    are correct for each.
+  - Per room: `roomHasUnresolvedWallOrientation` checked before
+    `applyOrientationToRoom` - blocked rooms are collected by name and
+    skipped entirely (no cardinal-field computation, no `.update()` call),
+    not just silently dropped.
+  - Message now reports blocked rooms by name, distinct from the existing
+    "no drawing-relative data to rotate" case, and sets the message to
+    error-styled (red) whenever anything was blocked, so it's visually
+    distinct from a clean run.
+  - `npx tsc --noEmit`: clean.
+- 2026-08-14 00:25 — Verification, two parts:
+  1. **Pure-function unit test** of `roomHasUnresolvedWallOrientation`
+     (8 cases, no DB): exact-caveat match blocks; caveat appended to an
+     unrelated reason still blocks; a resolution present unblocks; a room
+     with `unresolved: false` is never blocked; a room unresolved for an
+     *unrelated* reason only (no caveat text) is not blocked; a
+     never-extracted (hand-added) room name is not blocked; `#`/whitespace
+     name-matching noise is tolerated (matches `applyExtractedData`'s
+     convention); a non-`completed` drawing is ignored. **8/8 passed.**
+  2. **Read-only dry run against live Kinsela data** (real `rooms`,
+     `drawings`, `field_resolutions` - zero writes): of 25 rooms, 23 would
+     be blocked (correct - `field_resolutions` is still empty, nothing has
+     been Accepted/Overridden), 2 would not (`Bath 4 (Bonus)`,
+     `Powder Room` - their names don't match any room in the latest
+     extraction at all, so correctly nothing to judge against). Confirmed
+     20/25 rooms' existing compass wall data
+     (`wall_north/south/east/west_len_ft`, written by a past, pre-gate run
+     of this button) is untouched - this dry run made no writes, and the
+     gate's `continue` on a blocked room never touches its existing DB
+     row either way, so a real run right now would leave that already-
+     correct data exactly as it is, not erase or regress it.
+- 2026-08-14 00:30 — `npx tsc --noEmit`: clean after all changes.
+  Committing.
+
 ## Status: PAUSED — reporting back per instruction, not proceeding further
 
 1. **Wall-length swap: root-caused to AI extraction non-determinism on an
@@ -322,9 +399,15 @@ regress duct defaults or calculation snapshotting.
 2. **Prompt tightened and verified live**: all rooms extracted under the
    no-orientation branch now carry a specific, actionable reason and
    surface via the existing Accept/Override UI - no new UI/schema needed.
-   `BuildingOrientationSection` itself still runs unconditionally (not
-   gated on these resolutions) - flagged as an open question, not done.
-3. **Window area has no real non-null data to verify against** on this
+3. **Code-level gate added and verified** (unit tests + live dry run):
+   `BuildingOrientationSection` now blocks the compass transform per-room
+   until a human has Accepted/Overridden that room's wall-orientation
+   flag. Currently blocks 23/25 of Kinsela's rooms, correctly, since
+   nothing has been resolved yet - this is the intended state until you
+   review the drawing and start resolving rooms one by one (or in bulk,
+   if you'd want a bulk-accept action added later - not built, not asked
+   for).
+4. **Window area has no real non-null data to verify against** on this
    drawing (no window schedule was legible to the model). Per user: accept
    the code path as verified-by-construction, revisit naturally on a
    drawing with real window data. No further action planned here.

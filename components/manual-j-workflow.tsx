@@ -19,6 +19,7 @@ import {
 } from "@/lib/manualJ";
 import type { ExtractedRoom } from "@/lib/drawingExtraction";
 import { normalizeDuctLocation, buildCodeMinimumsByLocation } from "@/lib/constants/ductLocations";
+import { normalizeRoomNameForMatch } from "@/lib/fieldResolutions";
 import {
   RoomForm,
   EMPTY_ROOM_FORM,
@@ -302,20 +303,6 @@ function formToRoomPayload(
 
 function fmt(value: number): string {
   return Math.round(value).toLocaleString();
-}
-
-// Re-extracting onto a project that already has rooms matches purely by
-// name (see the "existing rooms" branch of applyExtractedData below) -
-// two independent extraction passes over the same drawing can format an
-// otherwise-identical room name slightly differently (seen in practice:
-// "Bedroom 2" vs. "Bedroom #2"). Stripping "#" and collapsing whitespace
-// isn't a guess about WHICH room something is - "#2" and "2" are the same
-// number regardless of drawing - it just avoids flagging predictable
-// formatting noise as an unmatched room a human has to review for no
-// reason. Genuine name differences (a room renamed, split, or newly
-// found) still fail to match and get reported, unchanged.
-function normalizeRoomNameForMatch(name: string): string {
-  return name.replace(/#/g, "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 function levelLabel(level: string): string {

@@ -5,6 +5,13 @@ import { createClient } from "@/lib/supabase/client";
 import { COMPASS_8_OPTIONS, isCardinalCompass, type Compass8 } from "@/lib/constants/compass";
 import { resolveOrientation, isTransformApplicable, applyOrientationToRoom } from "@/lib/orientation";
 import { ROOM_COLUMNS, type RoomRow } from "@/components/manual-j-workflow";
+import {
+  FIELD_RESOLUTION_COLUMNS,
+  resolutionKey,
+  roomHasUnresolvedWallOrientation,
+  type FieldResolution,
+} from "@/lib/fieldResolutions";
+import type { DrawingExtraction } from "@/lib/drawingExtraction";
 
 // Building-orientation-driven wall auto-population, Parts 2-3. A room with
 // drawing-relative wall data (wall_front/rear/left/right_len_ft - filled
@@ -92,10 +99,49 @@ export function BuildingOrientationSection({
       right: "N" | "E" | "S" | "W";
     };
 
+    // Fetched fresh right here, not passed down as a prop, deliberately -
+    // this gate only matters at the instant the transform is about to run,
+    // and DrawingsSection (where a tech actually clicks Accept/Override on
+    // a room's Unresolved badge) owns its own drawings/resolutions state
+    // independently, several components away. A stale snapshot passed down
+    // from a parent would risk still blocking a room the tech just resolved
+    // in the same session, without a reload - worse than one extra query.
+    const [{ data: drawingsData, error: drawingsError }, { data: resolutionsData, error: resolutionsError }] =
+      await Promise.all([
+        supabase
+          .from("drawings")
+          .select("id, extraction_status, extracted_data")
+          .eq("project_id", projectId)
+          .returns<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }[]>(),
+        supabase
+          .from("field_resolutions")
+          .select(FIELD_RESOLUTION_COLUMNS)
+          .eq("project_id", projectId)
+          .returns<FieldResolution[]>(),
+      ]);
+    if (drawingsError || resolutionsError) {
+      setSaving(false);
+      setMessageIsError(true);
+      setMessage(
+        `Orientation saved, but couldn't check wall-orientation confirmation status: ${
+          drawingsError?.message ?? resolutionsError?.message
+        }. Auto-fill not run - try again.`,
+      );
+      return;
+    }
+    const resolvedKeys = new Set(
+      (resolutionsData ?? []).map((r) => resolutionKey(r.table_name, r.record_id, r.field_name)),
+    );
+
     const updatedRooms: RoomRow[] = [];
     const errors: string[] = [];
+    const blockedRooms: string[] = [];
     let skippedNoData = 0;
     for (const room of rooms) {
+      if (roomHasUnresolvedWallOrientation(room.name, drawingsData ?? [], resolvedKeys)) {
+        blockedRooms.push(room.name);
+        continue;
+      }
       const cardinalUpdate = applyOrientationToRoom(room, cardinalOrientation);
       if (Object.keys(cardinalUpdate).length === 0) {
         if (roomHasDrawingRelativeData(room)) skippedNoData += 1;
@@ -116,14 +162,22 @@ export function BuildingOrientationSection({
 
     if (updatedRooms.length > 0) onRoomsUpdated(updatedRooms);
     setSaving(false);
+    const blockedSuffix =
+      blockedRooms.length > 0
+        ? ` ${blockedRooms.length} room(s) blocked - resolve wall orientation before auto-filling (open the drawing's review panel and Accept/Override the Unresolved badge on: ${blockedRooms.join(", ")}).`
+        : "";
     if (errors.length > 0) {
       setMessageIsError(true);
-      setMessage(`Updated ${updatedRooms.length} room(s), but failed on ${errors.length}: ${errors.join("; ")}`);
+      setMessage(
+        `Updated ${updatedRooms.length} room(s), but failed on ${errors.length}: ${errors.join("; ")}${blockedSuffix}`,
+      );
       return;
     }
+    setMessageIsError(blockedRooms.length > 0);
     setMessage(
       `Building orientation set to ${frontFaces}. Auto-filled compass walls on ${updatedRooms.length} room(s)` +
-        (skippedNoData > 0 ? ` (${skippedNoData} room(s) had no drawing-relative wall data to rotate).` : "."),
+        (skippedNoData > 0 ? ` (${skippedNoData} room(s) had no drawing-relative wall data to rotate).` : ".") +
+        blockedSuffix,
     );
   }
 

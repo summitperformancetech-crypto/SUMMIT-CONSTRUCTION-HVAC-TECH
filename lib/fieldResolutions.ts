@@ -1,4 +1,4 @@
-import type { DrawingExtraction } from "@/lib/drawingExtraction";
+import { WALL_ORIENTATION_UNRESOLVED_REASON, type DrawingExtraction } from "@/lib/drawingExtraction";
 
 export type FieldResolution = {
   id: string;
@@ -83,4 +83,62 @@ export function countUnresolvedFields(
     });
   }
   return count;
+}
+
+// Re-extracting onto a project that already has rooms matches purely by
+// name (see the "existing rooms" branch of applyExtractedData in
+// components/manual-j-workflow.tsx) - two independent extraction passes
+// over the same drawing can format an otherwise-identical room name
+// slightly differently (seen in practice: "Bedroom 2" vs. "Bedroom #2").
+// Stripping "#" and collapsing whitespace isn't a guess about WHICH room
+// something is - "#2" and "2" are the same number regardless of drawing -
+// it just avoids flagging predictable formatting noise as an unmatched
+// room a human has to review for no reason. Genuine name differences (a
+// room renamed, split, or newly found) still fail to match and get
+// reported, unchanged. Shared here (rather than duplicated) since
+// BuildingOrientationSection's gate below needs the exact same matching
+// rule applyExtractedData uses, or the two could disagree about which
+// extracted room a given rooms-table row corresponds to.
+export function normalizeRoomNameForMatch(name: string): string {
+  return name.replace(/#/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+// Gates BuildingOrientationSection's "Save & Auto-Fill Walls" transform,
+// per room: a room's front/rear/left/right data must not be rotated into
+// the compass fields Manual J reads until a human has confirmed (via the
+// room's existing Unresolved badge, same Accept/Override flow duct fields
+// use) that the extraction's front-entry guess is actually correct - see
+// WALL_ORIENTATION_UNRESOLVED_REASON and the swap this was built to catch
+// (diagnosed 2026-08-13 against Kinsela: two independent extraction runs
+// of the identical drawing produced a clean 90-degree swap between the
+// front/rear and left/right axes for 6 of 9 compared rooms).
+//
+// There is no stable room-id -> extraction-index link (same reason
+// applyExtractedData matches by name, not id), so this checks every
+// completed drawing's extraction for a name match, and blocks if ANY
+// match is still unresolved specifically for this reason and lacks a
+// field_resolutions row. A room with no matching extraction at all (e.g.
+// hand-added, never touched by any drawing) is never blocked - there is
+// nothing to confirm.
+export function roomHasUnresolvedWallOrientation(
+  roomName: string,
+  drawings: Array<{
+    id: string;
+    extraction_status: string;
+    extracted_data: DrawingExtraction | null;
+  }>,
+  resolvedKeys: Set<string>,
+): boolean {
+  const key = normalizeRoomNameForMatch(roomName);
+  for (const drawing of drawings) {
+    if (drawing.extraction_status !== "completed" || !drawing.extracted_data) continue;
+    for (const [index, room] of drawing.extracted_data.rooms.entries()) {
+      if (normalizeRoomNameForMatch(room.name) !== key) continue;
+      if (!room.unresolved || !room.reason?.includes(WALL_ORIENTATION_UNRESOLVED_REASON)) continue;
+      if (!resolvedKeys.has(resolutionKey("drawings", drawing.id, `room[${index}]`))) {
+        return true;
+      }
+    }
+  }
+  return false;
 }

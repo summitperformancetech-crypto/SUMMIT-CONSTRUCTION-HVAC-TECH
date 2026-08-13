@@ -33,6 +33,43 @@ export type ExtractedEnvelope = {
   // or drop ceiling is exactly the kind of per-room exception a human is
   // likely to have hand-corrected.
   ceiling_height_ft: ExtractedField<number>;
+  // Phase 2. Applied - wired to the existing projects.attic_construction_type
+  // column (same enum this app's manual entry form already uses), which
+  // feeds computeManualJ's attic-loss branch directly. Was previously
+  // manual-only despite the extraction pipeline already inferring vented
+  // vs. sealed for other purposes (duct-location defaults) - this closes
+  // that gap. Inferred from ridge/soffit vent callouts (vented) or
+  // spray-foam-at-roof-deck callouts (sealed) on an elevation or wall-
+  // section sheet, not assumed.
+  attic_construction_type: ExtractedField<"vented_unconditioned" | "sealed_conditioned">;
+  // Phase 2, items 1 (wall assembly). Reference-only for now, same status
+  // window_type/window_count already have - extracted and shown in the
+  // review panel, but not copied to any project field or consumed by
+  // computeManualJ. The whole-wall U-factor calc these four fields would
+  // eventually feed (accounting for framing factor, not just nominal batt
+  // R-value) doesn't exist yet; deliberately not guessing its shape by
+  // adding project columns ahead of that design. For the PRIMARY exterior
+  // wall type specifically - a house with mixed 2x4/2x6 framing still has
+  // one dominant exterior assembly, which is what Manual J's envelope
+  // model actually needs.
+  exterior_wall_stud_size: ExtractedField<string>;
+  exterior_wall_stud_spacing_in: ExtractedField<number>;
+  exterior_wall_sheathing: ExtractedField<string>;
+  exterior_wall_exterior_finish: ExtractedField<string>;
+  // Phase 2, item 10. Cross-check only, never applied anywhere - lets a
+  // human confirm the per-room duct_insulation_r_value fallback default
+  // (see DUCT_FALLBACK_R_VALUE below) against what the mechanical plan's
+  // own HVAC notes actually specify for this project, rather than trusting
+  // the fallback blind. Feeds Manual D indirectly, as a sanity check, not
+  // a direct input.
+  duct_insulation_spec: ExtractedField<string>;
+  duct_minimum_diameter_in: ExtractedField<number>;
+  // Phase 2, item 11. Cross-check only - confirms (or contradicts) the
+  // attic-routing assumption baked into DUCT_FALLBACK_LOCATION below.
+  // A short description (e.g. "attic-routed"), not a structured location
+  // per unit - the mechanical plan rarely gives more than that for
+  // Manual J/D purposes.
+  hvac_equipment_location: ExtractedField<string>;
 };
 
 export type ExtractedRoom = {
@@ -83,6 +120,24 @@ export type ExtractedRoom = {
   duct_insulation_r_value: ExtractedField<number>;
   duct_source: "ai_extracted" | "default" | null;
   duct_confidence: number | null;
+  // Phase 2, item 3. Overrides ExtractedEnvelope.ceiling_height_ft's
+  // building-wide default for THIS specific named room - only filled when
+  // a cross-section, elevation, or the floor plan itself ties an explicit
+  // height to this room that differs from the general figure (e.g.
+  // "Bonus Room 9' ceiling" vs. a 10' main-floor default). Feeds
+  // computeManualJ's per-room wall-area and volume calc directly, same
+  // consumer as the building-wide default - see applyExtractedData in
+  // manual-j-workflow.tsx, which will need to prefer this over the
+  // envelope default when both exist. For a vaulted/sloped ceiling, this
+  // is a plate-height approximation, not a true average - use the room's
+  // own unresolved/reason (not a separate mechanism) to flag that, same
+  // as any other AI estimate pending human confirmation.
+  ceiling_height_ft: number | null;
+  // Phase 2 standing requirement (where a fact came from). Which sheet
+  // this room's data was actually read from - useful when a project has
+  // multiple floor-plan sheets (Kinsela has two: A1.1 main floor, A1.2
+  // bonus room/second level) and a room name alone doesn't disambiguate.
+  source_sheet: string | null;
 };
 
 export type ExtractedOrientation = {
@@ -90,10 +145,138 @@ export type ExtractedOrientation = {
   description: string | null;
 };
 
+// Phase 2 standing requirement (where a fact came from, and a check on
+// whether it should be trusted at face value). Every sheet the model
+// actually reviewed, by its title-block name/number - not just a source
+// tag for individual facts (ExtractedField.source_sheet /
+// ExtractedRoom.source_sheet reference these names), but also a built-in
+// completeness signal: if this list doesn't match what a drawing set's
+// own index/cover-sheet says it should contain, that's visible, not
+// silent. hasReferenceOnlyDisclaimer flags sheets carrying language like
+// "for reference only... may not correspond with the other sheets" (seen
+// verbatim on Kinsela's REF-1/REF-2) - a fact sourced ONLY from such a
+// sheet, with no corroboration elsewhere, must not be presented at face
+// value (see the conflict-handling rule in EXTRACTION_PROMPT).
+export type ExtractedSheet = {
+  name: string;
+  hasReferenceOnlyDisclaimer: boolean;
+};
+
+// Phase 2, item 6. Transcribed verbatim from the drawing's own window
+// schedule table - reference-only, not applied anywhere. This is
+// deliberately NOT yet correlated to which room uses which mark (that
+// would need mark callouts on the floor plan itself, unverified as of
+// this phase) - capturing the schedule table is step one; per-room/
+// per-direction window area via mark correlation is a distinct, larger
+// follow-up, not built here.
+export type ExtractedWindowScheduleEntry = {
+  mark: string;
+  size: string | null;
+  description: string | null;
+  quantity: number | null;
+};
+
+// Phase 2, item 7. Same shape and same reference-only status as the
+// window schedule, kept as a separate type/array rather than a shared
+// one - it's a semantically distinct schedule on the drawing (door marks
+// and window marks aren't in the same namespace), and secondary in
+// Manual J/D/S relevance (door type mainly affects infiltration/U-factor
+// differentiation, e.g. an exterior glass-iron door vs. an interior
+// masonite door - not currently consumed either).
+export type ExtractedDoorScheduleEntry = {
+  mark: string;
+  size: string | null;
+  description: string | null;
+  quantity: number | null;
+};
+
+// Phase 2, item 8. Cross-check only, for Manual S: the original
+// designer's own equipment assumption (tonnage/BTU per labeled unit),
+// compared against whatever this app's own equipment-selection workflow
+// computes - a large mismatch is a signal to double check the load calc,
+// not something this data overrides. Kept as a SEPARATE array from
+// ExtractedHvacZoningEntry below rather than merged, even though both
+// come from the same mechanical-plan table and share the same unit
+// `label` - equipment is reference-only forever (an original designer's
+// tonnage guess isn't a fact to apply), while zoning (which sqft a unit
+// serves) is a real candidate for future consumption informing how this
+// app's own zones get grouped. Keeping the schema boundary in place now
+// means that distinction doesn't have to be carved out of a merged
+// structure later.
+export type ExtractedHvacEquipmentEntry = {
+  label: string;
+  equipment_type: string | null;
+  tonnage: number | null;
+  cooling_btu: number | null;
+  heating_type: string | null;
+};
+
+// Phase 2, item 9. Direct input (not yet consumed) - the original
+// designer's own HVAC zone split (e.g. "Unit A serves 2005 sqft"). Not
+// wired into this app's own zones concept in this phase - that's a
+// behavioral decision (auto-creating/suggesting zones) distinct from
+// capturing the fact, and not built here without being asked for
+// explicitly.
+export type ExtractedHvacZoningEntry = {
+  label: string;
+  serves_sqft: number | null;
+};
+
+// Phase 2, item 13. Cross-check only - lets a human compare this against
+// the sum of extracted room floor areas without doing the arithmetic by
+// hand. Transcribed from the drawing's own printed summary table (Main
+// Living, porches, garage, etc.) when present.
+export type ExtractedSquareFootageEntry = {
+  label: string;
+  sqft: number | null;
+};
+
+// Phase 2, item 12 (water heater) - narrowed from a flat cross-check to a
+// conditional risk flag per direct instruction, generalized to work on
+// any project nationwide, not tuned to what happens to be negligible on
+// Kinsela specifically. See flagWaterHeaterLoadRisk below for the actual
+// rule - this type only captures the raw, unjudged facts.
+export type ExtractedWaterHeaterType =
+  | "electric"
+  | "gas-tankless"
+  | "gas-tank"
+  | "atmospheric-vent"
+  | "power-vent"
+  | "other";
+
+export type ExtractedWaterHeaterLocation =
+  | "conditioned-space"
+  | "attic"
+  | "garage"
+  | "outside"
+  | "other";
+
+export type ExtractedWaterHeater = {
+  type: ExtractedWaterHeaterType | null;
+  fuel: string | null;
+  location: ExtractedWaterHeaterLocation | null;
+  unresolved: boolean;
+  reason: string | null;
+};
+
 export type DrawingExtraction = {
   orientation: ExtractedOrientation;
   building_envelope: ExtractedEnvelope;
   rooms: ExtractedRoom[];
+  // Phase 2 new top-level arrays. Optional, unlike rooms/building_envelope
+  // above (which every extraction, old or new, already has) - extractions
+  // stored before this phase genuinely don't have these keys at all, not
+  // even as empty arrays, so treating them as always-present would be a
+  // type-level lie about historical data. Any code reading these on a
+  // DrawingExtraction that might be old (i.e. anything other than a
+  // freshly-parsed API response) must default with `?? []`.
+  sheets?: ExtractedSheet[];
+  window_schedule?: ExtractedWindowScheduleEntry[];
+  door_schedule?: ExtractedDoorScheduleEntry[];
+  hvac_equipment?: ExtractedHvacEquipmentEntry[];
+  hvac_zoning?: ExtractedHvacZoningEntry[];
+  square_footage_summary?: ExtractedSquareFootageEntry[];
+  water_heaters?: ExtractedWaterHeater[];
 };
 
 export type DrawingExtractionStatus = "pending" | "completed" | "failed";
@@ -252,6 +435,20 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
     }
   });
 
+  // `?? []` here (unlike rooms/building_envelope above, which every
+  // extraction already has): this function is only ever called on a
+  // freshly-parsed API response in practice (see route.ts), which will
+  // always have this key once EXTRACTION_PROMPT asks for it - but the
+  // type is optional for historical data's sake (see DrawingExtraction),
+  // and this function shouldn't silently start assuming a caller only
+  // ever hands it fresh data.
+  (extraction.water_heaters ?? []).forEach((wh, index) => {
+    if (wh.unresolved) {
+      const label = `water_heaters[${index}]:${wh.type ?? "unspecified type"}`;
+      items.push(wh.reason ? `${label} - ${wh.reason}` : label);
+    }
+  });
+
   return items;
 }
 
@@ -305,6 +502,42 @@ export function applyDuctFallbackDefaults(extraction: DrawingExtraction): Drawin
         duct_insulation_r_value: { value: DUCT_FALLBACK_R_VALUE, unresolved: true },
         duct_source: "default" as const,
         duct_confidence: null,
+      };
+    }),
+  };
+}
+
+// Phase 2, item 12 (water heater). Deterministic, not left to the model's
+// judgment at generation time - same reasoning as
+// applyDuctFallbackDefaults above: a boolean over two categorical values
+// should never be a coin flip when code can get it right every time.
+//
+// Water heaters generally have zero/negligible Manual J impact - electric
+// units, sealed-combustion/power-vent gas units, and anything outside the
+// conditioned envelope don't meaningfully affect sensible/latent load.
+// The one combination with a real (if small) contribution is an
+// atmospheric-vent or standard-tank gas unit INSIDE conditioned space -
+// standby jacket heat loss and combustion moisture. This must generalize
+// across every project, not assume the negligible case by default the
+// way it would be tempting to after seeing it on Kinsela (both water
+// heaters there are gas-tankless, in the attic - outside this rule's
+// trigger condition entirely, which is the correct outcome for that
+// project, not a special case carved out for it).
+const WATER_HEATER_RISK_TYPES = new Set<ExtractedWaterHeaterType>(["gas-tank", "atmospheric-vent"]);
+
+export function flagWaterHeaterLoadRisk(extraction: DrawingExtraction): DrawingExtraction {
+  return {
+    ...extraction,
+    water_heaters: (extraction.water_heaters ?? []).map((wh) => {
+      const risky =
+        wh.type != null &&
+        WATER_HEATER_RISK_TYPES.has(wh.type) &&
+        wh.location === "conditioned-space";
+      if (!risky) return wh;
+      return {
+        ...wh,
+        unresolved: true,
+        reason: `${wh.type} water heater in conditioned space - potential minor internal sensible/latent gain from standby jacket loss and combustion moisture. Consider a small internal gain allowance.`,
       };
     }),
   };

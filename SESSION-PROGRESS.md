@@ -592,3 +592,30 @@ instruction, pending direction on the wall-length question above.
 - 2026-08-14 02:15 — `npx tsc --noEmit`: clean (no TS files touched yet,
   this checkpoint is pure SQL). Committing the migration file now, per
   instruction to report back before moving to schema.
+- 2026-08-14 02:20 — User said GO. Built the schema checkpoint (types +
+  pure logic only, `EXTRACTION_PROMPT` itself untouched - that's the next,
+  separate checkpoint): `lib/drawingExtraction.ts` gained
+  `attic_construction_type` + 7 JSONB-only envelope fields (wall assembly
+  x4, duct spec x2, hvac_equipment_location), `ceiling_height_ft` +
+  `source_sheet` on `ExtractedRoom`, and 7 new top-level types/arrays
+  (`sheets`, `window_schedule`, `door_schedule`, `hvac_equipment`,
+  `hvac_zoning` - kept separate per instruction, `square_footage_summary`,
+  `water_heaters`). New top-level arrays are optional (`?`) specifically
+  because old stored `extracted_data` genuinely lacks these keys - typing
+  them as always-present would be a type-level lie about historical data;
+  any future reader must default with `?? []`.
+- Added `flagWaterHeaterLoadRisk` (deterministic post-processing,
+  mirrors `applyDuctFallbackDefaults`'s existing pattern rather than
+  trusting the model to compute the risk condition itself at generation
+  time) and extended `collectUnresolvedItems` to walk `water_heaters[]`
+  the same way it already walks rooms.
+- Verified with 11 synthetic test cases (`npx tsx`, temp script, deleted
+  after): Kinsela's real case (gas-tankless, attic) correctly does NOT
+  flag; atmospheric-vent/gas-tank in conditioned space correctly DOES;
+  electric and power-vent in conditioned space correctly do NOT (sealed
+  combustion / no jacket loss concern the same way); gas-tank outside
+  conditioned space does NOT; a missing `water_heaters` key (simulating
+  pre-Phase-2 stored data) doesn't crash `collectUnresolvedItems`; a mixed
+  array flags only the actually-risky entry. All 11 passed.
+- `npx tsc --noEmit`: clean. Committing now, per instruction to report
+  back before moving to the prompt rewrite.

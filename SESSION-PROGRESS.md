@@ -158,19 +158,176 @@ regress duct defaults or calculation snapshotting.
   (schema/prompt, `ExtractableEnvelopeFields`, `RoomRow`, `ROOM_COLUMNS`,
   INSERT/UPDATE payloads, `max_tokens` fix).
 
+## Status: investigating wall-length swap (per user instruction, no wall writes yet)
+
+- 2026-08-13 23:20 — User wants the swap traced before any wall data is
+  touched: is it an orientation-transform bug (`lib/orientation.ts`), which
+  would mean the 19/25 "working" rooms need re-validation too, or something
+  else? Explicitly told not to manually re-check the drawing yet.
+- 2026-08-13 23:25 — **Run #1's raw extraction JSON is unrecoverable.**
+  What's in `drawings.extracted_data` right now is run #3 (the fresh one
+  from this session, still live in the DB, never reverted). Before that,
+  it held run #2 (backed up at session start as `.scratch-drawing-backup.json`,
+  since deleted in cleanup) - run #2 had **zero** wall data at all
+  (`orientation.detected: false`, and even the front/rear/left/right
+  fallback came back null for every room), so it's not useful for this
+  comparison either way. Whatever extraction actually produced the wall
+  data currently sitting in the `rooms` table (call it run #1) was
+  overwritten by run #2 before this session started, and nothing in this
+  session captured it. The only surviving record of run #1 is what's
+  already applied to the `rooms` table itself - used that as the "DB side"
+  of the comparison below, since it's the best available proxy.
+- 2026-08-13 23:30 — Compared `rooms` table (run #1, applied) vs. run #3
+  (live in `drawings.extracted_data`, never applied) for all 9 affected
+  rooms, and cross-checked `lib/orientation.ts`'s transform math against
+  the stored compass columns. Full detail in the chat report, summary:
+  - **`lib/orientation.ts` is NOT the bug.** `building_front_faces = "W"`.
+    Per `resolveOrientation`'s math: front->W, rear->E, left->N, right->S.
+    Checked this formula against all 9 rooms' stored
+    `wall_north/south/east/west_len_ft` vs. their stored
+    `wall_front/rear/left/right_len_ft` - **matches exactly, every room,
+    every field.** The transform is deterministic and was applied
+    correctly and consistently to whatever front/rear/left/right existed
+    at the time. It has never been re-run since (would need the "Save &
+    Auto-Fill Walls" button clicked again), so it can't have introduced
+    drift on its own, and there is no code path where it would ever
+    swap the front/rear pair with the left/right pair - it maps each of
+    the four independently to a compass letter, never mixes the two axes.
+  - **6 of 9 rooms (Kitchen, Foyer, Home Office, Bedroom 2, Hidden Pantry,
+    Bath 3) show a perfect, systematic axis swap** between run #1 and run
+    #3: `new.front == old.left`, `new.rear == old.right`, `new.left ==
+    old.front`, `new.right == old.rear`, on every one of the 6. That's not
+    random noise - it's the same 90-degree reassignment, in the same
+    direction, on every affected room. Strong signal that the model picked
+    a *different* wall as "the front entry" in run #3 than it did in
+    run #1 - a wall 90 degrees rotated from its original choice - not that
+    any one room was misread independently.
+  - **3 of 9 (Mud Room, 3-Car Garage, Rear Porch) do NOT fit the clean-swap
+    pattern** - value drift (3-Car Garage's left/right: 22.17 vs. 25.67,
+    not a swap) or differing null patterns (Mud Room, Rear Porch). Looks
+    like ordinary independent-estimation variance, unrelated to the swap.
+  - **Root cause, best available conclusion without opening the drawing
+    myself:** this PDF has `orientation.detected: false` in both runs -
+    no true north arrow, only relative "Front/Rear/Left/Right Elevation"
+    labels (confirmed identical `orientation.description` text in both
+    runs). `EXTRACTION_PROMPT` STEP 2(b) tells the model to infer "front"
+    from "the main entry door, a 'FRONT ELEVATION' label, or the obviously
+    front-facing facade" - when none of those is unambiguous, two
+    independent API calls on the identical PDF are evidently free to land
+    on different (90-degree-rotated) answers. This is model-level
+    extraction non-determinism given an ambiguous source drawing, not a
+    bug in this codebase's transform or apply logic.
+  - **Consequence for the 19/25 "working" rooms:** since the transform
+    itself is verified correct and deterministic, they do NOT need
+    re-validation on the transform's account - whatever front/rear/left/
+    right they were built from, the compass conversion was done right.
+    They (and run #1 generally) remain exposed to the same underlying
+    uncertainty this comparison surfaced, though: nothing here proves run
+    #1's original "front" choice was the *correct* one either, only that
+    it's internally consistent with itself. Resolving which run (if
+    either) has the right front-entry identification needs an actual look
+    at the drawing (front door, elevation labels) - not done yet, per
+    instruction.
+- Not writing any wall data. Not touching the 8 (or any) rooms' wall_front/
+  rear/left/right/north/south/east/west values. Reporting this back before
+  any further action.
+
+## Status: tightening the extraction prompt (per user direction, still no wall writes)
+
+- 2026-08-13 23:40 — User's direction: don't guess which run is correct.
+  Instead, tighten `EXTRACTION_PROMPT` so the model stops presenting one
+  front-entry interpretation confidently, and flag all 25 rooms as
+  unresolved for wall orientation specifically, surfaced through the
+  *existing* review UI (accept/override), not a new one.
+- 2026-08-13 23:42 — Checked the existing review UI
+  (`components/drawings-section.tsx` ReviewPanel) before building anything
+  new: **the mechanism the user is asking for already exists.** Every room
+  with `room.unresolved === true` already renders a `FieldResolutionBadge`
+  (`fieldName: room[${index}]`, `aiExtractedValue: room.reason`) with full
+  Accept/Override support, writing to `field_resolutions` exactly like
+  duct fields do. Every no-orientation room already has `unresolved: true`
+  - so the gap isn't a missing UI, it's that (a) the prompt told the model
+    to be "confident" about front/rear/left/right despite marking it
+    unresolved, which is internally contradictory, and (b) the `reason`
+    text was a generic "no orientation marker" note, not specific enough
+    to communicate the actual 90-degree-swap risk this session just found.
+  No new component or resolution plumbing needed - just fixing what the
+  prompt tells the model to say.
+- 2026-08-13 23:45 — Rewrote `EXTRACTION_PROMPT` STEP 2(b) in
+  `lib/drawingExtraction.ts`:
+  - Removed the "estimate these four fields the same confident way..."
+    line - that was directly telling the model to project false confidence
+    about the one thing (which wall is "front") that a label alone can't
+    actually establish.
+  - Added an explicit statement that the four *lengths* are ordinary
+    floor-plan geometry (fine to read confidently), but the front-entry
+    *identification* is a guess whenever there's no true-north marker -
+    a "FRONT ELEVATION" label only tells you what the drawing's author
+    called the front, not a confirmable fact.
+  - Every such room must now include the verbatim sentence
+    "front/rear/left/right wall assignment is a guess pending confirmation
+    of which elevation is the true front entry - could be swapped with
+    left/right" in `reason` (appended after a " · " if the room already
+    has an unrelated reason, not replacing it) - specific enough to act on,
+    consistent with the existing free-text `reason` convention (no new
+    field, no schema change).
+  - `npx tsc --noEmit`: clean (string-only prompt change).
+- 2026-08-13 23:50 — Re-ran a real extraction against the actual Kinsela
+  PDF with the tightened prompt (`stop_reason: end_turn`, `output_tokens:
+  11664`, well under the 16000 cap). Result (this run found 28 rooms -
+  room-count/naming variance between runs continues to be a known,
+  separate characteristic of this pipeline, not something this checkpoint
+  touches):
+  - **28/28 rooms carry the new caveat sentence and `unresolved: true`** -
+    every room whose wall layout was estimated under the no-orientation
+    branch. 0 rooms have front/rear/left/right data without the caveat.
+  - Append behavior confirmed working: e.g. Great Room's reason combines
+    an unrelated caveat ("Vaulted ceiling height varies...") with the new
+    swap caveat via " · ", neither one overwrote the other.
+  - Wrote this extraction to `drawings.extracted_data` (metadata/audit
+    data, not `rooms` table wall columns - consistent with "don't write
+    wall data"). Independently re-read it back from the DB afterward
+    (separate query, not trusting the write call's own response):
+    confirms 28/28 rooms flagged live, and all 28 show up in
+    `unresolved_items` too (via the existing generic
+    `collectUnresolvedItems` room-reason handling - no code change needed
+    there).
+  - `building_envelope` fields (ceiling_height_ft=10, wall/ceiling
+    R-values, foundation_type) still extract correctly - this change
+    didn't regress anything from the previous checkpoint.
+  - **This means every one of Kinsela's rooms now renders the existing
+    `FieldResolutionBadge` (Accept/Override, same as duct fields) with
+    this specific, actionable reason** the next time the drawing's review
+    panel is opened in the app - satisfies "flag... all 25 [28], surfaced
+    in the existing UNRESOLVED field-review UI" without any UI/schema
+    changes, since that mechanism already existed and just needed the
+    prompt to stop contradicting itself.
+  - Still have NOT written anything to the `rooms` table. Still have NOT
+    decided which run's front-entry choice (if either) is correct - that
+    remains open, pending the user's own look at the drawing.
+- Not proceeding further (no hard gate added to
+  `BuildingOrientationSection`'s "Save & Auto-Fill Walls" button - that
+  would be a separate, not-yet-requested code change to a
+  currently-working component; flagging it as an open question rather
+  than guessing scope).
+
 ## Status: PAUSED — reporting back per instruction, not proceeding further
 
-Two things need your decision before I continue:
-
-1. **Wall-length overwrite risk (the flagged item).** Not resolved, not
-   executed. The 8 affected rooms' existing wall_front/rear/left/right
-   values are untouched in the DB right now.
-2. **Window area has no real non-null data to verify against** on this
-   drawing (no window schedule was legible to the model). The write/read
-   code path is implemented, type-checks, and structurally mirrors the
-   now-verified ceiling-height and original wall-length precedents, but
-   has not been proven against real non-null data end-to-end the way
-   ceiling height has.
+1. **Wall-length swap: root-caused to AI extraction non-determinism on an
+   ambiguous drawing, not a code bug.** `lib/orientation.ts`'s transform
+   verified correct across all 9 rooms - no blanket re-validation needed
+   on that account. Still unresolved: which run's front-entry
+   identification (if either) is actually correct - needs a look at the
+   drawing itself, not done yet.
+2. **Prompt tightened and verified live**: all rooms extracted under the
+   no-orientation branch now carry a specific, actionable reason and
+   surface via the existing Accept/Override UI - no new UI/schema needed.
+   `BuildingOrientationSection` itself still runs unconditionally (not
+   gated on these resolutions) - flagged as an open question, not done.
+3. **Window area has no real non-null data to verify against** on this
+   drawing (no window schedule was legible to the model). Per user: accept
+   the code path as verified-by-construction, revisit naturally on a
+   drawing with real window data. No further action planned here.
 
 Not touching floor-area UPDATE-branch gap or provenance cleanup yet, per
-instruction, pending your read on the above.
+instruction, pending direction on the wall-length question above.

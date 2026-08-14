@@ -1,5 +1,30 @@
 import { DUCT_LOCATION_VALUES, normalizeDuctLocation } from "./constants/ductLocations";
 
+// Phase 3, item 3 (uncertainty classification). Richer than the single
+// "unresolved" boolean this sits alongside - "unresolved" answers "does
+// a human need to act on this," "certainty" answers "why, in what way."
+// Scoped deliberately to ExtractedField<T> only (all 15
+// building_envelope fields + the 2 per-room duct fields) - not extended
+// to ExtractedRoom's own unresolved/reason (which bundles several
+// different facts under one flag - a single certainty value there would
+// be ambiguous about which fact it describes) or ExtractedWaterHeater
+// (its own unresolved/reason, not ExtractedField<T>-typed). A natural
+// follow-up once this proves useful on the fields where it applies
+// cleanly, not forced in everywhere at once.
+//
+// Expected pairing (stated explicitly in EXTRACTION_PROMPT so this isn't
+// two independent judgment calls that can drift out of sync):
+// "documented"/"calculated" typically pair with unresolved: false;
+// "inferred"/"assumed"/"unverified"/"conflict" always pair with
+// unresolved: true.
+export type ExtractedFieldCertainty =
+  | "documented"
+  | "calculated"
+  | "inferred"
+  | "assumed"
+  | "unverified"
+  | "conflict";
+
 export type ExtractedField<T> = {
   value: T | null;
   unresolved: boolean;
@@ -9,10 +34,16 @@ export type ExtractedField<T> = {
   // time. Exists for the cases that do need one: e.g. a value disputed
   // across multiple sheets, where "unresolved: true" alone gives a human
   // reviewer no way to tell WHY without independently re-deriving what I
-  // already found. Not populated by the extraction prompt today - written
-  // directly when a specific conflict is diagnosed (see Kinsela's
-  // ceiling_insulation_r_value, 2026-08-14).
+  // already found. Populated directly by the extraction prompt as of
+  // Phase 3 (the source authority and dimensional reconciliation
+  // hierarchies both require it when applied) - also still written
+  // directly by code when a specific conflict is diagnosed and corrected
+  // post-hoc (see flagCeilingInsulationRValueConflicts).
   reason?: string | null;
+  // See ExtractedFieldCertainty above. Optional for the same reason
+  // source_sheet is - historical extractions from before this phase
+  // genuinely don't have it.
+  certainty?: ExtractedFieldCertainty | null;
 };
 
 export type ExtractedEnvelope = {
@@ -458,21 +489,21 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null, "revisionDate": string | null, "revisionNote": string | null }
   ],
   "building_envelope": {
-    "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "ceiling_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "floor_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "window_type": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "window_count": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "foundation_type": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "ceiling_height_ft": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "attic_construction_type": { "value": "vented_unconditioned" | "sealed_conditioned" | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "exterior_wall_stud_size": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "exterior_wall_stud_spacing_in": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "exterior_wall_sheathing": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "exterior_wall_exterior_finish": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "duct_insulation_spec": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "duct_minimum_diameter_in": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
-    "hvac_equipment_location": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null }
+    "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "ceiling_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "floor_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "window_type": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "window_count": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "foundation_type": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "ceiling_height_ft": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "attic_construction_type": { "value": "vented_unconditioned" | "sealed_conditioned" | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "exterior_wall_stud_size": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "exterior_wall_stud_spacing_in": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "exterior_wall_sheathing": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "exterior_wall_exterior_finish": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "duct_insulation_spec": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "duct_minimum_diameter_in": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+    "hvac_equipment_location": { "value": string | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null }
   },
   "rooms": [
     {
@@ -502,8 +533,8 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "source_sheet": string | null,
       "unresolved": boolean,
       "reason": string | null,
-      "duct_location": { "value": string | null, "unresolved": boolean },
-      "duct_insulation_r_value": { "value": number | null, "unresolved": boolean },
+      "duct_location": { "value": string | null, "unresolved": boolean, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
+      "duct_insulation_r_value": { "value": number | null, "unresolved": boolean, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
       "duct_confidence": number | null
     }
   ],
@@ -579,6 +610,14 @@ Other rules:
   - sealed_construction_document vs. unknown (same hierarchy, one tier up): if the ONLY disagreement on a fact is between a sheet marked "sealed_construction_document" and a sheet marked "unknown", the sealed sheet's value may be used - it's the more authoritative source by explicit evidence (a seal or issuance language), not a guess. Still record the "unknown" sheet's differing value in "reason". This case will be rare in practice, since most sheets land on "unknown" - do not force a sheet into "sealed_construction_document" just to make this case apply.
   - Peer conflict - two or more sheets AT THE SAME TIER (both sealed_construction_document, or both unknown) disagree with each other: this is the case that must NOT be silently resolved, because there is no principled way to prefer one equally-authoritative source over another. Leave "value" null and set "unresolved": true, with "reason" stating BOTH (or all) values found and which sheet each came from. The goal is for a human, ideally someone who can field-verify on site, to make the final call - not for the system to guess and hide the disagreement behind one confident-looking number.
 - Dimensional reconciliation hierarchy (orthogonal to the source authority hierarchy above - that one is about WHICH SHEET a value is on, this one is about WHAT KIND of dimension it is, independent of sheet). When two sources give a different number for the same measurement, prefer in this order: (1) a written dimension - an explicit number with its own dimension/extension lines directly labeling that exact span; (2) a detail dimension - a written dimension found specifically within a detail or section callout view (see "Reading discipline" above - this is exactly the kind of value following a detail marker gets you); (3) a schedule dimension - a value from a schedule table (window schedule, door schedule, square footage summary); (4) a general plan dimension - a written overall/summary dimension on a general overview sheet, less precise than a detail but still an explicit printed number; (5) a scaled/geometric estimate - reading a room's approximate proportions directly off the drawing at its stated scale, the last resort, used only when nothing higher on this list exists for that measurement. This isn't a new field to fill - it's the same kind of estimate STEP 3 already asks for when a wall's length isn't explicitly dimensioned; this hierarchy just tells you which candidate wins when more than one is available for the same measurement. When you resolve a conflict this way, state in "reason" which tier won and why (e.g. "written dimension 12'-6\" on the floor plan preferred over the general summary total, which implied ~13'"), same discipline as the source authority hierarchy's reason requirement. The two hierarchies can both apply to the same fact - when they point in different directions (e.g. a higher-tier dimension sits on a lower-authority sheet), treat it as a genuine conflict and lean toward leaving it unresolved with both readings reported, rather than picking one hierarchy to arbitrarily break the tie.
+- Certainty classification ("certainty", on every building_envelope field and each room's "duct_location"/"duct_insulation_r_value" - richer than "unresolved" alone, which only says whether a human needs to act, not why). Set it to exactly one of:
+  - "documented": an explicit, clearly-printed number or callout directly labels this value (e.g. "R-38 BLOWN INSULATION" printed on the drawing) - a written or detail dimension per the hierarchy above, or an unambiguous callout. Typically pairs with "unresolved": false.
+  - "calculated": derived via arithmetic from other documented values on the drawing (e.g. floor area computed from two documented room dimensions). Typically pairs with "unresolved": false, unless one of the inputs it depends on is itself uncertain.
+  - "inferred": determined from an indirect cue rather than an explicit label (e.g. attic_construction_type read from a vent symbol rather than an explicit "vented" callout - see STEP 7). Always pairs with "unresolved": true.
+  - "assumed": no usable evidence exists in the drawing at all for this value. The model itself should rarely if ever set this - "don't guess" already means leaving a field null instead of assuming a code-minimum or typical value (see "Other rules" above on insulation R-values). This value exists primarily for values a downstream process fills with a construction-based default when the drawing shows nothing - always pairs with "unresolved": true.
+  - "unverified": you found a plausible value but have real doubt about it (illegible text, an ambiguous symbol, single-sourced with nothing to cross-check against) - not a clean conflict between two clear sources, just genuine uncertainty about the one source you have. Always pairs with "unresolved": true.
+  - "conflict": two or more sources disagree and could not be reconciled by the source authority or dimensional reconciliation hierarchies above (the peer-conflict case in either hierarchy). Always pairs with "unresolved": true, and "value" is typically null.
+  Leave "certainty" null only if you are not confident classifying it into one of these six - do not force a fit.
 - window_count and door_count are simple counts, not areas.
 - Set "unresolved": true on the building envelope object, or on any individual room, whenever the drawing is ambiguous, illegible, or you are guessing rather than reading a clearly labeled figure. Whenever you set "unresolved": true on a room, always fill "reason" with a short, specific explanation a field technician can act on (e.g. "no orientation marker - exposure cannot be determined", "room label illegible", "floor area not dimensioned"). Leave "reason" null only when "unresolved" is false.
 - Do not invent room names if none are labeled — use a generic label like "Room 1" and mark it unresolved with an appropriate reason.
@@ -697,8 +736,13 @@ export function applyDuctFallbackDefaults(extraction: DrawingExtraction): Drawin
       }
       return {
         ...room,
-        duct_location: { value: DUCT_FALLBACK_LOCATION, unresolved: true },
-        duct_insulation_r_value: { value: DUCT_FALLBACK_R_VALUE, unresolved: true },
+        // certainty: "assumed" here is exactly the case that value exists
+        // for (see EXTRACTION_PROMPT's certainty classification bullet) -
+        // no drawing evidence at all, filled from a construction-based
+        // default. The model itself is instructed never to set "assumed"
+        // on its own output; this is where it actually gets applied.
+        duct_location: { value: DUCT_FALLBACK_LOCATION, unresolved: true, certainty: "assumed" },
+        duct_insulation_r_value: { value: DUCT_FALLBACK_R_VALUE, unresolved: true, certainty: "assumed" },
         duct_source: "default" as const,
         duct_confidence: null,
       };

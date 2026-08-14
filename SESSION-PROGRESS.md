@@ -952,3 +952,40 @@ instruction, pending direction on the wall-length question above.
   `npx tsc --noEmit` clean throughout.
   Item 3 (uncertainty classification) is now unblocked by the token
   budget - proceeding next.
+- 2026-08-14 20:35 — Phase 3, item 3 (uncertainty classification)
+  implemented - the last of the 5 agreed items. New
+  `ExtractedFieldCertainty` ("documented" | "calculated" | "inferred" |
+  "assumed" | "unverified" | "conflict") added to `ExtractedField<T>` -
+  scoped deliberately to that shared type only (all 15
+  building_envelope fields + the 2 per-room duct fields), not extended
+  to ExtractedRoom's own unresolved/reason or ExtractedWaterHeater (both
+  bundle several facts under one flag - a single certainty value there
+  would be ambiguous). New "Other rules" bullet defines all 6 values
+  with the expected unresolved-pairing stated explicitly so it isn't two
+  independent judgment calls that can drift apart.
+  `applyDuctFallbackDefaults` now sets `certainty: "assumed"` on the two
+  duct fields it fills with a construction-based default - a direct,
+  concrete formalization of an already-existing mechanism, not a
+  hypothetical use case.
+  Verified: `npx tsc --noEmit` clean; 4/4 new unit tests (fallback branch
+  gets "assumed", AI-extracted branch preserves the model's own
+  certainty). Real Kinsela extraction via the new streaming path: 223.6s,
+  stop_reason: end_turn, 18654/32000 output tokens - comfortably clear of
+  truncation, confirming the streaming decision was both necessary and
+  sufficient for this item specifically. Zero certainty/unresolved
+  pairing violations across all 15 envelope fields. Concrete, correct
+  mappings observed: ceiling_insulation_r_value -> "conflict" (the known
+  R-value peer-conflict case), attic_construction_type -> "inferred"
+  (matches STEP 7's existing inference logic exactly).
+  One honest, minor nuance, not fixed this round: a room's
+  duct_insulation_r_value came back `value: null, certainty: "assumed"`
+  - functionally harmless (value correctly stayed null, unresolved
+  stayed true), but "assumed" was meant to describe a filled-in value
+  with no basis, not an absence correctly left null. The prompt didn't
+  explicitly cover this case ("leave certainty null only if not
+  confident classifying" doesn't quite address "nothing found, nothing
+  to classify"). Flagged rather than silently reverified into a clean
+  result - a candidate for a small follow-up tightening if it recurs,
+  not urgent enough to block this checkpoint.
+  This completes all 5 items from the originally agreed scoped plan
+  (2+5, 4, 1, 3), plus the streaming migration that item 3 required.

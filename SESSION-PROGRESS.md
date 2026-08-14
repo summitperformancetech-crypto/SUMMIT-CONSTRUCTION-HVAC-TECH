@@ -781,3 +781,46 @@ instruction, pending direction on the wall-length question above.
   either way) rather than build the text-layer path now. Committing next
   with this outcome documented in code comments, not silently as if
   fully solved.
+- 2026-08-14 17:10 — Started Apply-to-Form wiring, including the
+  drawing_extraction_history insert. Checked the live DB schema directly
+  (not migrations, which can drift) for every Phase 2 field: confirmed
+  `projects`/`rooms` have NO target column for wall assembly, duct spec/
+  diameter, hvac_equipment_location, sheets[], window_schedule,
+  door_schedule, hvac_equipment, hvac_zoning, square_footage_summary,
+  water_heaters, or room-level ceiling_height_ft_elevation_derived/
+  room_label_text/source_sheet - all correctly remain reference-only per
+  earlier decisions, no wiring needed. The one exception:
+  `projects.attic_construction_type` genuinely exists and `computeManualJ`
+  genuinely branches on it (line 429, sealed vs. vented get different
+  buffer factors) - a real calculation input, not a cross-check. Flagged
+  a real ambiguity before writing code: this column is NOT NULL with a
+  meaningful default ('vented_unconditioned'), so there's no "empty
+  string means never entered" signal the other fields' fill-logic
+  relies on. User decided: only auto-apply on a brand-new project (zero
+  rooms yet, same signal this function already uses to gate the room
+  bulk-insert branch) - never touches an established project's value.
+  Implemented in `manual-j-workflow.tsx` (ExtractableEnvelopeFields +
+  applyExtractedData, validated against ATTIC_CONSTRUCTION_OPTIONS
+  defensively) and `drawings-section.tsx` (resolvedEnvelopeString, same
+  human-override precedence as foundation_type/window_type).
+  drawing_extraction_history insert added to `route.ts` (shares one
+  extraction_completed_at timestamp between the drawings update and the
+  history insert; history-insert failure is logged, not surfaced as a
+  failed request - matches the already-accepted non-transactional
+  tradeoff). `npx tsc --noEmit`: clean throughout.
+  Verified live, not just compiled: (1) simulated the actual RLS policy
+  via direct Postgres role/JWT-claim substitution (not service-role,
+  which bypasses RLS and would prove nothing) - confirmed the real
+  project owner's insert succeeds and a stranger's is correctly
+  rejected; (2) ran the exact insert/update shapes route.ts uses against
+  the live schema (service role, smoke test only) - both succeeded,
+  test history row deleted after. Note: this smoke test did set
+  Kinsela's real `drawings.extraction_completed_at` to the test
+  timestamp (harmless - that column was null before this phase existed
+  at all, and any future real extraction overwrites it anyway).
+  Not independently verified through an actual browser click: the
+  attic_construction_type fill-only-on-brand-new-project gate lives
+  entirely in client-side React state (useImperativeHandle), and this
+  repo has no component-test harness - verified by code review + tsc +
+  consistency with the already-proven `rooms.length === 0` signal used
+  elsewhere in the same function, not by an actual UI walkthrough.

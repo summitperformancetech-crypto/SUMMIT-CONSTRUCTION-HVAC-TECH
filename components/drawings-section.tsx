@@ -248,6 +248,14 @@ export function DrawingsSection({
         "ceiling_height_ft",
         drawing.extracted_data.building_envelope.ceiling_height_ft.value,
       ),
+      // Phase 2. Same resolved-value-first pattern as foundation_type/
+      // window_type above - applyExtractedData is the one that actually
+      // gates whether this reaches the form at all (brand-new-project
+      // only, see ExtractableEnvelopeFields' comment).
+      attic_construction_type: resolvedEnvelopeString(
+        "attic_construction_type",
+        drawing.extracted_data.building_envelope.attic_construction_type.value,
+      ),
     };
 
     const resolvedRooms = drawing.extracted_data.rooms.map((room, index) =>

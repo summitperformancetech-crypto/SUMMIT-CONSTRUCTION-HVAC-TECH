@@ -70,7 +70,7 @@ export async function POST(request: Request) {
   // so the existing RLS policies (project ownership / org role) apply as-is.
   const { data: drawing, error: drawingError } = await supabase
     .from("drawings")
-    .select("id, file_name, file_path, file_type")
+    .select("id, project_id, file_name, file_path, file_type")
     .eq("id", drawingId)
     .maybeSingle();
 
@@ -301,6 +301,10 @@ export async function POST(request: Request) {
   }
 
   const unresolvedItems = collectUnresolvedItems(extraction);
+  // Shared between the drawings update and the history insert below so
+  // both rows agree on exactly when this extraction completed, rather
+  // than two independent now() calls a few milliseconds apart.
+  const extractionCompletedAt = new Date().toISOString();
 
   const { error: updateError } = await supabase
     .from("drawings")
@@ -312,11 +316,33 @@ export async function POST(request: Request) {
       // showing that stale error - extraction_error is only ever written
       // on failure above, so it has to be explicitly cleared here.
       extraction_error: null,
+      extraction_completed_at: extractionCompletedAt,
     })
     .eq("id", drawingId);
 
   if (updateError) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+
+  // Phase 2 data-integrity requirement (see migration
+  // 20260813172100_add_drawing_extraction_history.sql): the drawings row
+  // above is overwritten wholesale on every re-extraction, so without
+  // this a prior run's facts - and when they were captured - are gone
+  // with nothing to compare a fresh run against. A second, separate
+  // write from the one above, not a transaction (accepted tradeoff,
+  // consistent with this codebase's current reliability bar) - a failure
+  // here doesn't undo the successful extraction the user is waiting on,
+  // it only means this one run is missing from the audit trail, so it's
+  // logged rather than surfaced as a failed request.
+  const { error: historyError } = await supabase.from("drawing_extraction_history").insert({
+    drawing_id: drawingId,
+    project_id: drawing.project_id,
+    extracted_data: extraction,
+    unresolved_items: unresolvedItems,
+    extraction_completed_at: extractionCompletedAt,
+  });
+  if (historyError) {
+    console.error("drawing_extraction_history insert failed", drawingId, historyError.message);
   }
 
   return NextResponse.json({ extraction, unresolvedItems });

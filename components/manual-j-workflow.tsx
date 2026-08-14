@@ -118,6 +118,18 @@ export type ExtractableEnvelopeFields = {
   // below uses it as a per-room default (see ExtractedEnvelope.ceiling_height_ft
   // in lib/drawingExtraction.ts), not as part of envelopeForm/handleSaveEnvelope.
   ceiling_height_ft: number | null;
+  // Phase 2 Apply-to-Form wiring. Unlike the fields above, projects.
+  // attic_construction_type is NOT NULL with a real default
+  // ('vented_unconditioned') - there's no "empty string means never
+  // entered" signal to gate on the way the fields above do, and this
+  // value directly changes computeManualJ's attic-loss branch (a real
+  // calculation input, not a cross-check). applyExtractedData below only
+  // ever fills it on a brand-new project (zero rooms yet - the same
+  // "nothing entered so far" signal this function already uses to decide
+  // whether to bulk-insert rooms at all), never on an established
+  // project where the current value - even if it happens to equal the
+  // schema default - might be a human's real, confirmed choice.
+  attic_construction_type: string | null;
 };
 
 export type ApplyExtractedDataResult = {
@@ -616,6 +628,22 @@ export const ManualJWorkflow = forwardRef<
             appliedEnvelope = true;
           }
         });
+        // Brand-new-project gate only (see ExtractableEnvelopeFields'
+        // comment on attic_construction_type) - a project with any rooms
+        // already isn't "nothing entered so far," so its current
+        // attic_construction_type is left alone regardless of what it
+        // happens to be set to. Validated against the same two values
+        // ATTIC_CONSTRUCTION_OPTIONS offers in the dropdown, defensively
+        // - a garbled model value should never reach the form as if it
+        // were a real selectable option.
+        if (
+          rooms.length === 0 &&
+          extractedEnvelope.attic_construction_type != null &&
+          ATTIC_CONSTRUCTION_OPTIONS.some((o) => o.value === extractedEnvelope.attic_construction_type)
+        ) {
+          next.attic_construction_type = extractedEnvelope.attic_construction_type;
+          appliedEnvelope = true;
+        }
         if (appliedEnvelope) setEnvelopeSaved(false);
         return next;
       });

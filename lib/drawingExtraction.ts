@@ -148,6 +148,24 @@ export type ExtractedRoom = {
   // the model no longer has to correctly notice and narrate the
   // conflict itself, only supply both raw numbers when it has them.
   ceiling_height_ft_elevation_derived: number | null;
+  // Diagnosed 2026-08-14: even after ceiling_height_ft_elevation_derived
+  // above existed specifically to be diffed against ceiling_height_ft,
+  // the model still didn't reliably report the floor plan's OWN room
+  // label into ceiling_height_ft when it disagreed with the elevation -
+  // on Kinsela's garage, it reported 9 into BOTH fields, silently
+  // dropping the floor plan's real "10' CEILING" text. "Did the model
+  // correctly notice and structure this" is exactly the kind of judgment
+  // that's proven unreliable elsewhere in this file (see
+  // flagWindowScheduleForVerification). This field sidesteps that by
+  // asking for something far easier to get right: copy the room's
+  // printed label text verbatim, no interpretation required.
+  // extractCeilingHeightFromLabelText below then regexes it in code for
+  // an explicit "N' CEILING"-shaped pattern, independent of whatever the
+  // model decided to put in the structured ceiling_height_ft field -
+  // turning "did the model notice the conflict" into "does the code
+  // correctly parse text it can already see," the same reframing STEP 1's
+  // sheet inventory already applies to source-of-truth tracking.
+  room_label_text: string | null;
   // Phase 2 standing requirement (where a fact came from). Which sheet
   // this room's data was actually read from - useful when a project has
   // multiple floor-plan sheets (Kinsela has two: A1.1 main floor, A1.2
@@ -175,6 +193,19 @@ export type ExtractedOrientation = {
 export type ExtractedSheet = {
   name: string;
   hasReferenceOnlyDisclaimer: boolean;
+  // Diagnosed 2026-08-14 against ceiling_insulation_r_value: giving the
+  // model a sheets[]-vs-reason cross-check (verifyEnvelopeConflictDisclaimers
+  // below) still didn't catch the real conflict, because the model's own
+  // "reason" text simply never named the relevant peer sheet (A1.3) at
+  // all - a lookup against sheets[] can only re-verify a sheet the reason
+  // text actually mentions, not surface one it omitted. Same reframing as
+  // room_label_text/extractCeilingHeightFromLabelText above: instead of
+  // trusting the model's own narrative about which sheets disagree, ask
+  // for a plain, mechanical per-sheet transcription (does THIS sheet have
+  // a ceiling/attic/roof insulation R-value callout, and if so what does
+  // it literally say) and let code build the comparison from that raw
+  // data - see flagCeilingInsulationRValueConflicts below.
+  ceiling_insulation_callout_text: string | null;
 };
 
 // Phase 2, item 6. Transcribed verbatim from the drawing's own window
@@ -380,7 +411,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "description": string | null
   },
   "sheets": [
-    { "name": string, "hasReferenceOnlyDisclaimer": boolean }
+    { "name": string, "hasReferenceOnlyDisclaimer": boolean, "ceiling_insulation_callout_text": string | null }
   ],
   "building_envelope": {
     "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
@@ -423,6 +454,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "door_count": number | null,
       "ceiling_height_ft": number | null,
       "ceiling_height_ft_elevation_derived": number | null,
+      "room_label_text": string | null,
       "source_sheet": string | null,
       "unresolved": boolean,
       "reason": string | null,
@@ -451,7 +483,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
   ]
 }
 
-STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"), and "hasReferenceOnlyDisclaimer": true if that sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent) - false otherwise. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
+STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "hasReferenceOnlyDisclaimer": true if that sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent) - false otherwise; and "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
 
 STEP 2 — Orientation. Look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
 
@@ -464,6 +496,7 @@ STEP 3 — Room geometry, conditioned on Step 2:
   The four LENGTH values are ordinary floor-plan geometry — read them the same confident way you'd read wall_north_len_ft in the orientation-detected case. WHICH wall you call "front," however, is a genuine guess whenever there is no true-north marker (that's exactly why this branch exists) — a "FRONT ELEVATION" label or an obvious main entry only tells you which facade the drawing's own author called the front, not which physical wall is actually the front by any confirmable standard. Do not treat that identification as confident just because a label exists. Every room where you fill any of these four fields is unresolved for this reason, in addition to any other reason it may already have: set "unresolved": true and include, verbatim, the sentence "${WALL_ORIENTATION_UNRESOLVED_REASON}" in "reason" (append it after a " · " separator if the room already has a different reason for something else, e.g. an illegible label — do not replace that other reason, add to it). This is not a substitute for true compass exposure either way — a human still resolves that via the project's building orientation selector, same as before, but now also still needs to confirm the front-entry axis itself before that selector's rotation can be trusted.
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
 - For every room, set "source_sheet" to the floor-plan sheet (from your STEP 1 inventory) its geometry actually came from - useful when a project has more than one floor-plan sheet (e.g. a main floor and a second-level/bonus-room plan).
+- For every room, also set "room_label_text" to ALL text printed on or near that room on the floor plan, copied verbatim - concatenate every distinct piece you find with " / " between them: the room name, its printed dimensions (e.g. "24'-10\" X 37'-4\""), and any ceiling height callout for that room (e.g. "10' CEILING") if one appears anywhere near the room, even when it sits as its own separate label a short distance from the room name rather than directly overlapping it (e.g. "3-CAR GARAGE / 10' CEILING / 24'-10\" X 37'-4\""). Do NOT report just the room name alone when other text - dimensions, a ceiling height label - is also printed near that room; a bare room name here silently discards information a downstream check depends on to catch ceiling-height conflicts, so treat this as a completeness requirement, not a best-effort summary. This is a plain transcription task, not a judgment call: do not summarize, interpret, or decide part of it is unimportant to omit; leave it null only if the room genuinely has no printed text of its own at all.
 
 STEP 4 — Window area, per room, same north/south/east/west vs. front/rear/left/right split as STEP 3, governed by the SAME orientation-detected/not-detected branch (do not re-decide it here). This is a much harder read than wall length — most floor plans mark a window opening as a gap in the wall line with a width, but not a height, so only fill a side's window area when you can combine an actual opening on that room's wall (visible in the floor plan) with an actual height reference for that opening (a window schedule entry, a labeled window size like "3068" i.e. 3'-0" x 6'-8", or a spec note) - width times height. If a room clearly has a window on a given side but you have no way to size it, leave that side null rather than assume a typical size - this is the same "don't guess" standard as duct routing (STEP 8) and R-values, not an exception to it. It is expected and fine for most or all window area fields to come back null when a drawing doesn't include a window schedule or labeled sizes; a false area is worse than a missing one, since it would silently misstate solar gain rather than leave it visibly unresolved. When you do fill any window area for a room, set that room's "unresolved" to true with "reason" noting it's an AI-estimated window area pending confirmation (unless the room is already unresolved for another reason, in which case leave the existing reason as-is).
 
@@ -672,16 +705,63 @@ export function flagWaterHeaterLoadRisk(extraction: DrawingExtraction): DrawingE
 // foot-scale disagreement.
 const CEILING_HEIGHT_CONFLICT_TOLERANCE_FT = 0.5;
 
+// Diagnosed 2026-08-14, same day as the function above: giving the model
+// a dedicated ceiling_height_ft_elevation_derived field to diff against
+// wasn't enough on its own - on a second real run, it reported the SAME
+// number (9) into both ceiling_height_ft and ceiling_height_ft_elevation_
+// derived, silently dropping the floor plan's actual "10' CEILING" text
+// rather than reporting it as the independent structured value it was
+// asked for. "Did the model correctly notice and structure this" is
+// exactly the kind of judgment this file has learned not to trust (see
+// flagWindowScheduleForVerification's comment on the same theme) - so
+// instead of asking again, this regexes the raw room_label_text the
+// model was asked to copy verbatim (a much easier task: transcribe, don't
+// interpret) for an explicit "N' CEILING"-shaped pattern. Tolerates the
+// common real-world abbreviations (CEILING, CEIL'G, CLG) and an inches
+// component ("10'-0\" CEILING") without capturing it - this app's
+// ceiling_height_ft column is a plain number, not a feet+inches pair.
+// Returns null, not a guess, when no such pattern is found - a room with
+// no ceiling text, or only a "VAULTED CEILING" note with no leading
+// number, correctly yields no candidate rather than a fabricated one.
+const CEILING_HEIGHT_LABEL_PATTERN = /(\d+(?:\.\d+)?)'(?:-\d+"?)?\s*(?:CEILING|CEIL'?G|CLG)\.?\b/i;
+
+export function extractCeilingHeightFromLabelText(text: string | null): number | null {
+  if (!text) return null;
+  const match = text.match(CEILING_HEIGHT_LABEL_PATTERN);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+const ROOM_CEILING_HEIGHT_CONFLICT_TAG = "ceiling_height_ft conflict:";
+
 export function flagRoomCeilingHeightConflicts(extraction: DrawingExtraction): DrawingExtraction {
   return {
     ...extraction,
     rooms: extraction.rooms.map((room) => {
-      if (room.ceiling_height_ft == null || room.ceiling_height_ft_elevation_derived == null) {
+      // Idempotency guard: route.ts may run this twice (once before a
+      // targeted follow-up call, once after merging its results back in)
+      // - a room already flagged with this exact conflict on the first
+      // pass shouldn't have the same reason appended to itself a second
+      // time just because the function ran again.
+      if (room.reason?.includes(ROOM_CEILING_HEIGHT_CONFLICT_TAG)) return room;
+      // Prefer the regex-derived reading of the room's own raw label text
+      // over the model's structured ceiling_height_ft - see
+      // extractCeilingHeightFromLabelText's comment for why the
+      // structured field alone isn't trusted as the "floor plan" side of
+      // this comparison. Falls back to the structured field only when
+      // there's no label text to parse or it didn't match - not because
+      // the structured field is trusted, but because it's the only
+      // candidate available at all in that case.
+      const labelDerived = extractCeilingHeightFromLabelText(room.room_label_text);
+      const floorPlanHeight = labelDerived ?? room.ceiling_height_ft;
+      if (floorPlanHeight == null || room.ceiling_height_ft_elevation_derived == null) {
         return room;
       }
-      const diff = Math.abs(room.ceiling_height_ft - room.ceiling_height_ft_elevation_derived);
+      const diff = Math.abs(floorPlanHeight - room.ceiling_height_ft_elevation_derived);
       if (diff <= CEILING_HEIGHT_CONFLICT_TOLERANCE_FT) return room;
-      const conflictReason = `ceiling_height_ft conflict: floor plan labels this room ${room.ceiling_height_ft}' but the elevation-derived calculation gives ${room.ceiling_height_ft_elevation_derived}' - a ${diff.toFixed(1)}' disagreement between two independent, non-disclaimed sources. Not auto-resolved - field-verify on site.`;
+      const sourceNote = labelDerived != null ? "room_label_text (regex-parsed)" : "ceiling_height_ft (model-structured, no label text to cross-check)";
+      const conflictReason = `${ROOM_CEILING_HEIGHT_CONFLICT_TAG} floor plan (${sourceNote}) gives ${floorPlanHeight}' but the elevation-derived calculation gives ${room.ceiling_height_ft_elevation_derived}' - a ${diff.toFixed(1)}' disagreement between two independent, non-disclaimed sources. Not auto-resolved - field-verify on site.`;
       return {
         ...room,
         unresolved: true,
@@ -709,4 +789,319 @@ export function flagWindowScheduleForVerification(extraction: DrawingExtraction)
       reason: WINDOW_SCHEDULE_VERIFICATION_REASON,
     })),
   };
+}
+
+// Diagnosed 2026-08-14 against ceiling_insulation_r_value: across three
+// consecutive real extraction runs, the model's OWN reasoning claimed
+// "REF-2" was one of "two non-disclaimed sheets" in conflict - directly
+// contradicting its own STEP 1 sheets[] entry marking REF-2
+// hasReferenceOnlyDisclaimer: true, generated in the very same response.
+// STEP 1 already produces exactly the ground truth needed to catch this:
+// this cross-checks every sheet name an envelope field's "reason"
+// mentions against sheets[]'s actual disclaimer flag for that sheet,
+// instead of trusting whatever the reason text itself claims.
+//
+// Known, honest limitation: this can only re-verify sheets the reason
+// text actually NAMES. On Kinsela specifically, the deeper problem
+// wasn't a wrong claim about a named sheet - REF-2 really is disclaimed,
+// so re-checking that claim finds no discrepancy - it was that a THIRD,
+// relevant non-disclaimed sheet (A1.3, independently confirmed via exact
+// text search to also state "R-38 BLOWN INSULATION") was never mentioned
+// in the reasoning at all. A lookup against sheets[] cannot detect a
+// sheet the model didn't bring up in the first place; it can only catch
+// the case where the model mischaracterizes a sheet it DID cite (e.g.
+// calling a disclaimed sheet "non-disclaimed"). That's still a real,
+// useful, deterministic check - just not a complete substitute for
+// independently re-scanning every sheet's own content, which is a larger
+// change than this one.
+export function verifyEnvelopeConflictDisclaimers(extraction: DrawingExtraction): DrawingExtraction {
+  const sheetDisclaimed = new Map((extraction.sheets ?? []).map((s) => [s.name, s.hasReferenceOnlyDisclaimer]));
+  if (sheetDisclaimed.size === 0) return extraction;
+
+  function check<T>(field: ExtractedField<T>): ExtractedField<T> {
+    if (!field.reason) return field;
+    const mentioned = [...sheetDisclaimed.keys()].filter((name) => field.reason!.includes(name));
+    const nonDisclaimedMentioned = mentioned.filter((name) => sheetDisclaimed.get(name) === false);
+    const disclaimedMentioned = mentioned.filter((name) => sheetDisclaimed.get(name) === true);
+    if (nonDisclaimedMentioned.length < 2) return field;
+    // 2+ sheets that sheets[] itself confirms are NOT reference-only are
+    // named in this reasoning together - by the peer-conflict rule this
+    // shouldn't have been resolved to one value, regardless of what the
+    // reason text concluded or whether it also (correctly or not) cited a
+    // disclaimed sheet alongside them.
+    const note = `[system check, from sheets[] - not the model's own claim] ${nonDisclaimedMentioned.join(" and ")} are confirmed NON-disclaimed sheets both named in this reasoning${disclaimedMentioned.length > 0 ? ` (${disclaimedMentioned.join(", ")} is/are disclaimed and doesn't change this)` : ""} - per the peer-conflict rule this should not have been resolved to one value; verify against the actual drawing rather than trusting "value" as shown.`;
+    return {
+      ...field,
+      unresolved: true,
+      reason: `${field.reason} · ${note}`,
+    };
+  }
+
+  const envelope = extraction.building_envelope;
+  const nextEnvelope = { ...envelope };
+  (Object.keys(envelope) as (keyof ExtractedEnvelope)[]).forEach((key) => {
+    (nextEnvelope as Record<string, ExtractedField<unknown>>)[key] = check(
+      envelope[key] as ExtractedField<unknown>,
+    );
+  });
+
+  return { ...extraction, building_envelope: nextEnvelope };
+}
+
+// Same simple "R-<number>" extraction for both "R-30" and "R30" spellings -
+// the sheets actually seen so far use both. Deliberately not scoped to
+// ceiling/attic/roof context in the regex itself; that scoping already
+// happened when the model decided whether to populate
+// ceiling_insulation_callout_text at all (see ExtractedSheet's comment) -
+// this only has to pull the number out of text already known to be a
+// ceiling/attic/roof callout.
+const R_VALUE_CALLOUT_PATTERN = /R-?\s*(\d+(?:\.\d+)?)/i;
+
+export function extractRValueFromCalloutText(text: string | null): number | null {
+  if (!text) return null;
+  const match = text.match(R_VALUE_CALLOUT_PATTERN);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+// Diagnosed 2026-08-14: verifyEnvelopeConflictDisclaimers above can only
+// re-verify a sheet the model's own "reason" text actually names - on
+// Kinsela's real ceiling_insulation_r_value conflict, the reason
+// consistently named C.S and REF-2 but never A1.3, the actual non-
+// disclaimed peer sheet that also states R-38 (confirmed independently via
+// exact PDF text search). A sheets[]-vs-reason lookup structurally cannot
+// catch an omission, only a mischaracterization - confirmed by testing
+// verifyEnvelopeConflictDisclaimers against this exact real reason text
+// and observing it correctly does NOT fire, because only one non-
+// disclaimed sheet (C.S) is ever named.
+//
+// This closes that specific gap the same way flagRoomCeilingHeightConflicts
+// closes the ceiling-height one: instead of trusting which sheets the
+// model chose to narrate, build the comparison from
+// ExtractedSheet.ceiling_insulation_callout_text - a plain per-sheet
+// transcription the model fills in STEP 1, independent of and prior to
+// whatever it later writes into building_envelope.ceiling_insulation_r_value's
+// own reasoning. If 2+ DISTINCT values turn up among sheets sheets[]
+// itself confirms are non-disclaimed, that's a genuine, code-verified peer
+// conflict - per the same peer-conflict rule EXTRACTION_PROMPT already
+// states, this corrects the field to value: null / unresolved: true
+// rather than leaving whatever single value the model resolved it to,
+// since that resolution is exactly what's being overridden. A disclaimed
+// sheet's callout is recorded in the reason for context but never counted
+// toward the conflict itself - a disclaimed sheet agreeing OR disagreeing
+// doesn't change whether the non-disclaimed sheets conflict with each
+// other.
+const CEILING_R_VALUE_SYSTEM_CHECK_TAG = "[system check, from sheets[] ceiling_insulation_callout_text";
+
+export function flagCeilingInsulationRValueConflicts(extraction: DrawingExtraction): DrawingExtraction {
+  // Idempotency guard: route.ts may run this twice (once before a
+  // targeted follow-up call, once after merging its results back in, to
+  // pick up any newly-filled sheet callouts) - if this already corrected
+  // the field on the first pass, don't re-run the correction and chain a
+  // second, redundant note onto a reason that's already accurate.
+  if (extraction.building_envelope.ceiling_insulation_r_value.reason?.includes(CEILING_R_VALUE_SYSTEM_CHECK_TAG)) {
+    return extraction;
+  }
+
+  const sheets = extraction.sheets ?? [];
+  const candidates = sheets
+    .map((sheet) => ({
+      name: sheet.name,
+      disclaimed: sheet.hasReferenceOnlyDisclaimer,
+      value: extractRValueFromCalloutText(sheet.ceiling_insulation_callout_text),
+    }))
+    .filter((candidate): candidate is { name: string; disclaimed: boolean; value: number } => candidate.value != null);
+
+  const nonDisclaimed = candidates.filter((c) => !c.disclaimed);
+  const distinctNonDisclaimedValues = new Set(nonDisclaimed.map((c) => c.value));
+  if (distinctNonDisclaimedValues.size < 2) return extraction;
+
+  const disclaimedCandidates = candidates.filter((c) => c.disclaimed);
+  const nonDisclaimedSummary = nonDisclaimed.map((c) => `${c.name}=R-${c.value}`).join(", ");
+  const disclaimedSummary = disclaimedCandidates.map((c) => `${c.name}=R-${c.value}`).join(", ");
+
+  const field = extraction.building_envelope.ceiling_insulation_r_value;
+  const correctionNote = `${CEILING_R_VALUE_SYSTEM_CHECK_TAG} captured independently per sheet - not the model's own narrated reasoning] Deterministic per-sheet capture found ${distinctNonDisclaimedValues.size} disagreeing values among confirmed non-disclaimed sheets: ${nonDisclaimedSummary}${disclaimedSummary ? ` (also seen, disclaimed, informational only: ${disclaimedSummary})` : ""}. This is a genuine peer conflict per the peer-conflict rule and must not be resolved to one value - value corrected to null (model had resolved it to ${field.value ?? "null"}). Field-verify on site.`;
+
+  return {
+    ...extraction,
+    building_envelope: {
+      ...extraction.building_envelope,
+      ceiling_insulation_r_value: {
+        value: null,
+        unresolved: true,
+        reason: field.reason ? `${field.reason} · ${correctionNote}` : correctionNote,
+      },
+    },
+  };
+}
+
+// Diagnosed 2026-08-14: two independent, mechanical-transcription fixes
+// (room_label_text above, ceiling_insulation_callout_text above) both
+// still failed to converge against Kinsela's real PDF - the model kept
+// omitting the SAME two facts (the garage's floor-plan-labeled ceiling
+// height, A1.3's insulation callout) across four separate real
+// extraction runs, regardless of how the single-pass, 15-step, whole-
+// document prompt phrased the ask. That points away from wording and
+// toward attention/competition within one giant pass over a 13-page
+// document asked to do fifteen different things at once.
+//
+// These two functions detect exactly that specific, narrow failure
+// pattern in an already-parsed extraction (never a broad "let's re-ask
+// everything" - see route.ts, which only fires a follow-up API call when
+// one of these actually returns something) so a short, single-purpose
+// follow-up call - the same document, a much smaller prompt asking about
+// only the specific rooms/sheets identified here - gets a real second,
+// higher-attention look, instead of another reword of the same crowded
+// prompt.
+//
+// KNOWN, HONEST LIMITATION (confirmed 2026-08-14, not just suspected):
+// this mechanism is correctly engineered and does what it was designed
+// to do - fires only on the exact pattern above, asks a narrow single-
+// purpose question, merges the answer back in - but real-world testing
+// against Kinsela disproved the "competing instructions" hypothesis it
+// was built on. Directly asked, with nothing else competing for
+// attention, "does A1.3 have a ceiling/attic/roof insulation callout,"
+// the model still answered null - on a page independently confirmed via
+// PyMuPDF plain-text search (page.get_text(), not vision/AI) to contain
+// "R-38 BLOWN INSULATION" verbatim. The garage follow-up likewise
+// returned a different nearby note ("5/8\" TYPE X GYPSUM BOARD ON
+// CEILING") instead of the floor plan's actual "10' CEILING" label. This
+// is a genuine model misread on a narrowly-scoped, directly-targeted
+// question, not a scoping/wording problem this file's usual pattern
+// (turn a judgment call into a mechanical one) can fix by construction.
+// The one real lead this surfaced: this specific PDF has a genuine
+// embedded text layer (PyMuPDF's plain string search found both facts
+// immediately), so a deterministic, non-AI extraction path (a PDF-text-
+// parsing library run directly against the document, falling back to
+// this AI-vision path only when a PDF has no text layer, e.g. a scanned
+// drawing) is a real, likely-more-reliable fix for these two specific
+// facts - not built here; flagged and left for a deliberate decision,
+// since it's a new dependency and a materially different code path, not
+// a small follow-on to this one. Kept as-is per explicit direction: this
+// mechanism still correctly handles any future project/sheet where the
+// model's targeted re-read DOES succeed, and Kinsela's two known-
+// unconverged facts remain honestly flagged unresolved for a human
+// either way - which was always the fallback, not a regression.
+export type RoomCeilingHeightFollowUpTarget = { roomName: string; sourceSheet: string };
+
+export function roomsNeedingCeilingHeightFollowUp(
+  extraction: DrawingExtraction,
+): RoomCeilingHeightFollowUpTarget[] {
+  return extraction.rooms
+    .filter((room) => {
+      // The specific silent-collapse pattern: an elevation-derived
+      // candidate exists, the room's own label text didn't yield a
+      // regex-parseable ceiling height, AND the model's structured
+      // ceiling_height_ft exactly matches the elevation-derived value -
+      // the exact shape that lets flagRoomCeilingHeightConflicts find
+      // "no conflict" even though the floor plan may say something else
+      // entirely (Kinsela's garage: both read 9, even though "10'
+      // CEILING" is genuinely printed on the floor plan). A room with NO
+      // elevation-derived candidate at all has nothing to diff against
+      // either way, so it's not a candidate for this specific follow-up.
+      if (room.ceiling_height_ft_elevation_derived == null) return false;
+      if (room.ceiling_height_ft !== room.ceiling_height_ft_elevation_derived) return false;
+      if (extractCeilingHeightFromLabelText(room.room_label_text) != null) return false;
+      return room.source_sheet != null;
+    })
+    .map((room) => ({ roomName: room.name, sourceSheet: room.source_sheet as string }));
+}
+
+export function sheetsNeedingInsulationCalloutFollowUp(extraction: DrawingExtraction): string[] {
+  const sheets = extraction.sheets ?? [];
+  // Only worth re-checking when there's already a reason to distrust the
+  // first pass's completeness: at least one sheet DID report a ceiling
+  // insulation callout (so this project has ceiling insulation info to
+  // find at all) but the field ended up unresolved anyway (the model
+  // itself wasn't confident it had the full picture). A clean, confident,
+  // resolved extraction has no reason to spend a second API call
+  // re-checking sheets that were silently irrelevant all along.
+  const anyCalloutCaptured = sheets.some((s) => s.ceiling_insulation_callout_text != null);
+  if (!anyCalloutCaptured) return [];
+  if (!extraction.building_envelope.ceiling_insulation_r_value.unresolved) return [];
+  return sheets
+    .filter((s) => !s.hasReferenceOnlyDisclaimer && s.ceiling_insulation_callout_text == null)
+    .map((s) => s.name);
+}
+
+// Builds the follow-up prompt from exactly the targets the two detection
+// functions above identified - never a generic "review the whole
+// document again," always scoped to the specific rooms/sheets already
+// known to need a second look. Pure and unit-testable on its own,
+// independent of the actual Anthropic call route.ts makes with this
+// string.
+export function buildFollowUpPrompt(
+  roomTargets: RoomCeilingHeightFollowUpTarget[],
+  sheetTargets: string[],
+): string {
+  const sections: string[] = [
+    `You are re-examining the SAME architectural drawing set you were just shown, to answer a small number of narrow, specific follow-up questions your first pass may have missed. Respond with STRICT JSON only - no markdown fences, no commentary. Match this exact shape:\n{\n  "room_label_followups": [ { "room_name": string, "label_text": string | null } ],\n  "sheet_callout_followups": [ { "sheet_name": string, "callout_text": string | null } ]\n}`,
+  ];
+
+  if (roomTargets.length > 0) {
+    sections.push(
+      `For "room_label_followups": for each room below, go back to the floor plan sheet noted and look CAREFULLY at the area around that room's name for any OTHER printed text nearby - especially a ceiling height (e.g. "10' CEILING", "9' CLG.") - even if it's positioned as its own separate label a short distance away rather than directly touching the room name. Copy whatever you find verbatim into "label_text"; set it to null only if you're now confident there is truly no such text near that room.\nRooms to re-check:\n${roomTargets
+        .map((t) => `- "${t.roomName}" on sheet ${t.sourceSheet}`)
+        .join("\n")}`,
+    );
+  } else {
+    sections.push(`"room_label_followups" should be an empty array - nothing to re-check.`);
+  }
+
+  if (sheetTargets.length > 0) {
+    sections.push(
+      `For "sheet_callout_followups": for each sheet below, look specifically for a note giving an R-value for CEILING, ATTIC, or ROOF insulation specifically (not wall or floor insulation). Copy the verbatim callout text into "callout_text" if you find one; set it to null only if that sheet genuinely has no such callout.\nSheets to re-check: ${sheetTargets.join(", ")}`,
+    );
+  } else {
+    sections.push(`"sheet_callout_followups" should be an empty array - nothing to re-check.`);
+  }
+
+  sections.push(`Output ONLY the JSON object described above.`);
+  return sections.join("\n\n");
+}
+
+export type RoomLabelFollowUpResult = { room_name: string; label_text: string | null };
+export type SheetCalloutFollowUpResult = { sheet_name: string; callout_text: string | null };
+export type FollowUpResponse = {
+  room_label_followups?: RoomLabelFollowUpResult[];
+  sheet_callout_followups?: SheetCalloutFollowUpResult[];
+};
+
+// Merges a follow-up response back into the original extraction. Matches
+// by name (first occurrence) - acceptable here because the targets being
+// merged back were themselves selected FROM this same extraction's own
+// room/sheet names moments earlier, not arbitrary external input.
+// Appends to existing room_label_text (doesn't replace it) since the
+// first pass's text, even if incomplete, is still real and shouldn't be
+// discarded; only merges in text genuinely new for that room. Overwrites
+// a sheet's ceiling_insulation_callout_text only when it was null (the
+// only case a sheet is ever selected as a target in the first place).
+export function mergeFollowUpResponse(
+  extraction: DrawingExtraction,
+  followUp: FollowUpResponse,
+): DrawingExtraction {
+  const roomResults = followUp.room_label_followups ?? [];
+  const sheetResults = followUp.sheet_callout_followups ?? [];
+
+  const rooms = extraction.rooms.map((room) => {
+    const match = roomResults.find((r) => r.room_name === room.name);
+    if (!match || !match.label_text) return room;
+    if (room.room_label_text && room.room_label_text.includes(match.label_text)) return room;
+    return {
+      ...room,
+      room_label_text: room.room_label_text
+        ? `${room.room_label_text} / ${match.label_text}`
+        : match.label_text,
+    };
+  });
+
+  const sheets = (extraction.sheets ?? []).map((sheet) => {
+    const match = sheetResults.find((s) => s.sheet_name === sheet.name);
+    if (!match || !match.callout_text || sheet.ceiling_insulation_callout_text != null) return sheet;
+    return { ...sheet, ceiling_insulation_callout_text: match.callout_text };
+  });
+
+  return { ...extraction, rooms, sheets };
 }

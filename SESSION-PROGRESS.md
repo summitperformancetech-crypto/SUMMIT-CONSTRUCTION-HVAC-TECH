@@ -702,3 +702,82 @@ instruction, pending direction on the wall-length question above.
   max_tokens safety fix now (both real, verified, necessary) - the two
   findings above are reported to the user as open questions, not silently
   resolved, before continuing to Apply-to-Form wiring.
+- 2026-08-14 14:10 — Committed `fca5b66`: `flagWindowScheduleForVerification`
+  (every `window_schedule` entry unconditionally forced `unresolved: true`
+  - per-row transcription proven unreliable across 3 runs, including one
+  invented sheet reference; table-transcription accuracy treated as
+  low-confidence by construction until separately proven) and wired
+  `flagWaterHeaterLoadRisk` into `route.ts` (existed and was unit-tested
+  since an earlier phase, but was never actually imported/called by the
+  production route - fixed as part of this commit). The two garage-
+  ceiling-height and R-value fixes attempted alongside this were NOT
+  included - not yet proven effective, held for further work below.
+- 2026-08-14 15:00 — Added `room_label_text` (room's printed label
+  transcribed verbatim) + `extractCeilingHeightFromLabelText` (regex for
+  "N' CEILING" patterns) + updated `flagRoomCeilingHeightConflicts` to
+  prefer the regex-derived value over the model's structured
+  `ceiling_height_ft`. Also added `verifyEnvelopeConflictDisclaimers`
+  (cross-references sheet names mentioned in an envelope field's `reason`
+  against `sheets[]`'s actual disclaimer flags). Both unit-tested clean
+  (16/16). Real-verified against Kinsela: `flagRoomCeilingHeightConflicts`
+  logic itself is correct (confirmed via direct PyMuPDF word-coordinate
+  search - A1.1 genuinely prints "10' CEILING" next to "3-CAR GARAGE"),
+  but the model's `room_label_text` output only captured "3 CAR GARAGE"
+  - omitting the adjacent ceiling-height text entirely, so the diff never
+  had a chance to fire. `verifyEnvelopeConflictDisclaimers` also proved
+  correct but insufficient for the real R-value bug: the model's reason
+  named only C.S and REF-2, never A1.3 (the actual non-disclaimed peer
+  sheet), and a sheets[]-vs-reason lookup structurally cannot catch an
+  omission, only a mischaracterization - exactly as flagged in the code
+  comment before testing. Reported both findings honestly; not committed.
+- 2026-08-14 15:45 — Per direction: (a) refined the `room_label_text`
+  prompt bullet into an explicit completeness requirement naming the
+  exact observed failure; (b) added `ExtractedSheet.ceiling_insulation_callout_text`
+  (per-sheet verbatim insulation-callout transcription) +
+  `extractRValueFromCalloutText` + `flagCeilingInsulationRValueConflicts`
+  (deterministic cross-sheet R-value diff, independent of the model's own
+  narrated reasoning). Both unit-tested clean (16/16). Real-verified
+  against Kinsela: neither converged. Garage `room_label_text` still
+  omitted "10' CEILING" (captured a different nearby note instead -
+  "5/8\" TYPE X GYPSUM BOARD ON CEILING" - proving it can find *some*
+  adjacent text, just not that one). R-value: A1.3's
+  `ceiling_insulation_callout_text` came back null in the model's own
+  per-sheet capture too - the omission moved down a level rather than
+  disappearing; the field only ended up `unresolved`/reasonable-looking
+  by incidental model inconsistency, not because the deterministic check
+  fired. Reported honestly (4 consecutive real-run failures across two
+  different mechanical-transcription framings); not committed.
+- 2026-08-14 16:20 — Built a targeted follow-up mechanism per user
+  direction: `roomsNeedingCeilingHeightFollowUp` /
+  `sheetsNeedingInsulationCalloutFollowUp` (pure detection functions,
+  scoped to the exact silent-omission pattern already diagnosed, never a
+  blanket re-ask) + `buildFollowUpPrompt` + `mergeFollowUpResponse`,
+  wired into `route.ts` as a conditional second, much smaller Anthropic
+  call (max_tokens 4000) fired only when detection finds something.
+  Added idempotency guards to `flagRoomCeilingHeightConflicts` and
+  `flagCeilingInsulationRValueConflicts` since both may now run twice.
+  Unit-tested clean (24/24). Real end-to-end verification: the mechanism
+  itself works exactly as engineered (correct detection - flagged the
+  garage and all 10 non-disclaimed sheets with a missing callout,
+  including A1.3; correct focused prompt; correct merge) - but the
+  model's *answers* were still wrong even under this narrow, single-
+  purpose, directly-targeted ask: explicit `null` for A1.3's callout, and
+  the garage follow-up again returned the gypsum-board note instead of
+  the ceiling height. Independently re-verified via PyMuPDF
+  (`page.get_text()` plain string search, not visual/AI) that A1.3 (PDF
+  page 5) genuinely and unambiguously contains "R-38 BLOWN INSULATION" -
+  confirming this is a real, direct model misread on a narrowly-scoped
+  question, not an artifact of a crowded prompt. This disproves the
+  "competing instructions" hypothesis the follow-up mechanism was built
+  on. Notably surfaced that this PDF has a real embedded text layer
+  (PyMuPDF found the exact strings via plain search both times), meaning
+  a fully deterministic, non-AI extraction path (a Node PDF-text-parsing
+  library) is a real, likely-more-reliable option for these two specific
+  facts - flagged to the user as a substantially bigger scope item (new
+  dependency, new code path), not silently built. User directed: keep
+  the current code as-is (it's correctly engineered, remains a genuine
+  safety net for future projects and other conflict shapes, and both
+  known-unconverged facts stay honestly flagged `unresolved` for a human
+  either way) rather than build the text-layer path now. Committing next
+  with this outcome documented in code comments, not silently as if
+  fully solved.

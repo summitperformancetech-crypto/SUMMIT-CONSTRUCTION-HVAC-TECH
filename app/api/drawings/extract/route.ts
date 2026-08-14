@@ -8,7 +8,14 @@ import {
   flagWaterHeaterLoadRisk,
   flagRoomCeilingHeightConflicts,
   flagWindowScheduleForVerification,
+  verifyEnvelopeConflictDisclaimers,
+  flagCeilingInsulationRValueConflicts,
+  roomsNeedingCeilingHeightFollowUp,
+  sheetsNeedingInsulationCalloutFollowUp,
+  buildFollowUpPrompt,
+  mergeFollowUpResponse,
   type DrawingExtraction,
+  type FollowUpResponse,
 } from "@/lib/drawingExtraction";
 
 type SupportedImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
@@ -107,6 +114,23 @@ export async function POST(request: Request) {
   const base64 = Buffer.from(await fileBlob.arrayBuffer()).toString("base64");
   const anthropic = new Anthropic({ apiKey });
 
+  // Built once, reused for both the main extraction call and the
+  // conditional follow-up call below - both need the same document/image
+  // attached, just a different text prompt alongside it.
+  const documentContentBlock = isPdf
+    ? ({
+        type: "document" as const,
+        source: { type: "base64" as const, media_type: "application/pdf" as const, data: base64 },
+      })
+    : ({
+        type: "image" as const,
+        source: {
+          type: "base64" as const,
+          media_type: imageMediaType!,
+          data: base64,
+        },
+      });
+
   let rawText: string;
   let stopReason: string | null;
   let outputTokens: number | undefined;
@@ -154,22 +178,7 @@ export async function POST(request: Request) {
       messages: [
         {
           role: "user",
-          content: [
-            isPdf
-              ? {
-                  type: "document",
-                  source: { type: "base64", media_type: "application/pdf", data: base64 },
-                }
-              : {
-                  type: "image",
-                  source: {
-                    type: "base64",
-                    media_type: imageMediaType!,
-                    data: base64,
-                  },
-                },
-            { type: "text", text: EXTRACTION_PROMPT },
-          ],
+          content: [documentContentBlock, { type: "text", text: EXTRACTION_PROMPT }],
         },
       ],
     });
@@ -235,6 +244,61 @@ export async function POST(request: Request) {
   extraction = flagWaterHeaterLoadRisk(extraction);
   extraction = flagRoomCeilingHeightConflicts(extraction);
   extraction = flagWindowScheduleForVerification(extraction);
+  extraction = verifyEnvelopeConflictDisclaimers(extraction);
+  extraction = flagCeilingInsulationRValueConflicts(extraction);
+
+  // Diagnosed 2026-08-14: two mechanical-transcription fixes
+  // (room_label_text, ceiling_insulation_callout_text - see their
+  // comments in lib/drawingExtraction.ts) still didn't reliably surface
+  // certain facts across four real extraction runs, regardless of prompt
+  // wording, all within one 15-step pass over the whole document. This
+  // targeted follow-up only fires when the two detection functions below
+  // find the SPECIFIC silent-gap pattern already diagnosed - never a
+  // blanket re-ask - and sends a second, much smaller, single-purpose
+  // prompt over the same document, asking only about the specific rooms/
+  // sheets identified. A real second look with far less competing for
+  // the model's attention than the first pass, not another reword of it.
+  //
+  // Best-effort: if this call fails or returns malformed JSON, the
+  // extraction that already succeeded above is not discarded - the first
+  // pass's own honest unresolved/reason flags already cover a human
+  // reviewer either way, so a failed follow-up just means proceeding
+  // without the extra data, not a failed extraction.
+  const roomFollowUpTargets = roomsNeedingCeilingHeightFollowUp(extraction);
+  const sheetFollowUpTargets = sheetsNeedingInsulationCalloutFollowUp(extraction);
+  if (roomFollowUpTargets.length > 0 || sheetFollowUpTargets.length > 0) {
+    try {
+      const followUpMessage = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        // A handful of short strings, nowhere near the main call's
+        // ceiling - see that call's own max_tokens comment for the SDK's
+        // hard non-streaming limit this stays well under.
+        max_tokens: 4000,
+        messages: [
+          {
+            role: "user",
+            content: [
+              documentContentBlock,
+              { type: "text", text: buildFollowUpPrompt(roomFollowUpTargets, sheetFollowUpTargets) },
+            ],
+          },
+        ],
+      });
+      const followUpTextBlock = followUpMessage.content.find((block) => block.type === "text");
+      const followUpRawText = followUpTextBlock && "text" in followUpTextBlock ? followUpTextBlock.text : "";
+      const followUpResponse: FollowUpResponse = JSON.parse(stripJsonFences(followUpRawText));
+      extraction = mergeFollowUpResponse(extraction, followUpResponse);
+      // Re-run both diff checks now that the merge may have filled in
+      // previously-missing room_label_text / sheet callout text - both
+      // are idempotency-guarded (see their own comments) so re-running
+      // them on rooms/sheets the follow-up didn't touch is a no-op, not
+      // a duplicated flag.
+      extraction = flagRoomCeilingHeightConflicts(extraction);
+      extraction = flagCeilingInsulationRValueConflicts(extraction);
+    } catch {
+      // Swallow deliberately - see comment above this block.
+    }
+  }
 
   const unresolvedItems = collectUnresolvedItems(extraction);
 

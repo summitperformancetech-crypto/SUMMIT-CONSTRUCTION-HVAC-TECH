@@ -178,6 +178,20 @@ export type ExtractedOrientation = {
   description: string | null;
 };
 
+// Phase 3, item 2 (source authority hierarchy) - formalizes what was a
+// binary hasReferenceOnlyDisclaimer flag into the real 3-tier hierarchy
+// documents actually carry: a sealed/issued-for-construction sheet is
+// more authoritative than an ordinary undesignated sheet, which is in
+// turn more authoritative than one explicitly marked reference-only.
+// "sealed_construction_document" requires actual evidence (a visible
+// seal/stamp graphic, or explicit "ISSUED FOR CONSTRUCTION"-type
+// language) - not inferred from a sheet merely looking detailed or
+// official. Most sheets on a typical residential set (Kinsela included)
+// will land on "unknown", which is the deliberately conservative
+// default - see EXTRACTION_PROMPT's STEP 1 and "Other rules" for exactly
+// how this drives conflict resolution.
+export type ExtractedSheetSourceAuthority = "sealed_construction_document" | "reference_only" | "unknown";
+
 // Phase 2 standing requirement (where a fact came from, and a check on
 // whether it should be trusted at face value). Every sheet the model
 // actually reviewed, by its title-block name/number - not just a source
@@ -185,14 +199,10 @@ export type ExtractedOrientation = {
 // ExtractedRoom.source_sheet reference these names), but also a built-in
 // completeness signal: if this list doesn't match what a drawing set's
 // own index/cover-sheet says it should contain, that's visible, not
-// silent. hasReferenceOnlyDisclaimer flags sheets carrying language like
-// "for reference only... may not correspond with the other sheets" (seen
-// verbatim on Kinsela's REF-1/REF-2) - a fact sourced ONLY from such a
-// sheet, with no corroboration elsewhere, must not be presented at face
-// value (see the conflict-handling rule in EXTRACTION_PROMPT).
+// silent.
 export type ExtractedSheet = {
   name: string;
-  hasReferenceOnlyDisclaimer: boolean;
+  sourceAuthority: ExtractedSheetSourceAuthority;
   // Diagnosed 2026-08-14 against ceiling_insulation_r_value: giving the
   // model a sheets[]-vs-reason cross-check (verifyEnvelopeConflictDisclaimers
   // below) still didn't catch the real conflict, because the model's own
@@ -403,6 +413,10 @@ export const EXTRACTION_PROMPT = `You are reviewing a complete architectural dra
 
 This document may have many pages of very different types. Review EVERY page before responding. Do not skip a page, or treat its content as irrelevant, because of what its sheet type usually contains - relevant facts have been found on pages a first guess would rule out (a cover sheet's general materials note, a wall-section detail between structural sheets, a mechanical plan's HVAC notes).
 
+Reading discipline: read this drawing set as a structured technical document, not as plain text to OCR top-to-bottom. Recognize and use the symbolic structure professionals use to navigate it: keynote tags (a circled or boxed number/letter that references a keynote legend printed elsewhere on the sheet or set - look up what the legend entry actually says rather than treating the bare tag itself as the fact); grid lines (lettered/numbered reference lines used to pinpoint a location precisely - use them to confirm you're looking at the same physical location when cross-referencing between sheets, e.g. matching a detail callout back to where it applies on the floor plan); and section/detail callout markers (a circle or hexagon containing a detail number and a sheet reference, e.g. "4/A3.0", meaning "see detail 4 on sheet A3.0 for a closer, more precise view of this"). When you follow such a marker to find a value, that value came from a more precise, more authoritative source than a general overview plan - prefer it over a same-fact value read from a general plan, and note in "reason" that it came from a detail/section reference (e.g. "per detail 4/A3.0") so a human reviewer can see why it was preferred.
+
+Explicitly out of scope - do not extract, calculate, or reason about any of the following, even when they appear on a sheet you are otherwise reading for HVAC-relevant content (e.g. ignore a structural beam callout printed on the same sheet as a duct routing note): structural load calculations or member sizing; electrical service/panel sizing; plumbing fixture-unit sizing; fire-rating, egress, or life-safety analysis; civil/site/grading work; accessibility (ADA) compliance. These are separate licensure and liability domains, not part of this task. If a sheet's primary content is one of these domains (e.g. a structural framing plan), still review it for any HVAC-relevant facts it may incidentally carry (an insulation callout, a duct chase note) - just don't report on, compute, or flag anything about the excluded domain itself.
+
 Respond with STRICT JSON only — no markdown code fences, no commentary, nothing outside the JSON object. Match this exact shape:
 
 {
@@ -411,7 +425,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "description": string | null
   },
   "sheets": [
-    { "name": string, "hasReferenceOnlyDisclaimer": boolean, "ceiling_insulation_callout_text": string | null }
+    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null }
   ],
   "building_envelope": {
     "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
@@ -483,7 +497,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
   ]
 }
 
-STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "hasReferenceOnlyDisclaimer": true if that sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent) - false otherwise; and "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
+STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "sourceAuthority" - exactly one of "sealed_construction_document", "reference_only", "unknown", determined in this order: first, set "reference_only" if the sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent). Otherwise, set "sealed_construction_document" ONLY if the sheet shows an actual professional (engineer/architect) seal or stamp graphic, or explicit issuance language such as "ISSUED FOR CONSTRUCTION" or "APPROVED FOR CONSTRUCTION" - do not infer this from a sheet simply looking detailed, official, or complete; most sheets in a typical residential set will NOT qualify, and that's the expected, normal outcome, not a gap. Otherwise (the common case), set "unknown". This is a real authority hierarchy for resolving conflicts between sheets (sealed_construction_document > unknown > reference_only), not a cosmetic label - see "Other rules" below for exactly how it's used. Also set "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
 
 STEP 2 — Orientation. Look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
 
@@ -528,10 +542,11 @@ STEP 15 — Water heater(s). For each water heater shown (there may be more than
 Other rules:
 - Only fill an insulation R-value if it is visibly labeled on the drawing (e.g. "R-19 batt", "R-38 ceiling"). Do not infer a code-minimum or typical value — leave it null instead.
 - Provenance: for every building_envelope field, and for every room's "source_sheet" (STEP 3) and per-room "ceiling_height_ft" override (STEP 5), set "source_sheet" to the sheet (from your STEP 1 inventory) the value actually came from.
-- Conflicts across sheets (building_envelope fields only - a room's own ceiling height has its own dedicated two-candidate mechanism in STEP 5, do not also apply this section to "ceiling_height_ft"/"ceiling_height_ft_elevation_derived", that would be redundant effort covering the same ground twice). Three cases, handled differently:
-  - Single-sourced from a reference-only sheet: if a fact's ONLY source is a sheet you marked "hasReferenceOnlyDisclaimer": true in STEP 1, with no other sheet mentioning it at all, mark it unresolved regardless of how clearly labeled it looks there, with a reason noting it's single-sourced from a reference-only sheet.
-  - Disclaimed sheet vs. non-disclaimed sheet (a real hierarchy, not a guess): if the ONLY disagreement on a fact is between a reference-only sheet and a sheet that isn't reference-only, the non-disclaimed sheet's value may be used - the source documents themselves flagged one sheet as less authoritative, so preferring the other isn't arbitrary. Still record the disclaimed sheet's differing value in "reason". Before applying this hierarchy, you MUST check whether the reference-only sheet's value ALSO appears, independently, on some OTHER non-disclaimed sheet - a value is not "just the disclaimed sheet's value" merely because that's where you happened to notice it first. If it does turn up on another non-disclaimed sheet too, this is actually the peer-conflict case below, not this one, even though a disclaimed sheet is also involved.
-  - Peer conflict - two or more NON-disclaimed sheets disagree with each other: this is the case that must NOT be silently resolved, because there is no principled way to prefer one equally-authoritative source over another. Leave "value" null and set "unresolved": true, with "reason" stating BOTH (or all) values found and which sheet each came from. The goal is for a human, ideally someone who can field-verify on site, to make the final call - not for the system to guess and hide the disagreement behind one confident-looking number.
+- Conflicts across sheets (building_envelope fields only - a room's own ceiling height has its own dedicated two-candidate mechanism in STEP 5, do not also apply this section to "ceiling_height_ft"/"ceiling_height_ft_elevation_derived", that would be redundant effort covering the same ground twice). Governed by the source authority hierarchy from STEP 1: sealed_construction_document > unknown > reference_only. Four cases, handled differently:
+  - Single-sourced from a reference_only sheet: if a fact's ONLY source is a sheet you marked "sourceAuthority": "reference_only" in STEP 1, with no other sheet mentioning it at all, mark it unresolved regardless of how clearly labeled it looks there, with a reason noting it's single-sourced from a reference-only sheet.
+  - reference_only sheet vs. a higher-tier sheet (a real hierarchy, not a guess): if the ONLY disagreement on a fact is between a reference_only sheet and a sheet that is "unknown" or "sealed_construction_document", the higher-tier sheet's value may be used - the source documents themselves flagged the reference_only sheet as less authoritative, so preferring the other isn't arbitrary. Still record the reference_only sheet's differing value in "reason". Before applying this hierarchy, you MUST check whether the reference_only sheet's value ALSO appears, independently, on some OTHER sheet that isn't reference_only - a value is not "just the reference_only sheet's value" merely because that's where you happened to notice it first. If it does turn up on another non-reference_only sheet too, this is actually the peer-conflict case below, not this one, even though a reference_only sheet is also involved.
+  - sealed_construction_document vs. unknown (same hierarchy, one tier up): if the ONLY disagreement on a fact is between a sheet marked "sealed_construction_document" and a sheet marked "unknown", the sealed sheet's value may be used - it's the more authoritative source by explicit evidence (a seal or issuance language), not a guess. Still record the "unknown" sheet's differing value in "reason". This case will be rare in practice, since most sheets land on "unknown" - do not force a sheet into "sealed_construction_document" just to make this case apply.
+  - Peer conflict - two or more sheets AT THE SAME TIER (both sealed_construction_document, or both unknown) disagree with each other: this is the case that must NOT be silently resolved, because there is no principled way to prefer one equally-authoritative source over another. Leave "value" null and set "unresolved": true, with "reason" stating BOTH (or all) values found and which sheet each came from. The goal is for a human, ideally someone who can field-verify on site, to make the final call - not for the system to guess and hide the disagreement behind one confident-looking number.
 - window_count and door_count are simple counts, not areas.
 - Set "unresolved": true on the building envelope object, or on any individual room, whenever the drawing is ambiguous, illegible, or you are guessing rather than reading a clearly labeled figure. Whenever you set "unresolved": true on a room, always fill "reason" with a short, specific explanation a field technician can act on (e.g. "no orientation marker - exposure cannot be determined", "room label illegible", "floor area not dimensioned"). Leave "reason" null only when "unresolved" is false.
 - Do not invent room names if none are labeled — use a generic label like "Room 1" and mark it unresolved with an appropriate reason.
@@ -795,41 +810,55 @@ export function flagWindowScheduleForVerification(extraction: DrawingExtraction)
 // consecutive real extraction runs, the model's OWN reasoning claimed
 // "REF-2" was one of "two non-disclaimed sheets" in conflict - directly
 // contradicting its own STEP 1 sheets[] entry marking REF-2
-// hasReferenceOnlyDisclaimer: true, generated in the very same response.
-// STEP 1 already produces exactly the ground truth needed to catch this:
-// this cross-checks every sheet name an envelope field's "reason"
-// mentions against sheets[]'s actual disclaimer flag for that sheet,
-// instead of trusting whatever the reason text itself claims.
+// reference_only, generated in the very same response. STEP 1 already
+// produces exactly the ground truth needed to catch this: this
+// cross-checks every sheet name an envelope field's "reason" mentions
+// against sheets[]'s actual sourceAuthority for that sheet, instead of
+// trusting whatever the reason text itself claims.
+//
+// Phase 3, item 2: sourceAuthority replaced the binary
+// hasReferenceOnlyDisclaimer this check originally read, but this
+// specific function's own logic is deliberately left unchanged in what
+// it catches - "not reference_only" (i.e. sealed_construction_document
+// OR unknown) is treated as one bucket, same as the old "false" reading
+// of the boolean. A finer sealed-vs-unknown preference is now available
+// to the model's own reasoning (see EXTRACTION_PROMPT's "Other rules"),
+// producing richer "reason" text - but this deterministic safety net
+// isn't extended to independently arbitrate that finer distinction yet,
+// since there's no diagnosed real-world case (the way REF-2 was)
+// showing it's actually needed. Adding unverified new deterministic
+// behavior isn't free - only extend this once a real failure justifies
+// it, same discipline as every other check in this file.
 //
 // Known, honest limitation: this can only re-verify sheets the reason
 // text actually NAMES. On Kinsela specifically, the deeper problem
-// wasn't a wrong claim about a named sheet - REF-2 really is disclaimed,
-// so re-checking that claim finds no discrepancy - it was that a THIRD,
-// relevant non-disclaimed sheet (A1.3, independently confirmed via exact
-// text search to also state "R-38 BLOWN INSULATION") was never mentioned
-// in the reasoning at all. A lookup against sheets[] cannot detect a
-// sheet the model didn't bring up in the first place; it can only catch
-// the case where the model mischaracterizes a sheet it DID cite (e.g.
-// calling a disclaimed sheet "non-disclaimed"). That's still a real,
-// useful, deterministic check - just not a complete substitute for
-// independently re-scanning every sheet's own content, which is a larger
-// change than this one.
+// wasn't a wrong claim about a named sheet - REF-2 really is
+// reference_only, so re-checking that claim finds no discrepancy - it
+// was that a THIRD, relevant sheet (A1.3, independently confirmed via
+// exact text search to also state "R-38 BLOWN INSULATION") was never
+// mentioned in the reasoning at all. A lookup against sheets[] cannot
+// detect a sheet the model didn't bring up in the first place; it can
+// only catch the case where the model mischaracterizes a sheet it DID
+// cite (e.g. calling a reference_only sheet non-reference_only). That's
+// still a real, useful, deterministic check - just not a complete
+// substitute for independently re-scanning every sheet's own content,
+// which is a larger change than this one.
 export function verifyEnvelopeConflictDisclaimers(extraction: DrawingExtraction): DrawingExtraction {
-  const sheetDisclaimed = new Map((extraction.sheets ?? []).map((s) => [s.name, s.hasReferenceOnlyDisclaimer]));
-  if (sheetDisclaimed.size === 0) return extraction;
+  const sheetAuthority = new Map((extraction.sheets ?? []).map((s) => [s.name, s.sourceAuthority]));
+  if (sheetAuthority.size === 0) return extraction;
 
   function check<T>(field: ExtractedField<T>): ExtractedField<T> {
     if (!field.reason) return field;
-    const mentioned = [...sheetDisclaimed.keys()].filter((name) => field.reason!.includes(name));
-    const nonDisclaimedMentioned = mentioned.filter((name) => sheetDisclaimed.get(name) === false);
-    const disclaimedMentioned = mentioned.filter((name) => sheetDisclaimed.get(name) === true);
+    const mentioned = [...sheetAuthority.keys()].filter((name) => field.reason!.includes(name));
+    const nonDisclaimedMentioned = mentioned.filter((name) => sheetAuthority.get(name) !== "reference_only");
+    const disclaimedMentioned = mentioned.filter((name) => sheetAuthority.get(name) === "reference_only");
     if (nonDisclaimedMentioned.length < 2) return field;
     // 2+ sheets that sheets[] itself confirms are NOT reference-only are
     // named in this reasoning together - by the peer-conflict rule this
     // shouldn't have been resolved to one value, regardless of what the
     // reason text concluded or whether it also (correctly or not) cited a
     // disclaimed sheet alongside them.
-    const note = `[system check, from sheets[] - not the model's own claim] ${nonDisclaimedMentioned.join(" and ")} are confirmed NON-disclaimed sheets both named in this reasoning${disclaimedMentioned.length > 0 ? ` (${disclaimedMentioned.join(", ")} is/are disclaimed and doesn't change this)` : ""} - per the peer-conflict rule this should not have been resolved to one value; verify against the actual drawing rather than trusting "value" as shown.`;
+    const note = `[system check, from sheets[] - not the model's own claim] ${nonDisclaimedMentioned.join(" and ")} are confirmed NON-reference_only sheets both named in this reasoning${disclaimedMentioned.length > 0 ? ` (${disclaimedMentioned.join(", ")} is/are reference_only and doesn't change this)` : ""} - per the peer-conflict rule this should not have been resolved to one value; verify against the actual drawing rather than trusting "value" as shown.`;
     return {
       ...field,
       unresolved: true,
@@ -908,7 +937,12 @@ export function flagCeilingInsulationRValueConflicts(extraction: DrawingExtracti
   const candidates = sheets
     .map((sheet) => ({
       name: sheet.name,
-      disclaimed: sheet.hasReferenceOnlyDisclaimer,
+      // "not reference_only" is the same bucket the old boolean's
+      // "false" reading covered (sealed_construction_document and
+      // unknown both count) - see verifyEnvelopeConflictDisclaimers'
+      // comment on why this function doesn't independently arbitrate
+      // the finer sealed-vs-unknown distinction yet.
+      disclaimed: sheet.sourceAuthority === "reference_only",
       value: extractRValueFromCalloutText(sheet.ceiling_insulation_callout_text),
     }))
     .filter((candidate): candidate is { name: string; disclaimed: boolean; value: number } => candidate.value != null);
@@ -1022,7 +1056,7 @@ export function sheetsNeedingInsulationCalloutFollowUp(extraction: DrawingExtrac
   if (!anyCalloutCaptured) return [];
   if (!extraction.building_envelope.ceiling_insulation_r_value.unresolved) return [];
   return sheets
-    .filter((s) => !s.hasReferenceOnlyDisclaimer && s.ceiling_insulation_callout_text == null)
+    .filter((s) => s.sourceAuthority !== "reference_only" && s.ceiling_insulation_callout_text == null)
     .map((s) => s.name);
 }
 

@@ -824,3 +824,51 @@ instruction, pending direction on the wall-length question above.
   repo has no component-test harness - verified by code review + tsc +
   consistency with the already-proven `rooms.length === 0` signal used
   elsewhere in the same function, not by an actual UI walkthrough.
+- 2026-08-14 18:30 — New scoped capability, agreed plan up front (5 items:
+  dimensional reconciliation hierarchy, source authority hierarchy,
+  uncertainty classification, revision awareness, plan-reading
+  conventions; explicit exclusions: structural/electrical/plumbing/
+  fire-life-safety/civil/ADA). Building in checkpointed phases per
+  recommended order, not one pass.
+  Phase 1 (items 2 + 5) implemented and verified:
+  - `ExtractedSheet.hasReferenceOnlyDisclaimer: boolean` replaced with
+    `sourceAuthority: "sealed_construction_document" | "reference_only" |
+    "unknown"` - a real 3-tier hierarchy, not a cosmetic rename.
+    "sealed_construction_document" requires actual evidence (seal/stamp
+    or "issued for construction" language), not inferred from a sheet
+    looking detailed - `"unknown"` is the deliberately conservative
+    default. Updated the two existing deterministic functions that read
+    this (`verifyEnvelopeConflictDisclaimers`,
+    `flagCeilingInsulationRValueConflicts`) to treat "not reference_only"
+    as one bucket (sealed + unknown together) - preserving their exact
+    prior behavior rather than adding an unverified new sealed-vs-unknown
+    arbitration with no diagnosed real-world case behind it yet. The
+    finer 3-tier preference is available to the model's own reasoning via
+    the prompt's "Other rules", producing richer reason text, but isn't
+    independently re-checked by code this phase - same "don't build
+    ahead of a proven need" discipline as every other check in this file.
+  - New "Reading discipline" + "Explicitly out of scope" paragraphs added
+    to the prompt (keynote tags, grid lines, section/detail markers;
+    explicit do-not-extract list matching the 6 excluded domains, with
+    an instruction to still scan an excluded-domain sheet for incidental
+    HVAC-relevant facts without reasoning about the excluded content
+    itself).
+  Verified: `npx tsc --noEmit` clean; 7/7 new unit tests covering the
+  3-tier field's behavior in both adapted functions and the follow-up
+  target selector. Real Kinsela extraction: `sourceAuthority` classified
+  correctly and conservatively (REF-1/REF-2 -> reference_only, all 11
+  other sheets -> unknown, no false "sealed" claims); R-value conflict
+  handling unchanged from before (expected - the A1.3-omission gap is a
+  separate, already-known limitation, not addressed this phase), but the
+  model's own reason text now correctly uses the new tier vocabulary
+  ("C.S (unknown tier) value R-30 is preferred over REF-2
+  (reference_only)") and referenced "detail-level callout" unprompted,
+  suggesting the reading-discipline instruction is being engaged with,
+  not just present-but-ignored. Scanned full output for accidental
+  out-of-scope leakage (structural/electrical/plumbing/fire/civil/ADA
+  terms) - one hit ("footing"), traced to the pre-existing, legitimate
+  `foundation_type` field describing the foundation assembly, not new
+  scope creep.
+  Not yet built: items 4 (revision awareness), 1 (dimensional
+  reconciliation hierarchy), 3 (uncertainty classification) - proceeding
+  in that order per the agreed plan, each its own checkpoint.

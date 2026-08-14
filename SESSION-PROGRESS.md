@@ -989,3 +989,23 @@ instruction, pending direction on the wall-length question above.
   not urgent enough to block this checkpoint.
   This completes all 5 items from the originally agreed scoped plan
   (2+5, 4, 1, 3), plus the streaming migration that item 3 required.
+- 2026-08-14 20:50 — Resolved the maxDuration flag from the streaming
+  commit. Had no way to check the actual Vercel plan myself (confirmed:
+  `vercel whoami` -> "Logged out", no `.vercel` project link, no
+  VERCEL_TOKEN in .env.local) - asked the user rather than guess. User
+  confirmed Pro plan, 300s max, and asked for a live doc check before
+  setting anything (not memory). Fetched Vercel's current official docs
+  (vercel.com/docs/functions/configuring-functions/duration,
+  last_updated 2026-07-01) live - this corrected a real, meaningful
+  misunderstanding: 300s is Pro's DEFAULT max duration, not its ceiling.
+  The actual generally-available maximum (same maxDuration export, no
+  extra config) is 800s. An further "extended max duration" beta goes to
+  1800s but requires explicit per-function config, isn't supported as a
+  project default, and is incompatible with Secure Compute/Static IPs -
+  not needed here. Confirmed no vercel.json or config in this repo
+  overrides the fluid-compute default the duration table assumes.
+  Set maxDuration: 300 -> 600 - ~2.7x margin over the measured 222.5s
+  call, and 200s under the real 800s ceiling (margin on both sides, not
+  pinned against either). `npx tsc --noEmit` clean. Pure constant-value
+  change with an updated, now fully doc-verified comment - no new
+  behavior to live-test beyond what streaming already verified.

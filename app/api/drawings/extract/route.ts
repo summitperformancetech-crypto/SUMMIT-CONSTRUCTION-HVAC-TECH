@@ -22,15 +22,23 @@ import {
 // took 222.5s (diagnosed 2026-08-14 verifying the switch to streaming
 // below). Serverless platforms enforce their OWN function-execution
 // timeout independent of the Anthropic SDK's now-removed non-streaming
-// ceiling - Vercel's unconfigured default varies by plan tier (as low as
-// 10s on Hobby) and would kill this route mid-stream long before a call
-// like that finishes. 300s is a reasonable, common ceiling for a
-// long-running AI call, but this repo has no vercel.json or other
-// config indicating the actual plan tier in use - flagged rather than
-// assumed: confirm this project's Vercel plan allows a 300s function
-// duration (Hobby does not; Pro does with this explicit opt-in;
-// Enterprise can go higher) and adjust if not.
-export const maxDuration = 300;
+// ceiling, and would kill this route mid-stream regardless of that fix.
+//
+// Confirmed live against Vercel's current docs (2026-08-14, not
+// assumed): this project is on the Pro plan. With fluid compute (the
+// account-wide default - confirmed no vercel.json or config in this repo
+// overrides it), Pro's default max duration is 300s, but the actual
+// generally-available MAXIMUM (no extra opt-in beyond this same
+// maxDuration export) is 800s. A further "extended max duration" beta
+// goes up to 1800s, but requires explicit per-function config beyond
+// this export, isn't supported as a project-level default, and is
+// incompatible with Secure Compute/Static IPs - none of which this
+// route needs, so it isn't used here.
+//
+// 600s gives ~2.7x margin over the measured 222.5s call (room for a
+// larger/denser drawing set or slower generation) while staying 200s
+// under the 800s ceiling itself - not pinned against either number.
+export const maxDuration = 600;
 
 type SupportedImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 

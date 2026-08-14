@@ -902,3 +902,24 @@ instruction, pending direction on the wall-length question above.
   continuing: item 3 (touches all 15 building_envelope fields' JSON
   shape) will very likely exhaust this margin - raised as an explicit
   decision point, not silently pushed through.
+- 2026-08-14 19:40 — Phase 3 (item 1, dimensional reconciliation
+  hierarchy) implemented. Prompt-only, no schema change - new "Other
+  rules" bullet establishing written > detail > schedule > general plan
+  > scaled/geometric, orthogonal to item 2's source-authority hierarchy,
+  requiring "reason" to state which tier won when applied. Ties directly
+  to item 5's reading-discipline paragraph (a detail-marker-sourced value
+  IS a detail dimension). `npx tsc --noEmit` clean. Real Kinsela
+  verification: no regression (output_tokens 18544, well under the 21000
+  ceiling; ceiling_insulation_r_value still lands on the same safe
+  unresolved/null outcome as before) - but the specific new hierarchy
+  vocabulary ("written dimension", "detail dimension", etc.) did not
+  appear anywhere in the output. Honest read: this is very likely because
+  Kinsela doesn't currently present an active dimension-TYPE conflict for
+  the model to apply this hierarchy to (its known conflicts so far are
+  about which SHEET, item 2's hierarchy, not what KIND of dimension) -
+  not evidence the instruction failed. Flagged explicitly, per the plan's
+  own upfront caveat: unlike items 2 and 4, this item has no diagnosed
+  real bug to confirm-fixed against, only "doesn't regress anything."
+  Proceeding to item 3 next requires resolving the token-budget question
+  raised above first - not building it against a margin already this
+  thin without a decision.

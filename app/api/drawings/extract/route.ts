@@ -18,6 +18,20 @@ import {
   type FollowUpResponse,
 } from "@/lib/drawingExtraction";
 
+// Real, measured: a full extraction call against a dense 13-sheet set
+// took 222.5s (diagnosed 2026-08-14 verifying the switch to streaming
+// below). Serverless platforms enforce their OWN function-execution
+// timeout independent of the Anthropic SDK's now-removed non-streaming
+// ceiling - Vercel's unconfigured default varies by plan tier (as low as
+// 10s on Hobby) and would kill this route mid-stream long before a call
+// like that finishes. 300s is a reasonable, common ceiling for a
+// long-running AI call, but this repo has no vercel.json or other
+// config indicating the actual plan tier in use - flagged rather than
+// assumed: confirm this project's Vercel plan allows a 300s function
+// duration (Hobby does not; Pro does with this explicit opt-in;
+// Enterprise can go higher) and adjust if not.
+export const maxDuration = 300;
+
 type SupportedImageMediaType = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
 const IMAGE_MEDIA_TYPE_BY_EXTENSION: Record<string, SupportedImageMediaType> = {
@@ -135,52 +149,32 @@ export async function POST(request: Request) {
   let stopReason: string | null;
   let outputTokens: number | undefined;
   try {
-    const message = await anthropic.messages.create({
+    // History of this max_tokens value, kept for context on why streaming
+    // was the eventual fix rather than another number bump: 4096 -> 8192
+    // (26-room set truncated, diagnosed 2026-08-12) -> 16000 (Kinsela
+    // truncated again at room 22/25, diagnosed 2026-08-13) -> 20000 then
+    // 21000 (Phase 3's sourceAuthority/revision fields pushed real need to
+    // 19935 measured tokens, diagnosed 2026-08-14) - each bump chased the
+    // schema's growth against a shrinking margin under the Anthropic SDK's
+    // non-streaming hard ceiling (refuses `max_tokens` above 21333 per
+    // `(60min * maxTokens) / 128000 <= 10min`, see
+    // node_modules/@anthropic-ai/sdk/src/client.ts's
+    // calculateNonstreamingTimeout - a client-side error before the
+    // request is even sent). That ceiling is specific to non-streaming
+    // requests; it does not apply here. Streaming was the SDK's own
+    // suggested fix all along (flagged, not silently deferred, across
+    // three prior diagnoses) - item 3 (uncertainty classification,
+    // touching all 15 building_envelope fields) was the point where
+    // deferring it further stopped being viable. 32000 is a generously
+    // safe value well above the ~40%-headroom philosophy over the
+    // ~20000-token real need measured so far - not the model's hard
+    // output ceiling, just no longer worth tuning tightly now that
+    // hitting it fails soft (a real max_tokens stop_reason, handled below
+    // as before) rather than a client-side throw before the request is
+    // even sent.
+    const stream = anthropic.messages.stream({
       model: "claude-sonnet-4-6",
-      // Room-dense drawings (20+ rooms - real, not hypothetical: a 26-room
-      // architectural set hit this exact ceiling and got cut off mid-JSON
-      // at the previous 4096 limit, diagnosed 2026-08-12 by reproducing
-      // the API call directly and inspecting stop_reason) need more output
-      // budget than a small single-family floor plan. 8192 gave ~40%
-      // headroom over what that drawing actually needed (4872 tokens) -
-      // but that was against the schema BEFORE STEP 3/4 added 8 window-area
-      // fields per room plus 1 envelope field. Re-diagnosed 2026-08-13 the
-      // same way: the same 25-room Kinsela set hit the (still-8192) ceiling
-      // again, truncating mid-response at room 22/25 (~369 tokens/room
-      // under the new schema, extrapolating to ~9500 tokens for all 25).
-      // 16000 kept the same ~40%-headroom philosophy over that estimate -
-      // then Phase 2 (sheet provenance, schedules, HVAC equipment/zoning,
-      // water heaters, ~30 new keys across 15 building_envelope fields)
-      // hit the SAME ceiling a third time, this time truncating with only
-      // ~285 tokens of output left (measured directly: 44609 chars at
-      // 16000 tokens = ~2.79 chars/token, and the response cut off inside
-      // the next-to-last array with just square_footage_summary,
-      // water_heaters, and closing braces remaining) - real need is
-      // ~16285 tokens, which the usual ~40% headroom would put at ~22800.
-      //
-      // That number is NOT usable, though: the Anthropic SDK enforces a
-      // hard ceiling on non-streaming requests - it refuses above 21333
-      // (`(60min * maxTokens) / 128000 <= 10min`, see
-      // node_modules/@anthropic-ai/sdk/src/client.ts's
-      // calculateNonstreamingTimeout) and throws before the request is
-      // even sent, not a slow response, an immediate client-side error.
-      // Confirmed by hitting it directly at max_tokens: 24000 while
-      // diagnosing this. 20000 was a deliberately conservative value under
-      // that ceiling (~23% headroom over the measured need, not the usual
-      // ~40%) - and this comment already predicted exactly what happened
-      // next: re-diagnosed 2026-08-14 during Phase 3 (source authority
-      // hierarchy + revision awareness - longer per-sheet enum strings,
-      // 2 new per-sheet fields), a real Kinsela run hit stop_reason:
-      // max_tokens at exactly 20000, truncating mid-JSON. 21000 is the
-      // remaining safe margin under the hard 21333 ceiling - a genuine
-      // stopgap, not a fix, and this margin is now thin enough (~300
-      // tokens) that it will very likely be exhausted by Phase 3's
-      // remaining items (item 3 - uncertainty classification - touches
-      // all 15 building_envelope fields' JSON shape). Streaming support
-      // is the real fix and was already flagged, not silently deferred
-      // again - raised explicitly as a decision point before continuing
-      // to the fields that would exhaust this margin.
-      max_tokens: 21000,
+      max_tokens: 32000,
       messages: [
         {
           role: "user",
@@ -189,6 +183,7 @@ export async function POST(request: Request) {
       ],
     });
 
+    const message = await stream.finalMessage();
     const textBlock = message.content.find((block) => block.type === "text");
     rawText = textBlock && "text" in textBlock ? textBlock.text : "";
     stopReason = message.stop_reason;

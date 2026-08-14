@@ -923,3 +923,32 @@ instruction, pending direction on the wall-length question above.
   Proceeding to item 3 next requires resolving the token-budget question
   raised above first - not building it against a margin already this
   thin without a decision.
+- 2026-08-14 20:05 — Token-budget decision: build streaming now (user's
+  choice, "Recommended" option). Converted route.ts's main extraction
+  call from `anthropic.messages.create()` to `anthropic.messages.stream()`
+  + `await stream.finalMessage()` - the non-streaming hard ceiling
+  (`calculateNonstreamingTimeout`, refuses max_tokens > 21333) is specific
+  to non-streaming requests and doesn't apply here. max_tokens raised
+  20000/21000 -> 32000 (generously safe, not the model's actual ceiling -
+  no longer worth tuning tightly now that overrunning it fails soft via
+  stop_reason, same handling as before, not a client-side throw before
+  the request is even sent). Follow-up call (max_tokens: 4000) left
+  non-streaming - nowhere near any ceiling, no need to touch it.
+  Verified with a real, direct streaming call against Kinsela (exact
+  route.ts pattern): completed in 222.5s, stop_reason: end_turn,
+  output_tokens: 18072, parsed cleanly into the full expected shape
+  (sourceAuthority/ceiling_insulation_callout_text/revisionDate/
+  revisionNote all present and correct on all 13 sheets).
+  That 222.5s elapsed time surfaced a separate, real risk this change
+  makes newly relevant: Vercel enforces its own function-execution
+  timeout independent of the (now-removed) Anthropic SDK ceiling, and
+  this repo has no maxDuration export or vercel.json indicating which
+  plan tier's default applies (as low as 10s on Hobby - would have
+  killed this route mid-stream regardless of the SDK change). Added
+  `export const maxDuration = 300` to route.ts as a reasonable common
+  default, explicitly flagged rather than assumed: this project's actual
+  Vercel plan tier needs confirming (300s requires at least Pro with
+  this explicit opt-in; Hobby cannot go this high).
+  `npx tsc --noEmit` clean throughout.
+  Item 3 (uncertainty classification) is now unblocked by the token
+  budget - proceeding next.

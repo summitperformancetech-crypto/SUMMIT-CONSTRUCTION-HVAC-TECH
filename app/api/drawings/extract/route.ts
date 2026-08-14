@@ -165,16 +165,22 @@ export async function POST(request: Request) {
       // calculateNonstreamingTimeout) and throws before the request is
       // even sent, not a slow response, an immediate client-side error.
       // Confirmed by hitting it directly at max_tokens: 24000 while
-      // diagnosing this. 20000 is a deliberately conservative value under
+      // diagnosing this. 20000 was a deliberately conservative value under
       // that ceiling (~23% headroom over the measured need, not the usual
-      // ~40%) - not a final answer. This app will keep adding extractable
-      // categories, and headroom this tight will need revisiting via
-      // actual streaming support (the SDK's own suggested fix), not
-      // another number bump - flagged to the user rather than guessed at
-      // silently. Cost/latency is billed on tokens actually generated,
-      // not this ceiling, so there's no downside to unused headroom on
-      // smaller drawings, right up until the ceiling itself.
-      max_tokens: 20000,
+      // ~40%) - and this comment already predicted exactly what happened
+      // next: re-diagnosed 2026-08-14 during Phase 3 (source authority
+      // hierarchy + revision awareness - longer per-sheet enum strings,
+      // 2 new per-sheet fields), a real Kinsela run hit stop_reason:
+      // max_tokens at exactly 20000, truncating mid-JSON. 21000 is the
+      // remaining safe margin under the hard 21333 ceiling - a genuine
+      // stopgap, not a fix, and this margin is now thin enough (~300
+      // tokens) that it will very likely be exhausted by Phase 3's
+      // remaining items (item 3 - uncertainty classification - touches
+      // all 15 building_envelope fields' JSON shape). Streaming support
+      // is the real fix and was already flagged, not silently deferred
+      // again - raised explicitly as a decision point before continuing
+      // to the fields that would exhaust this margin.
+      max_tokens: 21000,
       messages: [
         {
           role: "user",

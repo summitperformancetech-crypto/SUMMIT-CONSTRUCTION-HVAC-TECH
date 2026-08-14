@@ -216,6 +216,23 @@ export type ExtractedSheet = {
   // it literally say) and let code build the comparison from that raw
   // data - see flagCeilingInsulationRValueConflicts below.
   ceiling_insulation_callout_text: string | null;
+  // Phase 3, item 4 (version/revision awareness). The most recent
+  // revision date/number printed in this sheet's own revision block or
+  // title block (e.g. "REV 2 03/15/2026", "REVISION 3"), copied verbatim
+  // - or null if the sheet shows no revision marking at all (the common
+  // case for a set with no post-issuance changes). A plain per-sheet
+  // transcription, same discipline as ceiling_insulation_callout_text
+  // above - not a judgment about whether the set is current, just
+  // reporting what's actually printed so DrawingExtraction.revisionConcern
+  // below has real evidence to reason from instead of a vague impression.
+  revisionDate: string | null;
+  // A short note when this sheet shows a revision cloud (a hand-drawn or
+  // printed cloud/bubble outlining a changed area), a "SUPERSEDED" or
+  // "VOID" stamp, or any other visible indicator that this sheet's
+  // content was changed after initial issuance - e.g. "revision cloud
+  // around garage dimensions, no revision date visible nearby". Null
+  // when the sheet shows no such indicator.
+  revisionNote: string | null;
 };
 
 // Phase 2, item 6. Transcribed verbatim from the drawing's own window
@@ -352,6 +369,19 @@ export type DrawingExtraction = {
   hvac_zoning?: ExtractedHvacZoningEntry[];
   square_footage_summary?: ExtractedSquareFootageEntry[];
   water_heaters?: ExtractedWaterHeater[];
+  // Phase 3, item 4 (version/revision awareness). Document-level,
+  // conditional trigger only - same pattern as flagWaterHeaterLoadRisk's
+  // "conditional risk flag, not a routine flat cross-check" design, not
+  // something filled in by default on every project. Populated ONLY when
+  // there's a specific, articulable reason (drawn from the per-sheet
+  // revisionDate/revisionNote evidence in "sheets" above) to suspect the
+  // uploaded set is not the latest revision - e.g. a general note or
+  // sheet index references a change the actual plan doesn't show, or
+  // sheets in the same set carry inconsistent revision dates suggesting
+  // a stale mix. Most drawing sets will never trigger this - a clean set
+  // with no revision markings at all is the normal, unremarkable case
+  // and should leave this null, not prompt a guess.
+  revisionConcern?: string | null;
 };
 
 export type DrawingExtractionStatus = "pending" | "completed" | "failed";
@@ -425,7 +455,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "description": string | null
   },
   "sheets": [
-    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null }
+    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null, "revisionDate": string | null, "revisionNote": string | null }
   ],
   "building_envelope": {
     "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null },
@@ -494,10 +524,11 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
   ],
   "water_heaters": [
     { "type": "electric" | "gas-tankless" | "gas-tank" | "atmospheric-vent" | "power-vent" | "other" | null, "fuel": string | null, "location": "conditioned-space" | "attic" | "garage" | "outside" | "other" | null, "unresolved": boolean, "reason": string | null }
-  ]
+  ],
+  "revisionConcern": string | null
 }
 
-STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "sourceAuthority" - exactly one of "sealed_construction_document", "reference_only", "unknown", determined in this order: first, set "reference_only" if the sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent). Otherwise, set "sealed_construction_document" ONLY if the sheet shows an actual professional (engineer/architect) seal or stamp graphic, or explicit issuance language such as "ISSUED FOR CONSTRUCTION" or "APPROVED FOR CONSTRUCTION" - do not infer this from a sheet simply looking detailed, official, or complete; most sheets in a typical residential set will NOT qualify, and that's the expected, normal outcome, not a gap. Otherwise (the common case), set "unknown". This is a real authority hierarchy for resolving conflicts between sheets (sealed_construction_document > unknown > reference_only), not a cosmetic label - see "Other rules" below for exactly how it's used. Also set "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
+STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "sourceAuthority" - exactly one of "sealed_construction_document", "reference_only", "unknown", determined in this order: first, set "reference_only" if the sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent). Otherwise, set "sealed_construction_document" ONLY if the sheet shows an actual professional (engineer/architect) seal or stamp graphic, or explicit issuance language such as "ISSUED FOR CONSTRUCTION" or "APPROVED FOR CONSTRUCTION" - do not infer this from a sheet simply looking detailed, official, or complete; most sheets in a typical residential set will NOT qualify, and that's the expected, normal outcome, not a gap. Otherwise (the common case), set "unknown". This is a real authority hierarchy for resolving conflicts between sheets (sealed_construction_document > unknown > reference_only), not a cosmetic label - see "Other rules" below for exactly how it's used. Also set "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. Also set "revisionDate": the most recent revision date or revision number, copied verbatim, but ONLY from an actual revision-specific marking - a revision table/block (often literally labeled "REVISIONS", with rows like "REV | DATE | DESCRIPTION"), a numbered revision triangle or tag near a specific change, or equivalent - e.g. "REV 2 03/15/2026". Do NOT use the sheet's ordinary issue date, plot date, or "DATE:" field in the title block for this - that field exists on every sheet regardless of whether anything was ever revised, and is a different fact (when the set was first issued, not evidence of a later change). Leave "revisionDate" null whenever there is no distinct revision-specific marking, even though the sheet obviously still has an ordinary issue date - this is the normal, expected case for a set with no post-issuance changes, not a gap to explain. And "revisionNote": a short note if this sheet shows a revision cloud (a hand-drawn or printed cloud/bubble outlining a changed area), a "SUPERSEDED" or "VOID" stamp, or any other visible sign the content was changed after initial issuance - null if none. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
 
 STEP 2 — Orientation. Look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
 
@@ -550,6 +581,7 @@ Other rules:
 - window_count and door_count are simple counts, not areas.
 - Set "unresolved": true on the building envelope object, or on any individual room, whenever the drawing is ambiguous, illegible, or you are guessing rather than reading a clearly labeled figure. Whenever you set "unresolved": true on a room, always fill "reason" with a short, specific explanation a field technician can act on (e.g. "no orientation marker - exposure cannot be determined", "room label illegible", "floor area not dimensioned"). Leave "reason" null only when "unresolved" is false.
 - Do not invent room names if none are labeled — use a generic label like "Room 1" and mark it unresolved with an appropriate reason.
+- Revision concern ("revisionConcern", document-level, conditional): after reviewing every sheet's "revisionDate"/"revisionNote" from STEP 1, set this ONLY when you have a SPECIFIC, articulable reason to suspect the uploaded set is not the latest revision - e.g. a general note, sheet index, or one sheet's own revision block references a change (a room addition, a dimension change, a note explicitly saying "see rev. 3") that the actual plan sheets in THIS upload do not show; or sheets in the same set carry meaningfully inconsistent revision dates suggesting a stale mix rather than a single coherent issuance. State specifically what you found and why it's concerning. Leave this null in the ordinary case - a clean set with consistent or no revision markings at all is normal and unremarkable, not evidence of a problem; do not speculate or flag this "just in case."
 - Never include ACH50, occupant count, or indoor design temperatures anywhere in your output. Those values are never extracted from drawings and must always be entered manually by the estimator.
 - Output ONLY the JSON object described above.`;
 
@@ -605,6 +637,14 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
     items.push(
       `window_schedule: ${windowScheduleEntries.length} entries need verification against the source drawing - table-transcription accuracy not yet proven reliable`,
     );
+  }
+
+  // Phase 3, item 4. Conditional by construction (see EXTRACTION_PROMPT's
+  // "Other rules") - the model only ever populates this when it found
+  // specific evidence of a possible stale revision, so its mere presence
+  // here (not a count, since there's only ever one) is itself the signal.
+  if (extraction.revisionConcern) {
+    items.push(`revision concern: ${extraction.revisionConcern}`);
   }
 
   return items;

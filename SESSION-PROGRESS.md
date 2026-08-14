@@ -872,3 +872,33 @@ instruction, pending direction on the wall-length question above.
   Not yet built: items 4 (revision awareness), 1 (dimensional
   reconciliation hierarchy), 3 (uncertainty classification) - proceeding
   in that order per the agreed plan, each its own checkpoint.
+- 2026-08-14 19:15 — Phase 2 (item 4, revision awareness) implemented and
+  verified. `ExtractedSheet` gains `revisionDate`/`revisionNote` (STEP 1);
+  new document-level `DrawingExtraction.revisionConcern` (conditional
+  trigger, same pattern as flagWaterHeaterLoadRisk - null in the ordinary
+  case, only populated with specific evidence of a stale/inconsistent
+  revision), wired into `collectUnresolvedItems`. 4/4 unit tests pass.
+  Real Kinsela verification caught a genuine, honest mistake on the first
+  attempt: `revisionDate` was over-filled with the sheet's ordinary issue
+  date ("OCT/03/2025") on all 13 sheets - my STEP 1 wording said "revision
+  block or title block", and the model grabbed the title block's DATE
+  field instead of a real revision-specific marking. Fixed by explicitly
+  excluding the ordinary issue/plot date and requiring an actual
+  revision-specific marking (a REVISIONS table, a numbered revision
+  triangle, etc.). Re-verified: `revisionDate`/`revisionNote`/
+  `revisionConcern` now correctly stay null across all 13 sheets - the
+  clean, expected outcome for a set with no revision markings, not a gap.
+  Separately surfaced two real findings unrelated to item 4's own logic:
+  (1) a recurring, reproducible model JSON bug - an invalid `\'` escape
+  inside quoted dimension text like "1'-4\" O.C." (hit twice, same
+  pattern) - already handled gracefully by route.ts's existing malformed-
+  JSON catch, not a regression, just newly observed; (2) a real token-
+  budget problem - a live run hit `stop_reason: max_tokens` at the
+  existing 20000 ceiling, caused by this phase's own additions (longer
+  `sourceAuthority` enum strings + 2 new per-sheet fields x 13 sheets).
+  Bumped max_tokens 20000 -> 21000 (safe margin under the hard 21333 SDK
+  ceiling) as an honest stopgap, re-verified clean - but the re-verified
+  run still used 19935 of 21000 tokens, ~1065 left. Flagging before
+  continuing: item 3 (touches all 15 building_envelope fields' JSON
+  shape) will very likely exhaust this margin - raised as an explicit
+  decision point, not silently pushed through.

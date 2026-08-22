@@ -25,14 +25,17 @@ Three-tier role hierarchy:
 
 ## Current Status
 
-Early setup phase. A working prototype already exists as a single-file React artifact (not yet in this folder) with:
+Active production build, not a prototype. The calculation engines are genuinely implemented (not stubbed) and wired end-to-end from database → UI → PDF report:
 
-- Full Manual J residential load calculations
-- Manual D duct sizing
-- Manual S equipment selection
-- Commercial/Industrial load modules
+- `lib/manualJ.ts` — full Manual J residential load calc (room-by-room, ASHRAE 62.2 ventilation, duct gain/loss, zones)
+- `lib/manualD.ts` — Manual D duct sizing (equal-friction method, round + rectangular)
+- `lib/manualS.ts` — Manual S equipment selection (bilinear OEM performance interpolation, ACCA sizing windows, heat-pump balance point)
+- `lib/manualN.ts` / `lib/manualNSimulation.ts` — commercial block load + 8760-hour NOAA-data simulation
+- `lib/manualIndustrial.ts` — industrial process-load module (makeup air, exhaust, cleanroom ACH)
+- `app/api/drawings/extract/route.ts` + `lib/drawingExtraction.ts` — AI-based drawing extraction (Claude, streaming), with a human-review gate for known model failure modes
+- `app/api/reports/route.ts` + `lib/reportHtmlV2.ts` — branded PDF report generation per `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`
 
-This project folder is being set up to rebuild that prototype into a real production application.
+See `SESSION-PROGRESS.md` for the detailed session-by-session build log, and `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md` for the report-format specification.
 
 ## Planned Architecture
 

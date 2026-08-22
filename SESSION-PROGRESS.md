@@ -1009,3 +1009,643 @@ instruction, pending direction on the wall-length question above.
   pinned against either). `npx tsc --noEmit` clean. Pure constant-value
   change with an updated, now fully doc-verified comment - no new
   behavior to live-test beyond what streaming already verified.
+
+## Status: KNOWN OPEN ITEM — Walk-In Closet (Bedroom 2) is a room-identity/naming bug, not fixed
+
+- 2026-08-16 — Logging this now per explicit instruction, NOT fixing it:
+  the `rooms` row named **"Walk-In Closet (Bedroom 2)"**
+  (`c89d18e7-358a-4906-a4ff-495978c0efd7`) does not actually hold data for
+  the walk-in closet physically adjacent to Bedroom 2. Its linked
+  extraction record (`drawings` room[14], `room_label_text`/floor-area
+  note = "4'2\" x 6'4\"") belongs to a **different** closet - the one
+  adjacent to **Guest Bedroom 4** (confirmed via direct pixel inspection
+  of A1.1: that "4'2\" X 6'4\"" label sits directly next to Guest Bedroom
+  4, not near Bedroom 2/Kids Hall at all).
+  The real walk-in closet next to Bedroom 2 (visible on A1.1, adjacent to
+  Kids Hall, labeled only "WALK-IN CLO. / 10' CEILING" with no printed
+  W x D dimension at all) has **no corresponding row in `rooms`** under
+  its own correct identity - it's essentially unrepresented in the data
+  model, while a mislabeled row claims its name.
+  This is a room-identity/naming bug in how the original extraction
+  assigned names to rooms - separate from, and not touched by, this
+  session's wall-orientation-axis correction work. Not investigated
+  further or fixed - flagged here so it isn't lost. Likely needs: (a)
+  deciding whether to rename the existing row to reflect what it actually
+  is (the Guest-Bedroom-4 closet) or split/re-match it, and (b) deciding
+  whether the real Bedroom-2 closet needs a new `rooms` row created from
+  scratch, since no extraction data currently exists under the right
+  identity for it either way.
+
+## Status: investigating the orientation-upfront extraction's completeness gap (diagnosis only, no prompt changes yet)
+
+- 2026-08-16 — **Correction to my own prior report**: I told the user the
+  3 rooms with any wall data in the orientation-upfront test run (Great
+  Room, Dining, Kitchen) all matched pixel-verified ground truth, "3 for
+  3, zero disagreements." That check only covered 3 of the 5 rooms that
+  actually returned data - Home Office and Bedroom #2 also got partial
+  fills and I hadn't checked them. Checking now: both are **wrong, not
+  just incomplete** - Home Office came back `wall_east/west_len_ft=14`
+  (should be 10.5, the depth value misassigned to the width axis) with
+  N/S null; Bedroom #2 came back `wall_north/south_len_ft=13,
+  wall_west_len_ft=14` (should be N/S=14, E/W=13 - same axis swap).
+  Revised, accurate tally: of 5 rooms with any data, 3 correct (Dining,
+  Kitchen, Great Room-partial), 2 backwards. "When it fills a value it's
+  trustworthy" does not hold universally - retracting that claim.
+- Diagnosis of the completeness gap itself:
+  1. **Not a new regression.** Compared the OLD no-orientation
+     (front/rear/left/right) branch's own fill rate on the identical
+     room set (`orientation-before.json`): same sparse pattern already
+     existed before this session's change - most rooms 2/4 filled or
+     0/4, only Great Room hit 4/4. The low completeness is a pre-existing
+     weakness of this model reliably completing all four wall-length
+     fields per room across a ~27-room single completion, under either
+     branch's wording - not something the known-orientation prompt made
+     worse in isolation.
+  2. **What the diff shows changed causally**: `buildOrientationStep3Branch`'s
+     known-orientation return text (`lib/drawingExtraction.ts` ~line 507)
+     dropped the no-orientation branch's explicit "REQUIRED, not
+     optional... only leave null when [narrow legitimate reasons]... not
+     out of general caution" completion mandate (~line 503) - the known
+     branch has no equivalent anti-null pressure at all. It also asks for
+     a harder task than either alternative: locate one anchor feature
+     (the front entry/porch) on the floor plan, then propagate that
+     single fact through "the floor plan's own geometry" to derive an
+     absolute compass letter for every wall of every room, building-wide
+     - versus the old branch's much shallower per-room local judgment
+     (front/rear/left/right relative to an imagined person, no
+     building-wide propagation chain required).
+  3. **Room-level evidence supports the harder-task theory over a
+     caution theory**: rooms whose own `reason` text shows the anchor-
+     propagation was actually attempted (Bedroom #2: "Room is on south
+     (right) side of plan facing west (front) based on floor plan
+     geometry") got some wall fields filled, even where wrong. Rooms
+     whose `reason` only discusses floor-area/ceiling-height uncertainty
+     - no directional reasoning at all (Foyer, Hidden Pantry, Mud Room,
+     Storage/Mechanical, Bath #3, Guest Bedroom #4, Master Bath, Laundry,
+     etc.) - show all four wall fields null, consistent with the
+     harder derivation sub-task being silently skipped for most rooms
+     rather than explicitly declined with a stated reason.
+  4. **Converting the OLD run's front/rear/left/right into compass via
+     the known transform (front=W/rear=E/left=N/right=S) reproduces the
+     exact same Home Office and Bedroom #2 swap** - so that specific
+     defect isn't new either; it's the same per-room front-entry-relative-
+     to-anchor error already diagnosed 2026-08-13, and it survived even
+     though the anchor (front=W) is now handed to the model as confirmed
+     fact rather than guessed. Handing over the anchor fixed the "which
+     wall is front, globally" question but did not fix "how does THIS
+     room's geometry relate to that anchor" for every room.
+  Not proposing a prompt change yet - reporting this diagnosis to the
+  user first, per instruction.
+- 2026-08-16 — v2 fix (mandatory per-room direction-tracing sub-step,
+  single null-permission) implemented and real-verified: `tsc` clean,
+  re-ran against Kinsela (254s, end_turn, 19770 tokens, 25 rooms parsed).
+  Result: WORSE completeness - only 1/25 rooms got any wall data (down
+  from 5/27). Reason text showed the model DID perform the required
+  tracing (e.g. Foyer: "W wall faces front exterior (confirmed by entry
+  door location on front porch)" - correct and confident) but then still
+  left all four fields null, citing resolution/legibility doubt about the
+  NUMBER, not the direction. Diagnosis: the null-permission was written
+  narrowly (for direction-tracing failure only) but positioned right next
+  to the length fields, and the model applied it broadly to any nearby
+  doubt, including ordinary numeric-legibility doubt - a different,
+  pre-existing problem conflated with the new one. Reported honestly to
+  the user as a regression, not shipped, no DB write.
+- 2026-08-16 — v3 fix per user direction: split the null-permission into
+  two independently-scoped conditions in `buildOrientationStep3Branch`'s
+  known branch - (a) DIRECTION uncertainty may leave all four wall fields
+  null (the only case that does); (b) LENGTH/legibility uncertainty must
+  NOT use that escape - once direction is known, give a best-effort
+  length (per the existing dimensional reconciliation hierarchy) flagged
+  approximate/unresolved rather than omitted. Also added
+  `buildOrientationPreamble()`, spliced into the very top of the prompt
+  (before STEP 1), restating the confirmed orientation as a standing,
+  document-wide fact - not scoped to STEP 2/3 - so no page (including an
+  elevation sheet whose own title could otherwise be misread as
+  authoritative) needs to re-derive or second-guess it. Verified the
+  null-case output stays byte-for-byte identical to the pre-session
+  static prompt (38212 chars, matches the pre-orientation-work baseline
+  exactly) - caught and fixed one extra stray blank line from the first
+  edit pass before confirming this. `tsc --noEmit` clean.
+  Real re-run against Kinsela (240.7s, end_turn, 19331 tokens, 24 rooms
+  parsed, no truncation):
+  - **Completeness: dramatically better.** 13/24 rooms got wall data, and
+    every one of those 13 is a clean 4/4 fill (no partial fills at all,
+    unlike every prior run) - Great Room, Dining, Kitchen, Hidden Pantry,
+    Storage/Mechanical, Home Office, Foyer, Bedroom #2, Guest Bedroom #4,
+    Bath #3, Rear Porch, 3-Car Garage, Bonus Room.
+  - **Correctness: a NEW, serious regression - worse than before this
+    fix, worse than the current live DB.** Checked all 9 target rooms
+    (8 with real pixel-verified ground truth from earlier this session,
+    Guest Bedroom #4 trivially either-way since it's square) against this
+    run's output: only Great Room and Bath #3 are correct (plus the
+    trivial Guest Bedroom #4) - **Dining, Kitchen, Hidden Pantry,
+    Storage/Mechanical, Home Office, and Bedroom #2 all came back
+    backwards** (axis-swapped), 6 of 9.
+  - **Root cause, diagnosed from the model's own reason text**: every
+    wrong room's reasoning contains an explicit but WRONG axis-labeling
+    step, e.g. Dining: "The 12' dimension appears to be the E-W...(N and
+    S walls)...21'-9" is the N-S...(E and W walls)". The model's
+    underlying GEOMETRIC RULE it's applying (an E-W-extent dimension sets
+    the North/South walls' length) is actually correct in plain compass
+    terms - but it's mislabeling WHICH of the room's two printed numbers
+    is the true compass E-W extent vs N-S extent, because on this
+    building's rotated page (page-left=North, page-right=South,
+    page-top=East, page-bottom=West, established early this session) the
+    page-horizontal extent is actually the compass N-S extent, not E-W -
+    and the model isn't accounting for that inversion here. This is a
+    DIFFERENT sub-step than the one v2/v3 addressed so far: "which wall
+    is front-facing" (now working correctly, e.g. Home Office/Bedroom #2/
+    Foyer all correctly say "W wall faces front exterior") is a separate
+    question from "which of this room's two printed numbers is that
+    wall-pair's length" - the prompt has never given explicit guidance
+    for the second question, and the model is resolving it with what
+    looks like an unreliable, roughly-50/50-or-worse guess per room
+    rather than tracing the room's actual dimension lines the way the
+    pixel-verification work earlier this session did.
+  - **Not applied to the live `drawings`/`rooms` tables.** Applying this
+    extraction's data would silently corrupt 6 rooms that are currently
+    correct in the DB (fixed or already-verified earlier this session).
+    Explicitly flagged to the user as unsafe to apply.
+  - Also noted, not chased further (out of scope - Garage/Bonus Room are
+    explicitly excluded from this session's re-verification per the
+    user): this run's 3-Car Garage/Bonus Room values (N/S=37.67/38.33,
+    E/W=25.67/31.42) roughly match a DIFFERENT, previously-proposed-but-
+    never-applied correction from 2026-08-14 (not the current live DB
+    values, which remain a separate, already-flagged inconsistency) -
+    tangential, not re-investigated now.
+  - Room-count/naming drift continues as a known, pre-existing
+    characteristic (flagged multiple times earlier this session): this
+    run produced 24 rooms, not 25/27 - no separate "Walk-In Closet" line
+    item at all this time (folded away or renamed, not investigated).
+  Reported the full completeness-vs-correctness picture to the user,
+  honestly, including that this is a regression on correctness relative
+  to both the pre-fix state and the live DB - not proposing a further
+  prompt iteration without direction, per the same discipline as v2.
+- 2026-08-16 — User's diagnosis of the v3 failure: three rounds of
+  "reason more carefully" each fixed the prior failure while surfacing a
+  new one - the model needs an explicit MECHANICAL RULE, not another
+  nudge. Directed a structurally different v4 fix: derive and explicitly
+  STATE a page-position-to-compass table ONCE per sheet (written into
+  `orientation.description`, auditable), then treat every room's
+  wall-length assignment as a pure LOOKUP against that table - no fresh
+  per-room compass reasoning at all. User asked to see the exact wording
+  before spending another real API call, given v2/v3 had each traded one
+  failure mode for a different one.
+  Rewrote `buildOrientationStep3Branch`'s known branch in full: STEP A
+  (once per floor-plan sheet - locate the front anchor, note its PAGE
+  EDGE, derive the full page-position<->compass table by simple rotation,
+  state it plus the two resulting wall-length rules in
+  `orientation.description`, or state a documented failure if the anchor
+  isn't findable/confirmable on that sheet, e.g. a second-floor plan);
+  STEP B (per room - identify which of the room's two printed numbers
+  runs page-horizontal vs page-vertical, a plain visual read, then
+  substitute into STEP A's table - no compass judgment). Kept the
+  two-independently-scoped-null-permissions principle from v3, re-anchored
+  to the new procedure (STEP A failure -> all four null; STEP B numeric
+  imprecision -> best-effort estimate, never bare null). `tsc --noEmit`
+  clean. Presented the exact rendered text (with Kinsela's real W/E/N/S
+  substituted) to the user for review before running anything real.
+  A user message appeared to echo my own report back verbatim with no
+  new content, twice - treated as a likely client-side glitch rather than
+  confirmation (per this session's standing rule: no real user input =
+  no action), asked directly via AskUserQuestion rather than guessing;
+  user confirmed "yes, run it now."
+  Real re-run against Kinsela (254.3s, end_turn, 20232 tokens, 25 rooms,
+  no truncation):
+  - **Completeness: best yet.** 15/25 rooms got wall data (up from 13/24
+    in v3), including Walk-In Closet (Bedroom #2) for the first time in
+    any run this session.
+  - **`orientation.description` shows the mechanical procedure working
+    exactly as designed**: "On sheet A1.1, the FRONT PORCH / main entry
+    is drawn at the page-BOTTOM edge; therefore page-bottom=W, page-top=E,
+    page-left=N, page-right=S" - this table matches the independently
+    pixel-derived page-position rule established earlier this session,
+    exactly. It also correctly extended the table to the bonus-room sheet
+    (A1.2) via stated stairwell/outline alignment reasoning, rather than
+    assuming - exactly per STEP A.5's instruction.
+  - **But the WALL-LENGTH RULE derived from that (correct) table is
+    inverted**: `orientation.description` states "a room's page-HORIZONTAL
+    printed dimension = North/South wall length; page-VERTICAL = East/West
+    wall length" - backwards from true plane geometry (a wall drawn
+    running left-right on the page spans the room's page-horizontal
+    extent, and that wall is the one facing whichever compass direction
+    sits at the page-top/bottom edge - here, East/West, not North/South).
+  - **Consequence: uniform, 100%-consistent backwards results.** Checked
+    all 9 target rooms: 7 of 8 non-trivial rooms are backwards (Great
+    Room, Dining, Kitchen, Hidden Pantry, Storage/Mechanical, Home
+    Office, Bedroom #2) - every one of their `reason` fields explicitly
+    cites "per the stated table," confirming the lookup mechanism itself
+    is working faithfully on a table that's wrong at its source. Bath #3
+    came out correct anyway - its own reason shows the SAME wrong table
+    applied, but combined with an also-inverted per-room horizontal-vs-
+    vertical read for that specific room, the two errors canceled by
+    coincidence. Guest Bedroom #4 remains trivially correct (square).
+    Net: 2 correct (1 substantive + 1 trivial) of 9, 7 backwards - worse
+    in raw correctness than v3, but now via ONE single, cleanly
+    diagnosable defect (a mis-derived rule sentence) instead of diffuse
+    per-room noise - a real improvement in diagnosability even though the
+    number is worse.
+  - Also checked Rear Porch against the 2026-08-14 finding ("East=44,
+    North=18.58" independently confirmed from the published "44' X
+    18'-7"" label): v4 gives North/South=44, East/West=18.58 - also
+    backwards, consistent with the same table-level defect.
+  - **Not applied to the live `drawings`/`rooms` tables** - would corrupt
+    7 of 9 currently-correct rooms.
+  Reporting this in full to the user - genuine structural progress (the
+  mechanical-lookup architecture itself is proven to work, and the defect
+  is now a single, identifiable line of derivation rather than distributed
+  per-room guessing) alongside a correctness number that's still not
+  usable as-is. Not iterating the prompt further without direction.
+- 2026-08-16 — User's diagnosis of the v4 failure and directed fix
+  (option b from the two offered): don't trust the model's DERIVED
+  wall-length-rule sentence at all, even though the rest of the
+  architecture (page-edge observation) is sound. Move the rotation
+  arithmetic out of the prompt into code entirely - the model's job
+  becomes only two raw visual observations (which page edge the anchor
+  sits at, once per sheet; which of a room's two numbers runs
+  page-horizontal vs page-vertical, once per room), nothing else
+  freehand. Explicitly: "if this converges cleanly, that's the version
+  to write to live field_resolutions and the rooms table - finally."
+  Implementation (schema + code, not just prompt text this time):
+  - `ExtractedSheet` gained `frontAnchorPageEdge: "top"|"bottom"|"left"|
+    "right"|null` - the model's one remaining per-sheet observation.
+  - `ExtractedRoom` gained `wall_page_horizontal_len_ft` /
+    `wall_page_vertical_len_ft` - the model's one remaining per-room
+    observation; `wall_north/south/east/west_len_ft` are no longer
+    written by the model at all in the known-orientation case.
+  - New `computeCompassWallLengthsFromPageAxes(extraction, known)` in
+    `lib/drawingExtraction.ts`: the ONLY thing that writes
+    wall_north/south/east/west_len_ft for known-orientation rooms,
+    unconditionally overwriting any stray model output there. Generalized
+    the rotation logic correctly rather than hardcoding the user's
+    Kinsela-specific shorthand ("front@top/bottom -> East/West") - the
+    correct general rule depends on whether {front,rear} is the {N,S}
+    pair or the {E,W} pair (front=W for Kinsela happens to make these
+    equivalent, but front=N/S on a future project would not) - implemented
+    and unit-tested both cases explicitly (6/6 synthetic cases passed,
+    including a hypothetical front=N case and a front=W-but-anchor-at-
+    left case, before touching the real API).
+  - Wired into `route.ts`: runs right after parsing, only when
+    `knownOrientation` is set, before the rest of the post-processing
+    chain. STEP 3's known branch rewritten to match - the model now
+    writes only the two raw observations and leaves the four compass
+    fields null itself; STEP A/B renamed to "OBSERVATION A/B" to signal
+    the reduced scope; STEP 1's per-sheet JSON shape and comment updated
+    for the new field. `tsc --noEmit` clean.
+  - Real re-run against Kinsela needed 4 attempts - three consecutive
+    transient network failures first (timeout, EPIPE, then an ETIMEDOUT
+    reading a source file during module load - a different error each
+    time), diagnosed as environment instability (disk at 99% capacity,
+    load average ~3, both confirmed via `df`/`uptime`) rather than a code
+    issue; basic API connectivity confirmed fine via a small curl request
+    before continuing to retry. Fourth attempt succeeded: 515.9s,
+    end_turn, 21345 tokens, 27 rooms, no truncation.
+  - **`frontAnchorPageEdge` correct on both floor-plan sheets**: A1.1 and
+    A1.2 both reported "bottom" - matches the independently pixel-derived
+    fact from earlier this session exactly, and computeCompassWallLengthsFromPageAxes's
+    rotation output for THAT input is proven correct by the unit tests.
+  - **Completeness: 14/27 rooms, all clean 4/4 fills** - comparable to
+    v3/v4, the architecture keeps producing good completeness.
+  - **Correctness: still broken - 7 of 9 target rooms backwards** (Great
+    Room, Dining, Kitchen, Hidden Pantry, Home Office, Bedroom #2,
+    Storage/Mechanical), only Bath #3 correct (+ Guest Bedroom #4
+    trivially). Root cause this time is NOT the rotation math - that's
+    code now, proven correct - it's OBSERVATION B, the model's per-room
+    "which number runs page-horizontal vs page-vertical" read. Its own
+    "reason" text gives this away: every room's reason says some version
+    of "per this room's own dimension label" and, checked against the
+    actual printed order, the model is systematically calling whichever
+    number is printed SECOND in the room's "A X B" label
+    "page-horizontal" - a pure text-position heuristic, not an actual
+    trace of the room's real dimension lines on the page, despite the
+    prompt explicitly asking for "a direct visual read of that room's
+    own dimension lines... not a compass determination." This heuristic
+    happens to match truth only for Bath #3, whose label happens to be
+    printed in the opposite (D x W) order from every other room on this
+    sheet (confirmed by comparing to this session's earlier pixel-verified
+    ground truth) - explaining why it's the one room that came out right.
+  - This is, in a real sense, the SAME underlying failure the whole
+    investigation started from six rounds ago (magnitude/label-position
+    matching standing in for an actual dimension-line trace) - now
+    isolated to one specific, well-defined sub-step instead of smeared
+    across the whole orientation chain. Genuine progress in isolating the
+    defect; not a working solution.
+  - Does NOT meet the user's own stated bar ("if this converges cleanly")
+    - **not applied to live `field_resolutions` or `rooms`.** Reporting
+    in full, including the isolated root cause, and NOT attempting a
+    further round unprompted given this is the fourth consecutive prompt-
+    level iteration and each of the last three traded one failure mode
+    for a different one at the SAME two target rooms' worth of overall
+    correctness.
+
+## Status: CLOSED — known-orientation wall-length investigation (rotation solved, dimension-tracing is a documented model limitation, not an open bug)
+
+- 2026-08-16 — User's final decision on the four-round investigation
+  above: stop iterating the prompt. Four consecutive rounds each fixed
+  the prior round's failure while surfacing a new one, without ever
+  converging on a fifth try's evidence of actually doing so - continuing
+  further risked a fifth failure mode, not resolution. Explicit
+  instruction: document this as **closed**, not open/pending, with a
+  clear split between what's actually solved (permanent, applies to
+  every future project) and what remains a known, documented limitation
+  (mitigated by an existing safety net, not by further prompt work).
+  No further prompt iteration to be attempted.
+
+**SOLVED, permanently, code-verified - not a prompt behavior, can't regress
+silently:** converting "which page edge does the front-entry anchor sit
+at" into "which compass pair does a page-horizontal vs. page-vertical
+room dimension belong to" is pure rotation arithmetic. This is now
+`computeCompassWallLengthsFromPageAxes()` in `lib/drawingExtraction.ts` -
+deterministic code, not a model judgment call, unit-tested against 6
+synthetic cases (including hypothetical front-facing directions beyond
+Kinsela's own front=W, to prove the general rotation logic is correct,
+not just correct for this one project) and confirmed via real API runs
+to apply itself with 100% internal consistency to whatever raw
+observations it's given. This eliminates the specific failure mode that
+started this whole investigation (a 90-degree axis swap between a room's
+North/South and East/West wall lengths) for Kinsela and for every future
+project that confirms a building orientation - the model no longer
+performs this computation at all, so it cannot get the ARITHMETIC wrong
+again, ever, regardless of prompt wording drift in unrelated future
+changes.
+
+**NOT solved, and not going to be solved by further prompt engineering -
+a documented model limitation, mitigated by an existing safety net:**
+the one remaining model task - visually tracing which of a room's two
+printed dimension numbers actually runs page-horizontal vs.
+page-vertical on the source drawing (as opposed to reading the room's
+own label text left-to-right and assuming the printed order reflects
+drawn orientation) - proved unreliable across all four rounds, most
+starkly in round 4 (v5): the rotation math was proven correct in the
+same run, yet 7 of 9 target rooms still came out backwards, and the
+model's own "reason" text revealed why - it was reading label text
+order ("per this room's own dimension label"), not tracing actual
+extension lines on the page, despite explicit instruction to do the
+latter. This is the same underlying failure the whole investigation
+started from (magnitude/label-position matching standing in for a real
+geometric read), now fully isolated to this one specific visual sub-task
+rather than smeared across compass reasoning generally - but isolating
+it did not fix it, and there's no remaining evidence a fifth prompt
+wording would either.
+
+**Mitigation, permanent, not a stopgap:** `roomHasUnresolvedWallOrientation`
+(`lib/fieldResolutions.ts`) - the existing human Accept/Override gate
+built 2026-08-14, unchanged this whole investigation - remains the real
+safety net for this specific sub-step. It already blocks
+`BuildingOrientationSection`'s "Save & Auto-Fill Walls" transform per
+room until a human has confirmed or corrected that room's wall data, and
+it is not being removed, loosened, or treated as temporary now that the
+rotation-math half of the problem is solved - a human still has to
+verify the one thing this investigation proved the model cannot reliably
+self-check: whether it actually looked at the drawing or the label text.
+The corrected 9-room Kinsela ground truth from earlier in this session
+(Great Room and Bath 3 fixed via direct pixel inspection, 7 rooms
+confirmed already correct, Walk-In Closet reclassified as no exterior
+exposure) remains live in `field_resolutions`/`rooms`, entirely
+unaffected by this closed investigation - none of rounds v2-v5 were ever
+applied to the database.
+
+**Not proceeding further on this topic** unless new evidence changes the
+picture (e.g. a different model, a deterministic PDF-dimension-line-
+extraction path built as real application code rather than a prompt
+instruction - flagged as a real option earlier this session, 2026-08-14,
+not built). Returning to other work.
+
+## Status: Summit Report Standard, Phase 1 (data model + validator + Vivian Street fixture) - built and verified live
+
+- 2026-08-16/17 — New work: "Implement report generation per
+  REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md." Surveyed first rather than
+  writing code blind - existing system is a two-PDF (Internal Report +
+  Client Scope of Work) Puppeteer/HTML setup with generic branding;
+  none of the new standard's 11-page single-file HTML, compass diagram,
+  donut charts, floor-plan compositing, generation-gate UI, or org
+  branding exist yet. Two assets the standard treats as load-bearing are
+  missing from the repo: the canonical reference HTML
+  (`summit-report-4308-vivian-street.html`) and `manual-j-worksheet.html`
+  (branding token source) - flagged to the user rather than silently
+  guessed around. Found `REFERENCE-DOCS/MJS - 4308 Vivian Street.pdf` - a
+  real, licensed one-page Manual J assessment (Michael & Raquel Wacher,
+  TX license TACLA92868E) whose AHU-1 latent (2,706) + AHU-2 latent
+  (5,137) = 7,843, matching the acceptance criteria's expected corrected
+  total exactly - this became the real source data for the fixture.
+  User confirmed: build the fixture from the real PDF and proceed on the
+  standard's written text alone (option b of two offered), rather than
+  wait on the missing assets.
+  **Delivered, all verified against the live DB, not just locally:**
+  - Migration `20260816180000_add_org_branding_and_report_validation_fields.sql`:
+    `organizations.license_number` / `logo_data_uri`, both nullable -
+    Section 4 requires real values ("never fabricated, never a bracketed
+    placeholder"); no license number or logo was invented.
+  - `lib/reportValidation.ts` - `validateReportTotals()` (Section 6's
+    three cross-foot checks: room->zone, zone->whole-house, latent
+    structure+ducts+ventilation at both levels) and
+    `computeRequiredTonnage()` (Section 6 bullet 4's 0.70 SHR
+    convention - the only place this formula lives, so there's no
+    separate cached tonnage value to drift from it).
+  - `lib/__tests__/reportValidation.test.mts` - kept as a permanent,
+    checked-in test (no jest/vitest in this repo; run via
+    `npx tsx lib/__tests__/reportValidation.test.mts`) per Section 6's
+    explicit "so the bug it caught can never regress silently." 6/6
+    pass, including the exact Vivian Street 7,843-from-5,597 case.
+  - `lib/reportGate.ts` - `getReportGenerationGateStatus()`, all four
+    Section 3 gate conditions. **Known, explicitly flagged schema gap**:
+    equipment selection is project-wide (`projects.selected_equipment_id`),
+    not per-system - the standard's own Section 5.3 wants "one panel per
+    AHU/zone." Checked against what the schema supports today; true
+    per-system tracking needs a real schema change, not built here.
+  - **Vivian Street fixture, live in the database** (project id
+    `fda29eba-e660-4da6-839a-41d7666b16f8`, org = the real Summit org,
+    not a synthetic one): 2 zones (AHU-1/AHU-2), 2 rooms (one per
+    system - no real floor plan exists for this address, so this is an
+    honest simplification, not fabricated room-level precision), an
+    existing Carrier catalog entry selected as equipment, 4 duct runs.
+    Room internal-gains overrides were SOLVED against the real
+    `computeManualJ` engine (not guessed) so each zone's live,
+    freshly-computed total hits the PDF's real AHU-1 (15,803S/2,706L)
+    and AHU-2 (20,954S/5,137L) figures exactly - confirmed via a live
+    `getReportData()` call: whole-house sensible 36,757.0, latent
+    7,843.0, `validateReportTotals` passes with 0 discrepancies on fresh
+    data. A `calculation_snapshots` row (version 1) was then seeded with
+    the historical bug reproduced deliberately - stored latent 5,597
+    instead of the correct 7,843 - and confirmed `validateReportTotals`
+    catches it: exactly one discrepancy, corrected value 7,842.998
+    (rounds to 7,843 for display), matching the acceptance criteria's
+    named numbers precisely.
+  - **Real, pre-existing bug discovered and flagged, not fixed (out of
+    scope for this checkpoint)**: `getReportData()`'s climate lookup
+    (`lib/reportData.ts`) is `.eq("state", project.state).limit(1)` with
+    no county filter and no ORDER BY - it returns whatever TX county
+    postgres hands back first (confirmed live: "Anderson", winter=24/
+    summer=99), never the project's actual county, regardless of
+    address. This affects every multi-county state's projects already
+    in this app, not just this fixture - the fixture's overrides were
+    solved against Anderson's actual temps (what the live code path
+    really uses) specifically because of this, not Harris County's
+    (Houston's real temps), so the fixture stays numerically correct
+    against the current buggy behavior. Flagged to the user; not fixed
+    without direction, since it's unrelated to report generation itself.
+  - Live gate check on the real fixture: `canGenerate: false`, one real
+    blocker - "No equipment has been selected" - because the selected
+    Carrier catalog entry has no `equipment_performance_points` rows, so
+    it genuinely cannot be evaluated/interpolated at design conditions.
+    This is the gate working correctly on real incomplete data, not a
+    bug - a legitimate follow-up (seed real OEM performance points, or
+    select different equipment that has them) rather than something
+    papered over to make the fixture look more finished than it is.
+  **Not yet built**: the 11-page single-file HTML template itself,
+  Summit's compass diagram (SVG per Section 7), donut charts, floor-plan
+  compositing, the generation-gate UI (disabled-button + checklist),
+  org branding settings UI (so a real license number/logo can actually
+  be entered). Reported back before starting that (much larger) phase.
+
+## OPEN BUG — HIGH PRIORITY, NOT FIXED — climate_zone_reference lookup ignores county
+
+`lib/reportData.ts`'s `getReportData()`:
+```
+const { data: climateZoneRows } = await supabase
+  .from("climate_zone_reference")
+  .select("county, iecc_zone, winter_design_temp_f, summer_design_temp_f, summer_coincident_wetbulb_f")
+  .eq("state", project.state)
+  .limit(1);
+```
+This filters by `state` only - no county filter, no `ORDER BY` - so it
+returns whatever row postgres hands back first for that state, not the
+project's actual county. Confirmed live on the Vivian Street fixture
+(Houston, Harris County, TX): the real Harris County row (winter=29,
+summer=97, wetbulb=76.8) exists in the table, but this query returns
+Anderson County instead (winter=24, summer=99, wetbulb=74.1) - a
+different, wrong climate zone, silently, for every TX project with more
+than one county in the reference table (which is all of them - `select
+count(*)` on `climate_zone_reference where state='TX'` returns 254 rows,
+one per county). This is not specific to TX or to this fixture - any
+state with more than one county row will hit the identical bug.
+
+**Impact**: every design-temp-dependent number in a report (heating/
+cooling loads, ventilation CFM, equipment sizing) is computed against
+the wrong county's design conditions for any project whose state has
+more than one row in `climate_zone_reference` - which, per the 254-row
+TX count, is effectively every real project already using this app.
+
+**Not fixed** - discovered while building the Summit Report Standard
+fixture, explicitly out of scope for that work per user instruction.
+Needs its own fix: `projects` has no `county` column today (confirmed -
+only city/state/zip), so the real fix likely needs either (a) a `county`
+column on `projects`, populated the same way `lib/countyLookup.ts`
+already resolves county from address elsewhere in the app, then filter
+`climate_zone_reference` by it, or (b) resolving county from zip/city at
+report-generation time via that same existing lookup rather than storing
+it. Flagged here as a standalone, high-priority item - not addressed
+further this session.
+
+## Status: Summit Report Standard, Phase 2 (template/compass/charts/gate UI) - built and verified live
+
+- 2026-08-17 — Continued into the template/UI phase per user direction.
+  Also: added placeholder OEM performance data to unblock the equipment
+  gate for end-to-end testing (explicitly flagged, not real catalog
+  data) - see below for why this ended up needing a NEW fixture-only
+  catalog entry rather than just adding points to the real Carrier SKU.
+  **Delivered, all `tsc --noEmit` clean, all verified against real
+  Vivian Street data:**
+  - `lib/reportCompass.ts` - Section 7's Summit compass: fixed N/S/E/W
+    ring, rotating two-tone needle (amber tip = confirmed front-entry
+    direction, silver tip = opposite), self-contained inline SVG. Draws
+    an explicit "not yet confirmed" state (no needle) when orientation
+    is null - never implies a direction that isn't actually confirmed.
+  - `lib/reportCharts.ts` - donut chart segment builder + inline SVG
+    renderer for Section 7's Building Analysis page. **Known granularity
+    gap, flagged in the module's own header comment**: only 5 real,
+    data-driven categories (Envelope & Infiltration combined, Doors,
+    Ducts, Ventilation, Internal Gains) instead of the standard's full
+    nine (walls/glazing/ceilings/floors/infiltration would need separate
+    figures) - lib/manualJ.ts's computeRoom blends those into one
+    internal accumulator today. Splitting it apart is a real, contained
+    engine change, deliberately NOT attempted this pass given the size
+    of everything else here and the stakes of touching calculation logic
+    other live projects depend on unreviewed. Every segment shown is
+    still 100% real (never illustrative), just coarser than ideal.
+  - `lib/reportHtmlV2.ts` - `renderSummitReportHtml()`, all 11 Section 5
+    pages, single self-contained HTML file (Section 2). Two more real
+    gaps flagged in the file's own header rather than faked:
+    - **AED Assessment (page 6)**: renders an explicit "not yet computed
+      by this engine" state, never a fabricated pass/fail - ACCA's AED
+      check needs per-orientation/hourly load data this app's
+      computeManualJ (a single design-point calc) doesn't model. Building
+      that is a real calculation-engine capability, not report
+      formatting.
+    - **Floor Plan (page 9)**: only renders when a project actually has
+      an extracted drawing; Vivian Street (seeded directly from a Manual
+      J PDF, never uploaded/extracted) correctly shows "no floor plan on
+      file," not an approximated or regenerated drawing - Section 7
+      explicitly forbids the latter.
+    - Fonts (IBM Plex Sans/Mono) declared by name with system fallbacks,
+      not embedded as base64 - out of scope for this pass; report stays
+      fully self-contained/portable either way (no network fetch), just
+      may render in a fallback font without IBM Plex installed locally.
+  - `lib/reportGate.ts` was already built in Phase 1; reused as-is.
+  - `components/report-generation-gate.tsx` (client) + new
+    `app/api/reports/gate-status/route.ts` (server) - the Section 3
+    blocking checklist. Deliberately split this way so the client
+    component doesn't have to bundle computeManualJ/computeManualD/
+    evaluateEquipment (getReportData's dependencies) just to check
+    readiness - it fetches a small JSON status from the new route
+    instead, which calls the exact same lib/reportGate.ts function the
+    real render path uses server-side.
+  - `components/org-branding-settings.tsx` + `app/dashboard/settings/branding/page.tsx` -
+    admin-only form for org name/license/logo (Section 4). Logos stored
+    as base64 data: URIs (not Storage URLs) to keep the report genuinely
+    self-contained; capped at 200KB to keep report file size reasonable.
+  - **Found and fixed a real, separate gap while building this**:
+    `organizations` had only a SELECT RLS policy, no UPDATE - the
+    branding form would have silently failed (RLS-blocked, no visible
+    error). Added `20260817010000_add_organizations_update_policy.sql`
+    (admin-only, scoped to the admin's own org), applied and verified
+    live (`pg_policies` now shows both SELECT and UPDATE).
+  - `app/api/reports/route.ts` - added a third `type: "summit_standard"`
+    alongside the existing `internal`/`client` types, completely
+    unchanged in behavior. The new type gates via
+    `getReportGenerationGateStatus` BEFORE snapshotting (a 422 with the
+    blocker list if not ready) - Section 3/8's "freezing early would
+    freeze an incomplete project" principle, applied literally. Pulls
+    real org branding + `building_front_faces` + drawings for the new
+    template. **Did not remove or alter the existing two-PDF system** -
+    left as a genuine open question for the user (does this new standard
+    replace it, or coexist?), not decided unilaterally.
+  - `components/generate-reports-button.tsx` - added a third section
+    ("Generate Summit Standard Report") wired to the new gate component
+    and type; existing Internal/Client buttons completely untouched.
+  - **Equipment gate exercise revealed a second, sharper consequence of
+    the already-flagged per-project (not per-system) equipment schema
+    gap**: the real small Carrier unit (24,000 BTU) can never pass
+    `isCompatible`'s ACCA window against the WHOLE-HOUSE total (44,600
+    BTU / ~3.7 tons) - not a performance-data gap, a sizing gap. A
+    genuinely 2-system house like this one structurally cannot pass
+    equipment completeness with real, correctly-per-system-sized
+    equipment under this schema. Rather than distort the real Carrier
+    SKU's capacity to force a fit, created a new, clearly-named
+    `FIXTURE-PLACEHOLDER` / `VIVIAN-ST-WHOLE-HOUSE-TEST-UNIT` catalog
+    entry sized for the whole-house load instead, with its own 16-point
+    synthetic cooling performance grid, selected for the project with an
+    explicit note explaining why. **Caveat**: the 16 placeholder points
+    added earlier to the REAL Carrier 26TPA824W003 entry (before this
+    sizing problem was discovered) are still there, correctly flagged
+    via `source_document`, but its original `source_document` text was
+    overwritten without being saved first - not perfectly revertible.
+    Both are shared, global reference-table rows (not project-scoped),
+    so this affects how that Carrier SKU appears for any future project,
+    not just this fixture - flagged clearly, not hidden.
+  - **End-to-end verification**: rendered real HTML from the live
+    Vivian Street fixture via `renderSummitReportHtml` (32,543 bytes, no
+    runtime errors) and published it as an artifact for visual QA -
+    https://claude.ai/code/artifact/df5b9c85-0550-40a7-b55c-64eeea6e4f7d.
+    Live gate check on the fixture after the placeholder equipment fix:
+    `canGenerate: true`, zero blockers.
+  **Not yet done**: embedding real font files (currently name-only with
+  fallback); splitting the donut chart's envelope category into the
+  full nine per Section 7; AED assessment's actual calculation
+  (needs new engine capability, not report work); floor-plan image
+  compositing with the compass overlay (Section 7's cropping/overlay
+  method itself, only exercised for the "no drawing" empty state so
+  far, since Vivian Street has no drawing to composite against); the
+  open architectural question of whether this new report type replaces
+  the existing Internal/Client PDFs or coexists alongside them
+  permanently.

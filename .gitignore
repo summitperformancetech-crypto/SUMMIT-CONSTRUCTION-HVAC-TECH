@@ -41,3 +41,10 @@ next-env.d.ts
 .vscode/*
 !.vscode/extensions.json
 .idea/
+
+# claude code local settings (can contain secrets from permission history)
+.claude/settings.local.json
+.claude/settings.local*.json
+
+# personal Claude account/history export - not project code
+CLAUD-HISTORY-COMPLETE-RECORD/

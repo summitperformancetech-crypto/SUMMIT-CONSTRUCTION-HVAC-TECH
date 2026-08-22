@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { ConfirmClimateButton } from "@/components/confirm-climate-button";
+import { BuildingOrientationGate } from "@/components/building-orientation-gate";
 import { DrawingsSection } from "@/components/drawings-section";
 import {
   ManualJWorkflow,
@@ -74,6 +75,7 @@ export function ProjectWorkspace({
   initialBuildingFrontFaces: Compass8 | null;
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
+  const [buildingFrontFaces, setBuildingFrontFaces] = useState(initialBuildingFrontFaces);
   const manualJRef = useRef<ManualJWorkflowHandle>(null);
 
   return (
@@ -86,7 +88,27 @@ export function ProjectWorkspace({
         />
       </div>
 
+      {/* Building-orientation-confirmed-before-extraction (2026-08-15):
+          this gate must clear before DrawingsSection even renders - a
+          drawing can't be uploaded (and therefore extraction can't run)
+          until the front-elevation compass direction is confirmed, so
+          app/api/drawings/extract/route.ts always has it available to
+          give the model as known context, never something to guess per
+          room. BuildingOrientationSection (still rendered further down,
+          inside ManualJWorkflow) is unchanged - it remains the mechanism
+          for re-running the auto-fill transform on existing rooms, and
+          for changing the confirmed direction later. */}
       {climateConfirmed && (
+        <div className="mb-6">
+          <BuildingOrientationGate
+            projectId={projectId}
+            initialBuildingFrontFaces={buildingFrontFaces}
+            onConfirmed={setBuildingFrontFaces}
+          />
+        </div>
+      )}
+
+      {climateConfirmed && buildingFrontFaces && (
         <div className="mb-6">
           <DrawingsSection
             projectId={projectId}
@@ -131,7 +153,7 @@ export function ProjectWorkspace({
         preferredEquipmentIds={preferredEquipmentIds}
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimums}
-        initialBuildingFrontFaces={initialBuildingFrontFaces}
+        initialBuildingFrontFaces={buildingFrontFaces}
       />
     </>
   );

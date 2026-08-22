@@ -121,6 +121,28 @@ export type ExtractedRoom = {
   wall_rear_len_ft: number | null;
   wall_left_len_ft: number | null;
   wall_right_len_ft: number | null;
+  // Diagnosed 2026-08-16 against Kinsela, known-orientation case
+  // specifically (see KnownBuildingOrientation below): asking the model
+  // to derive AND state which compass pair a room's page-horizontal vs
+  // page-vertical dimension belongs to - a rotation computation - failed
+  // three rounds in a row in three different ways (freehand per-room
+  // reasoning was inconsistent; a stated-once-per-sheet "rule sentence"
+  // was self-consistent but inverted). The common thread: rotation
+  // arithmetic is exactly the kind of thing code does deterministically
+  // and correctly every time, and the model kept getting it wrong even
+  // when explicitly told to treat it as a lookup rather than fresh
+  // reasoning. These two fields are the model's actual remaining job in
+  // that case - a plain VISUAL read of which of a room's two printed
+  // dimensions runs left-right vs top-to-bottom on the page, zero
+  // compass judgment involved - and computeCompassWallLengthsFromPageAxes
+  // below (not the model) converts them into wall_north/south/east/
+  // west_len_ft above, using ExtractedSheet.frontAnchorPageEdge and the
+  // confirmed KnownBuildingOrientation. Only ever populated in the
+  // known-orientation case; left null otherwise (mirrors the
+  // wall_front/rear/left/right split above - always present on the
+  // type, branch-specific in practice).
+  wall_page_horizontal_len_ft: number | null;
+  wall_page_vertical_len_ft: number | null;
   // Same compass/drawing-relative split as the wall_* fields above, same
   // reason (STEP 2 below), applied to window glazing area instead of wall
   // length - see migration 20260813030300_add_window_drawing_relative_area.sql.
@@ -264,6 +286,27 @@ export type ExtractedSheet = {
   // around garage dimensions, no revision date visible nearby". Null
   // when the sheet shows no such indicator.
   revisionNote: string | null;
+  // Diagnosed 2026-08-16 (see ExtractedRoom.wall_page_horizontal_len_ft's
+  // comment for the full history): the ONLY thing the model still does
+  // toward compass-orienting a room's walls, for the known-orientation
+  // case, on a floor-plan sheet - locate the front entry/porch on THIS
+  // sheet and report which page edge it's drawn at. A plain visual
+  // observation (which edge of the printed sheet the anchor touches),
+  // not a rotation computation - computeCompassWallLengthsFromPageAxes
+  // below does the actual rotation math from this plus
+  // KnownBuildingOrientation, deterministically. Any narrative
+  // justification (e.g. confirming a second-floor sheet's rotation by
+  // matching its stairwell/outline against the main floor plan) belongs
+  // in "orientation.description" for human audit only - code never reads
+  // that text, only this enum. Null when this sheet isn't a floor-plan
+  // sheet, when the anchor isn't visible on it and its rotation can't be
+  // confirmed by such alignment either, or whenever orientation wasn't
+  // confirmed for this project at all. A null value alone is the
+  // complete, actionable signal - no separate reason field needed here:
+  // every room whose source_sheet points at a sheet with a null
+  // frontAnchorPageEdge gets its compass wall fields left null too, by
+  // computeCompassWallLengthsFromPageAxes below.
+  frontAnchorPageEdge: "top" | "bottom" | "left" | "right" | null;
 };
 
 // Phase 2, item 6. Transcribed verbatim from the drawing's own window
@@ -467,11 +510,90 @@ export const ACCEPTED_DRAWING_MIME_TYPES = [
   "image/heif",
 ];
 
+// Building-orientation-confirmed-before-extraction (moved earlier in the
+// pipeline, diagnosed/built 2026-08-15): the project's technician now
+// confirms building_front_faces BEFORE a drawing can even be uploaded
+// (see components/building-orientation-gate.tsx), instead of after
+// extraction the way it worked previously. When that confirmation
+// exists and is a cardinal direction (the only kind the room schema's
+// wall_north/south/east/west_len_ft columns can represent - see
+// lib/constants/compass.ts's isCardinalCompass), route.ts resolves it
+// via lib/orientation.ts's resolveOrientation() and passes it into
+// buildExtractionPrompt below as GIVEN, CONFIRMED context - not
+// something STEP 2 detects or STEP 3 guesses per room anymore for that
+// run. This is deliberately narrow: it changes STEP 2/3's own text when
+// present, nothing else in this file - see buildExtractionPrompt's own
+// comment for exactly what does and doesn't change.
+export type KnownBuildingOrientation = {
+  front: "N" | "E" | "S" | "W";
+  rear: "N" | "E" | "S" | "W";
+  left: "N" | "E" | "S" | "W";
+  right: "N" | "E" | "S" | "W";
+};
+
+function buildOrientationStep2(known: KnownBuildingOrientation | null): string {
+  if (!known) {
+    return `STEP 2 — Orientation. Look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.`;
+  }
+  return `STEP 2 — Orientation: ALREADY CONFIRMED, do not detect or guess it. The project's technician has confirmed the building's true compass orientation directly - not inferred from this drawing: the front exterior elevation faces ${known.front}. Following the same "person standing outside facing the front entry" convention used elsewhere in this prompt, this means the rear elevation faces ${known.rear}; the side to that person's left hand faces ${known.left}; the side to their right hand faces ${known.right}. Treat this exactly as if a true compass marker were found on the drawing - do not re-derive it, do not second-guess it against an elevation sheet's own "FRONT ELEVATION"/"REAR ELEVATION"/etc. labels (those name that sheet's own relative view, not a compass direction, and are not more authoritative than this already-confirmed fact), and do not look for a north arrow. Set "orientation.detected": true, and "orientation.description" to note this was confirmed by the project's technician (the building orientation setting), not found on the drawing itself - e.g. "Compass orientation supplied by technician: front faces ${known.front}."`;
+}
+
+function buildOrientationStep3Branch(known: KnownBuildingOrientation | null): string {
+  if (!known) {
+    return `- If orientation WAS detected: estimate each room's wall_north_len_ft / wall_south_len_ft / wall_east_len_ft / wall_west_len_ft from the drawing's geometry relative to that orientation, and estimate door_count from the room's drawn openings. Leave wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, and wall_right_len_ft null in this case — they exist only for the no-orientation case below.
+- If orientation was NOT detected, do BOTH (a) and (b) below for every room — they are two separate instructions, not alternatives:
+  (a) Set wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft to null. Do not guess which side of a room faces which TRUE COMPASS direction — an incorrect guess here silently corrupts solar gain calculations downstream.
+  (b) REQUIRED, not optional: estimate wall_front_len_ft / wall_rear_len_ft / wall_left_len_ft / wall_right_len_ft for every room whose wall layout is visible in the floor plan. Only leave one of these four fields null when that room genuinely has no wall on that particular side (e.g. an interior room bordered by other rooms on 3 sides) or its position truly cannot be determined from anything in this sheet set — not out of general caution.
+  Convention for front/rear/left/right (must be followed exactly, the whole feature depends on this): imagine a person standing OUTSIDE the building, FACING the front entry door (looking at the house, about to walk in — not exiting it). "Front" = the wall containing or facing the main entry, as seen by that person. "Rear" = the opposite wall. "Left" = the side on that person's left hand. "Right" = the side on that person's right hand.
+  The four LENGTH values are ordinary floor-plan geometry — read them the same confident way you'd read wall_north_len_ft in the orientation-detected case. WHICH wall you call "front," however, is a genuine guess whenever there is no true-north marker (that's exactly why this branch exists) — an obvious main entry on the floor plan itself only tells you which facade this floor plan's own layout suggests is the front, not which physical wall is actually the front by any confirmable standard. Do not treat that identification as confident just because a label exists. Every room where you fill any of these four fields is unresolved for this reason, in addition to any other reason it may already have: set "unresolved": true and include, verbatim, the sentence "${WALL_ORIENTATION_UNRESOLVED_REASON}" in "reason" (append it after a " · " separator if the room already has a different reason for something else, e.g. an illegible label — do not replace that other reason, add to it). This is not a substitute for true compass exposure either way — a human still resolves that via the project's building orientation selector, same as before, but now also still needs to confirm the front-entry axis itself before that selector's rotation can be trusted.`;
+  }
+  return `- Orientation is known (see STEP 2 above - this is the "orientation WAS detected" case, treat it identically).
+  This branch previously asked you to derive AND state a rotation rule (converting "which page edge is the front entry at" into "which compass pair does a page-horizontal vs page-vertical dimension belong to") - that rotation computation has now failed three rounds in a row in three different ways, even when explicitly framed as a lookup rather than fresh reasoning. Rotation arithmetic is exactly the kind of thing code gets right deterministically every time, so it has been moved out of your job entirely. Your job in this branch is now ONLY the two plain VISUAL observations below - zero compass reasoning, zero rotation math, zero deriving or stating any wall-length rule. A separate, deterministic step (not you) converts your two observations into wall_north_len_ft / wall_south_len_ft / wall_east_len_ft / wall_west_len_ft afterward.
+  OBSERVATION A (ONCE per floor-plan sheet, before working any room drawn on it - not per room): locate the front exterior elevation/entry ON THE FLOOR PLAN ITSELF - a covered entry porch, the main entry door, a "FRONT PORCH"-style label, or similar visible feature - NOT from an elevation sheet's title (elevation sheet titles like "FRONT ELEVATION" describe that sheet's own view, not a compass direction, and have caused incorrect swaps before when treated as if they were the same thing). Then report WHICH PAGE EDGE it's drawn at - top, bottom, left, or right - in that sheet's own "frontAnchorPageEdge" field (in "sheets"). This is a plain visual observation (which edge of the printed sheet the porch/entry touches), nothing more - do not convert it to a compass direction, do not derive a wall-length rule from it, do not write anything about North/South/East/West in connection with this observation anywhere. If you find it useful for a human reader, you may still separately note in "orientation.description" which sheet the anchor was found on and which edge - but "frontAnchorPageEdge" is the field that actually gets used, and it takes only the four literal values "top"/"bottom"/"left"/"right".
+  If the front anchor cannot be located on a given floor-plan sheet at all (not visible - e.g. a second-floor plan with no view of the ground-floor entry), check whether that sheet's rotation can still be confirmed by matching grid lines, wall alignment, or the overall building outline against a sheet where the anchor IS visible - if so, use the SAME page edge that sheet's anchor would fall on, and say so in "orientation.description" (e.g. "A1.2's building outline and stairwell align with A1.1, so treated as the same page rotation"). If it genuinely cannot be determined either way, leave that sheet's "frontAnchorPageEdge" null and do not guess - every room whose "source_sheet" points at a sheet with a null "frontAnchorPageEdge" will automatically get null compass wall fields, so nothing further is needed from you for those rooms.
+  OBSERVATION B (PER ROOM): a room's printed dimensions give you two numbers (e.g. a label reading "13' X 14'", or two separate dimension lines). Report which one is measured running PAGE-HORIZONTAL (left-right on the sheet) into "wall_page_horizontal_len_ft", and which one is measured running PAGE-VERTICAL (top-to-bottom on the sheet) into "wall_page_vertical_len_ft" - this is a direct visual read of that room's own dimension lines/label (which number's extension lines run left-right vs top-to-bottom), not a compass determination and not a name for either field - just report the two numbers into the field matching their own drawn orientation on the page. Cite which is which briefly in "reason" (e.g. "13' runs page-horizontal, 14' runs page-vertical, per this room's own dimension lines") so a human reviewer can check your visual read without needing to also check any compass logic. Leave wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft in this room entirely null yourself - do not compute or guess at them; that conversion happens downstream, not here.
+  REQUIRED, not optional: two SEPARATE null-permissions, each independently scoped - do not let uncertainty in one suppress a result in the other:
+  (a) OBSERVATION A failure (the anchor's page edge could not be determined for this sheet, per the fallback above) - "wall_page_horizontal_len_ft" and "wall_page_vertical_len_ft" may both be left null for every room on that sheet, since there is nothing to convert them into either way. This is the only condition that justifies leaving both null for a room.
+  (b) OBSERVATION B difficulty (the anchor IS known, but this room's own two numbers, or which one runs horizontal vs vertical, are hard to read precisely) - this is NOT the same failure as (a) and must NOT use the same null-escape. Give your best estimate per the dimensional reconciliation hierarchy defined in "Other rules" below (a room's own printed "W x D" label, or even a scaled/geometric estimate off the general plan, is an acceptable, expected source - not a reason to omit the field), and set the room "unresolved": true with "reason" noting the value is approximate/estimated (append after the existing reason, don't replace it, if one is already there). Only leave one individual side's length null within an otherwise-resolved room when that side genuinely has no wall of its own there (e.g. open to an adjoining room) - never merely because the number was hard to read.
+  Estimate door_count from the room's drawn openings. Leave wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, and wall_right_len_ft null - they exist only for the no-orientation case, which does not apply here since orientation is already known.`;
+}
+
+// Standing reminder for the WHOLE reading pass, not scoped to STEP 2/3 -
+// spliced into the opening framing paragraph, before STEP 1 even begins,
+// so the confirmed orientation is available context for every page the
+// model reads (elevation sheets, wall sections, etc.), not something it
+// only sees once it reaches the wall-orientation step deep into the
+// prompt. Returns "" when null so buildExtractionPrompt's null-case
+// output stays byte-for-byte identical to the prior static prompt (see
+// its own comment) - the leading/trailing newlines below are what give
+// the known-case text proper blank-line paragraph spacing once spliced
+// in; they intentionally produce nothing when empty.
+function buildOrientationPreamble(known: KnownBuildingOrientation | null): string {
+  if (!known) return "";
+  return `
+Building orientation is already confirmed for this ENTIRE review, not just for the wall-orientation step below: the front exterior elevation faces ${known.front} - therefore the rear faces ${known.rear}, the left side (as seen by a person standing outside, facing the front entry) faces ${known.left}, and the right side faces ${known.right}. Treat this as established ground truth on every page you read, from here through the end of this document - never something to re-derive, second-guess, or infer independently from any single page's own content. In particular, an elevation sheet's own title ("FRONT ELEVATION", "REAR ELEVATION", "LEFT ELEVATION", "RIGHT ELEVATION", etc.) names that sheet's own relative view, not a compass direction - it must never be read as overriding, re-establishing, or casting doubt on this already-confirmed fact, no matter what sheet you're on or what step of this prompt you're currently working through. See STEP 2 and STEP 3 below for exactly how this applies to individual rooms' walls.
+`;
+}
+
 // Fields the model is permitted to fill on Building Envelope. ACH50, occupants,
 // and indoor design temps are deliberately excluded from the extraction prompt
 // and schema below — those must always be entered by a human.
-export const EXTRACTION_PROMPT = `You are reviewing a complete architectural drawing set - floor plans, elevations, cross sections, foundation plan, roof plan, electrical/mechanical/plumbing plans, schedules, cover sheet, and construction details - to help populate ACCA Manual J residential load calculations, Manual D duct design, and Manual S equipment selection.
-
+//
+// knownOrientation (see KnownBuildingOrientation above): when provided,
+// changes the opening preamble (via buildOrientationPreamble below, a
+// standing reminder for the ENTIRE reading pass, not just one step) plus
+// STEP 2 and STEP 3's orientation-branch text (via the two helpers
+// above). Every other STEP, the "Other rules" conflict/certainty/
+// dimensional-hierarchy sections, the JSON shape, and STEP 4's
+// window-area split (which already just says "governed by the SAME
+// orientation-detected/not-detected branch as STEP 3" without
+// hardcoding which one) are untouched either way. When null (the
+// previous, still-default behavior for any caller that hasn't confirmed
+// orientation), the output is byte-for-byte identical to the prior
+// static EXTRACTION_PROMPT.
+export function buildExtractionPrompt(knownOrientation: KnownBuildingOrientation | null = null): string {
+  return `You are reviewing a complete architectural drawing set - floor plans, elevations, cross sections, foundation plan, roof plan, electrical/mechanical/plumbing plans, schedules, cover sheet, and construction details - to help populate ACCA Manual J residential load calculations, Manual D duct design, and Manual S equipment selection.
+${buildOrientationPreamble(knownOrientation)}
 This document may have many pages of very different types. Review EVERY page before responding. Do not skip a page, or treat its content as irrelevant, because of what its sheet type usually contains - relevant facts have been found on pages a first guess would rule out (a cover sheet's general materials note, a wall-section detail between structural sheets, a mechanical plan's HVAC notes).
 
 Reading discipline: read this drawing set as a structured technical document, not as plain text to OCR top-to-bottom. Recognize and use the symbolic structure professionals use to navigate it: keynote tags (a circled or boxed number/letter that references a keynote legend printed elsewhere on the sheet or set - look up what the legend entry actually says rather than treating the bare tag itself as the fact); grid lines (lettered/numbered reference lines used to pinpoint a location precisely - use them to confirm you're looking at the same physical location when cross-referencing between sheets, e.g. matching a detail callout back to where it applies on the floor plan); and section/detail callout markers (a circle or hexagon containing a detail number and a sheet reference, e.g. "4/A3.0", meaning "see detail 4 on sheet A3.0 for a closer, more precise view of this"). When you follow such a marker to find a value, that value came from a more precise, more authoritative source than a general overview plan - prefer it over a same-fact value read from a general plan, and note in "reason" that it came from a detail/section reference (e.g. "per detail 4/A3.0") so a human reviewer can see why it was preferred.
@@ -486,7 +608,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "description": string | null
   },
   "sheets": [
-    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null, "revisionDate": string | null, "revisionNote": string | null }
+    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null, "revisionDate": string | null, "revisionNote": string | null, "frontAnchorPageEdge": "top" | "bottom" | "left" | "right" | null }
   ],
   "building_envelope": {
     "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
@@ -517,6 +639,8 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "wall_rear_len_ft": number | null,
       "wall_left_len_ft": number | null,
       "wall_right_len_ft": number | null,
+      "wall_page_horizontal_len_ft": number | null,
+      "wall_page_vertical_len_ft": number | null,
       "window_north_area_sqft": number | null,
       "window_south_area_sqft": number | null,
       "window_east_area_sqft": number | null,
@@ -561,15 +685,10 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
 
 STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "sourceAuthority" - exactly one of "sealed_construction_document", "reference_only", "unknown", determined in this order: first, set "reference_only" if the sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent). Otherwise, set "sealed_construction_document" ONLY if the sheet shows an actual professional (engineer/architect) seal or stamp graphic, or explicit issuance language such as "ISSUED FOR CONSTRUCTION" or "APPROVED FOR CONSTRUCTION" - do not infer this from a sheet simply looking detailed, official, or complete; most sheets in a typical residential set will NOT qualify, and that's the expected, normal outcome, not a gap. Otherwise (the common case), set "unknown". This is a real authority hierarchy for resolving conflicts between sheets (sealed_construction_document > unknown > reference_only), not a cosmetic label - see "Other rules" below for exactly how it's used. Also set "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. Also set "revisionDate": the most recent revision date or revision number, copied verbatim, but ONLY from an actual revision-specific marking - a revision table/block (often literally labeled "REVISIONS", with rows like "REV | DATE | DESCRIPTION"), a numbered revision triangle or tag near a specific change, or equivalent - e.g. "REV 2 03/15/2026". Do NOT use the sheet's ordinary issue date, plot date, or "DATE:" field in the title block for this - that field exists on every sheet regardless of whether anything was ever revised, and is a different fact (when the set was first issued, not evidence of a later change). Leave "revisionDate" null whenever there is no distinct revision-specific marking, even though the sheet obviously still has an ordinary issue date - this is the normal, expected case for a set with no post-issuance changes, not a gap to explain. And "revisionNote": a short note if this sheet shows a revision cloud (a hand-drawn or printed cloud/bubble outlining a changed area), a "SUPERSEDED" or "VOID" stamp, or any other visible sign the content was changed after initial issuance - null if none. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
 
-STEP 2 — Orientation. Look specifically for a north arrow, a compass rose, a site plan with a labeled north, or elevation sheets explicitly labeled by TRUE COMPASS DIRECTION (e.g. "North Elevation", "South Elevation"). Only these count as orientation detected. Elevation sheets labeled by RELATIVE position only — "Front Elevation", "Rear Elevation", "Left Elevation", "Right Elevation" (as this Kinsela-style sheet set uses) — do NOT establish true compass direction and must NOT be treated as orientation detected, even though they tell you the building's relative layout. Do not infer true north from which side faces the street, where the porch is, or any other indirect cue — these are not reliable and have caused incorrect compass inferences before. Set "orientation.detected" to whether you found a TRUE COMPASS marker as defined above (not a relative one), and "orientation.description" to a short note of what you found (e.g. "north arrow near title block") or null if none.
+${buildOrientationStep2(knownOrientation)}
 
 STEP 3 — Room geometry, conditioned on Step 2:
-- If orientation WAS detected: estimate each room's wall_north_len_ft / wall_south_len_ft / wall_east_len_ft / wall_west_len_ft from the drawing's geometry relative to that orientation, and estimate door_count from the room's drawn openings. Leave wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, and wall_right_len_ft null in this case — they exist only for the no-orientation case below.
-- If orientation was NOT detected, do BOTH (a) and (b) below for every room — they are two separate instructions, not alternatives:
-  (a) Set wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, and wall_west_len_ft to null. Do not guess which side of a room faces which TRUE COMPASS direction — an incorrect guess here silently corrupts solar gain calculations downstream.
-  (b) REQUIRED, not optional: estimate wall_front_len_ft / wall_rear_len_ft / wall_left_len_ft / wall_right_len_ft for every room whose wall layout is visible in the floor plan. Only leave one of these four fields null when that room genuinely has no wall on that particular side (e.g. an interior room bordered by other rooms on 3 sides) or its position truly cannot be determined from anything in this sheet set — not out of general caution.
-  Convention for front/rear/left/right (must be followed exactly, the whole feature depends on this): imagine a person standing OUTSIDE the building, FACING the front entry door (looking at the house, about to walk in — not exiting it). "Front" = the wall containing or facing the main entry, as seen by that person. "Rear" = the opposite wall. "Left" = the side on that person's left hand. "Right" = the side on that person's right hand.
-  The four LENGTH values are ordinary floor-plan geometry — read them the same confident way you'd read wall_north_len_ft in the orientation-detected case. WHICH wall you call "front," however, is a genuine guess whenever there is no true-north marker (that's exactly why this branch exists) — a "FRONT ELEVATION" label or an obvious main entry only tells you which facade the drawing's own author called the front, not which physical wall is actually the front by any confirmable standard. Do not treat that identification as confident just because a label exists. Every room where you fill any of these four fields is unresolved for this reason, in addition to any other reason it may already have: set "unresolved": true and include, verbatim, the sentence "${WALL_ORIENTATION_UNRESOLVED_REASON}" in "reason" (append it after a " · " separator if the room already has a different reason for something else, e.g. an illegible label — do not replace that other reason, add to it). This is not a substitute for true compass exposure either way — a human still resolves that via the project's building orientation selector, same as before, but now also still needs to confirm the front-entry axis itself before that selector's rotation can be trusted.
+${buildOrientationStep3Branch(knownOrientation)}
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
 - For every room, set "source_sheet" to the floor-plan sheet (from your STEP 1 inventory) its geometry actually came from - useful when a project has more than one floor-plan sheet (e.g. a main floor and a second-level/bonus-room plan).
 - For every room, also set "room_label_text" to ALL text printed on or near that room on the floor plan, copied verbatim - concatenate every distinct piece you find with " / " between them: the room name, its printed dimensions (e.g. "24'-10\" X 37'-4\""), and any ceiling height callout for that room (e.g. "10' CEILING") if one appears anywhere near the room, even when it sits as its own separate label a short distance from the room name rather than directly overlapping it (e.g. "3-CAR GARAGE / 10' CEILING / 24'-10\" X 37'-4\""). Do NOT report just the room name alone when other text - dimensions, a ceiling height label - is also printed near that room; a bare room name here silently discards information a downstream check depends on to catch ceiling-height conflicts, so treat this as a completeness requirement, not a best-effort summary. This is a plain transcription task, not a judgment call: do not summarize, interpret, or decide part of it is unimportant to omit; leave it null only if the room genuinely has no printed text of its own at all.
@@ -624,6 +743,7 @@ Other rules:
 - Revision concern ("revisionConcern", document-level, conditional): after reviewing every sheet's "revisionDate"/"revisionNote" from STEP 1, set this ONLY when you have a SPECIFIC, articulable reason to suspect the uploaded set is not the latest revision - e.g. a general note, sheet index, or one sheet's own revision block references a change (a room addition, a dimension change, a note explicitly saying "see rev. 3") that the actual plan sheets in THIS upload do not show; or sheets in the same set carry meaningfully inconsistent revision dates suggesting a stale mix rather than a single coherent issuance. State specifically what you found and why it's concerning. Leave this null in the ordinary case - a clean set with consistent or no revision markings at all is normal and unremarkable, not evidence of a problem; do not speculate or flag this "just in case."
 - Never include ACH50, occupant count, or indoor design temperatures anywhere in your output. Those values are never extracted from drawings and must always be entered manually by the estimator.
 - Output ONLY the JSON object described above.`;
+}
 
 export function collectUnresolvedItems(extraction: DrawingExtraction): string[] {
   const items: string[] = [];
@@ -709,6 +829,90 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
 // fallback than the original spec's location-branching description -
 // flagged here rather than silently building a per-room signal that
 // doesn't actually exist in this pipeline.
+// Diagnosed 2026-08-16 against Kinsela, known-orientation case (see
+// ExtractedRoom.wall_page_horizontal_len_ft's comment for the full
+// three-round history): converting "which page edge is the front
+// anchor at" into "which compass pair does a page-horizontal vs
+// page-vertical room dimension belong to" is pure rotation arithmetic,
+// and asking the model to do that conversion - even framed explicitly
+// as a fixed lookup rather than fresh reasoning - produced a
+// self-consistent but INVERTED result across every room in the one
+// real run that tried it. This function does that conversion instead,
+// in code, from ExtractedSheet.frontAnchorPageEdge (the model's one
+// remaining visual observation, once per sheet) and each room's
+// wall_page_horizontal_len_ft / wall_page_vertical_len_ft (the model's
+// other remaining visual observation, once per room) - the ONLY thing
+// that ever writes wall_north/south/east/west_len_ft in the
+// known-orientation case. Any value the model wrote directly into those
+// four fields itself is unconditionally overwritten here, never
+// trusted or merged - the whole point of this split is that the
+// rotation math no longer comes from freehand model output at all.
+//
+// Geometry: a wall drawn as a horizontal line segment on the page (a
+// room's top or bottom wall, as drawn) spans that room's page-horizontal
+// extent, so its length equals the room's page-horizontal dimension -
+// regardless of which compass direction that wall actually faces. That
+// wall faces whichever compass direction occupies the page-top/
+// page-bottom edges. Front and rear are always a compass-opposite pair
+// (180° apart), and so are left and right - and opposite compass
+// directions always land on opposite page edges under a pure rotation
+// (never a mirror) - so {front,rear} occupies EITHER {page-top,
+// page-bottom} OR {page-left,page-right} as a whole pair, never split
+// across both, and {left,right} occupies whichever pair {front,rear}
+// doesn't. Which of those two pairs is actually {north,south} vs.
+// {east,west} depends only on which compass letter "front" is - this
+// function checks that directly (known.front) rather than assuming
+// front/rear is always the east/west pair, since that's specific to
+// Kinsela (front=W) and would be wrong for a future project whose front
+// faces north or south.
+export function computeCompassWallLengthsFromPageAxes(
+  extraction: DrawingExtraction,
+  known: KnownBuildingOrientation,
+): DrawingExtraction {
+  const sheetAnchorEdge = new Map(
+    (extraction.sheets ?? []).map((sheet) => [sheet.name, sheet.frontAnchorPageEdge] as const),
+  );
+  const frontRearIsNorthSouth = known.front === "N" || known.front === "S";
+
+  const rooms = extraction.rooms.map((room) => {
+    const anchorEdge = room.source_sheet ? sheetAnchorEdge.get(room.source_sheet) : undefined;
+    if (!anchorEdge) {
+      // The model's OBSERVATION A failed for this room's sheet (or the
+      // room has no source_sheet at all) - nothing to convert, no
+      // compass fields to compute. See ExtractedSheet.frontAnchorPageEdge's
+      // comment: a null value here is the complete signal, by design.
+      return {
+        ...room,
+        wall_north_len_ft: null,
+        wall_south_len_ft: null,
+        wall_east_len_ft: null,
+        wall_west_len_ft: null,
+      };
+    }
+
+    const frontRearAtTopBottom = anchorEdge === "top" || anchorEdge === "bottom";
+    const frontRearLen = frontRearAtTopBottom
+      ? room.wall_page_horizontal_len_ft
+      : room.wall_page_vertical_len_ft;
+    const leftRightLen = frontRearAtTopBottom
+      ? room.wall_page_vertical_len_ft
+      : room.wall_page_horizontal_len_ft;
+
+    const northSouthLen = frontRearIsNorthSouth ? frontRearLen : leftRightLen;
+    const eastWestLen = frontRearIsNorthSouth ? leftRightLen : frontRearLen;
+
+    return {
+      ...room,
+      wall_north_len_ft: northSouthLen,
+      wall_south_len_ft: northSouthLen,
+      wall_east_len_ft: eastWestLen,
+      wall_west_len_ft: eastWestLen,
+    };
+  });
+
+  return { ...extraction, rooms };
+}
+
 const DUCT_FALLBACK_LOCATION = "Attic-Unconditioned";
 const DUCT_FALLBACK_R_VALUE = 8;
 

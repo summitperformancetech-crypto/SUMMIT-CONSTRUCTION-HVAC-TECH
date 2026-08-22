@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { ReportGenerationGate } from "@/components/report-generation-gate";
 
 export type SnapshotStatus = { version: number; createdAt: string; reason: string | null };
 
-async function downloadReport(projectId: string, type: "internal" | "client") {
+async function downloadReport(projectId: string, type: "internal" | "client" | "summit_standard") {
   const res = await fetch("/api/reports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -50,12 +51,13 @@ export function GenerateReportsButton({
   // first report download freezes one; see app/api/reports/route.ts.
   initialSnapshot: SnapshotStatus | null;
 }) {
-  const [generating, setGenerating] = useState<"internal" | "client" | null>(null);
+  const [generating, setGenerating] = useState<"internal" | "client" | "summit_standard" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [revising, setRevising] = useState(false);
+  const [summitStandardReady, setSummitStandardReady] = useState(false);
 
-  async function handleGenerate(type: "internal" | "client") {
+  async function handleGenerate(type: "internal" | "client" | "summit_standard") {
     setGenerating(type);
     setError(null);
     try {
@@ -131,6 +133,25 @@ export function GenerateReportsButton({
           ? `Finalized as of ${new Date(snapshot.createdAt).toLocaleString()} (v${snapshot.version}${snapshot.reason ? ` — ${snapshot.reason}` : ""}). Reports always reflect this frozen data, not live edits, until a new revision is created.`
           : "Not yet finalized — the first report you download freezes today's calculations. Later reference-data updates (new equipment models, corrected duct tables, etc.) will never silently change this project's reports once that happens."}
       </p>
+
+      <div className="mt-6 border-t border-brand-gold/30 pt-5">
+        <h3 className="mb-1 text-sm font-semibold text-brand-gold">
+          Summit Report Standard (SUMMIT-REPORT-STANDARD.md)
+        </h3>
+        <p className="mb-3 text-xs text-brand-grey-text">
+          The full 11-page branded client report - cover, per-system summaries, load short
+          forms, building analysis, orientation, floor plan, and the automated QA audit trail.
+          Cannot generate until every Section 3 gate condition below is met.
+        </p>
+        <ReportGenerationGate projectId={projectId} onReady={setSummitStandardReady} />
+        <button
+          onClick={() => handleGenerate("summit_standard")}
+          disabled={generating !== null || !summitStandardReady}
+          className="mt-3 rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {generating === "summit_standard" ? "Generating…" : "Generate Summit Standard Report"}
+        </button>
+      </div>
     </section>
   );
 }

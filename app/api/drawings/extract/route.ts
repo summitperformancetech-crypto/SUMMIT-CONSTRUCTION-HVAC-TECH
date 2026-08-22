@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { createClient } from "@/lib/supabase/server";
 import {
-  EXTRACTION_PROMPT,
+  buildExtractionPrompt,
   collectUnresolvedItems,
+  computeCompassWallLengthsFromPageAxes,
   applyDuctFallbackDefaults,
   flagWaterHeaterLoadRisk,
   flagRoomCeilingHeightConflicts,
@@ -16,7 +17,10 @@ import {
   mergeFollowUpResponse,
   type DrawingExtraction,
   type FollowUpResponse,
+  type KnownBuildingOrientation,
 } from "@/lib/drawingExtraction";
+import { resolveOrientation } from "@/lib/orientation";
+import { isCardinalCompass, type Compass8 } from "@/lib/constants/compass";
 
 // Real, measured: a full extraction call against a dense 13-sheet set
 // took 222.5s (diagnosed 2026-08-14 verifying the switch to streaming
@@ -98,6 +102,32 @@ export async function POST(request: Request) {
 
   if (drawingError || !drawing) {
     return NextResponse.json({ error: "Drawing not found" }, { status: 404 });
+  }
+
+  // Building-orientation-confirmed-before-extraction (moved earlier in the
+  // pipeline, 2026-08-15): components/building-orientation-gate.tsx now
+  // requires this to be set before a drawing can even be uploaded, so by
+  // the time extraction runs it's either already there or this project
+  // predates the gate (an old project, or a direct API call bypassing the
+  // UI) - either way, missing/intercardinal orientation falls back to the
+  // exact prior behavior (buildExtractionPrompt(null)), not an error.
+  // Only cardinal directions resolve to a usable compass mapping - the
+  // room schema's wall_north/south/east/west_len_ft columns (and
+  // isCardinalCompass, the same gate the post-hoc auto-fill transform
+  // already uses) don't support intercardinal values.
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("building_front_faces")
+    .eq("id", drawing.project_id)
+    .maybeSingle<{ building_front_faces: Compass8 | null }>();
+
+  let knownOrientation: KnownBuildingOrientation | null = null;
+  const buildingFrontFaces = projectRow?.building_front_faces ?? null;
+  if (buildingFrontFaces && isCardinalCompass(buildingFrontFaces)) {
+    // Guaranteed cardinal by the check above - narrowed here only because
+    // TypeScript can't infer that from the runtime check (same pattern
+    // already used in building-orientation-section.tsx).
+    knownOrientation = resolveOrientation(buildingFrontFaces) as KnownBuildingOrientation;
   }
 
   const isPdf = drawing.file_type === "pdf";
@@ -186,7 +216,7 @@ export async function POST(request: Request) {
       messages: [
         {
           role: "user",
-          content: [documentContentBlock, { type: "text", text: EXTRACTION_PROMPT }],
+          content: [documentContentBlock, { type: "text", text: buildExtractionPrompt(knownOrientation) }],
         },
       ],
     });
@@ -237,6 +267,21 @@ export async function POST(request: Request) {
       },
       { status: 502 },
     );
+  }
+
+  // Diagnosed 2026-08-16: the known-orientation case's wall_north/south/
+  // east/west_len_ft are computed here, deterministically, from the
+  // model's two remaining visual observations (ExtractedSheet.
+  // frontAnchorPageEdge, ExtractedRoom.wall_page_horizontal/vertical_len_ft)
+  // rather than trusted from the model's own compass output - see
+  // computeCompassWallLengthsFromPageAxes's comment for why the rotation
+  // math itself was moved out of the prompt entirely. Only runs when
+  // orientation is actually known for this project; the no-orientation
+  // branch's wall_front/rear/left/right_len_ft fields are untouched
+  // either way (still resolved later, by a human, via
+  // BuildingOrientationSection's existing transform).
+  if (knownOrientation) {
+    extraction = computeCompassWallLengthsFromPageAxes(extraction, knownOrientation);
   }
 
   // Section 2: most drawings don't show ductwork, so this fills a

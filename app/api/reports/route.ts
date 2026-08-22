@@ -3,6 +3,11 @@ import puppeteer from "puppeteer";
 import { createClient } from "@/lib/supabase/server";
 import { getReportData, type ReportData } from "@/lib/reportData";
 import { renderInternalReportHtml, renderClientScopeOfWorkHtml } from "@/lib/reportTemplates";
+import { renderSummitReportHtml, type OrgBranding } from "@/lib/reportHtmlV2";
+import { getReportGenerationGateStatus } from "@/lib/reportGate";
+import { resolutionKey, type FieldResolution } from "@/lib/fieldResolutions";
+import type { DrawingExtraction } from "@/lib/drawingExtraction";
+import type { Compass8 } from "@/lib/constants/compass";
 
 type SnapshotRow = { version: number; snapshot_data: ReportData; reason: string | null; created_at: string };
 
@@ -90,7 +95,7 @@ async function getOrCreateSnapshot(
 // function bundle. Flagged here rather than solved now since this app
 // isn't deployed yet (see CLAUDE.md "Current Status: Early setup phase").
 export async function POST(request: Request) {
-  let body: { projectId?: string; type?: "internal" | "client" };
+  let body: { projectId?: string; type?: "internal" | "client" | "summit_standard" };
   try {
     body = await request.json();
   } catch {
@@ -98,9 +103,9 @@ export async function POST(request: Request) {
   }
 
   const { projectId, type } = body;
-  if (!projectId || (type !== "internal" && type !== "client")) {
+  if (!projectId || (type !== "internal" && type !== "client" && type !== "summit_standard")) {
     return NextResponse.json(
-      { error: "projectId and type ('internal' | 'client') are required" },
+      { error: "projectId and type ('internal' | 'client' | 'summit_standard') are required" },
       { status: 400 },
     );
   }
@@ -111,6 +116,41 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // SUMMIT-REPORT-STANDARD.md Section 3/8: the gate must run BEFORE
+  // snapshotting for the new report type specifically - "First report
+  // generation is also the trigger for snapshotting... this is exactly
+  // why generation must wait until everything is genuinely final:
+  // freezing early would freeze an incomplete project." Scoped to
+  // summit_standard only - the pre-existing internal/client report types
+  // are unchanged, no new gate imposed on flows that already worked.
+  if (type === "summit_standard") {
+    const gateData = await getReportData(supabase, projectId);
+    if (!gateData) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+    const [{ data: drawings }, { data: resolutions }] = await Promise.all([
+      supabase
+        .from("drawings")
+        .select("id, extraction_status, extracted_data")
+        .eq("project_id", projectId)
+        .returns<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }[]>(),
+      supabase
+        .from("field_resolutions")
+        .select(
+          "id, project_id, table_name, record_id, field_name, ai_extracted_value, final_value, resolution_type, override_reason, resolved_by, resolved_at",
+        )
+        .eq("project_id", projectId)
+        .returns<FieldResolution[]>(),
+    ]);
+    const resolvedKeys = new Set(
+      (resolutions ?? []).map((r) => resolutionKey(r.table_name, r.record_id, r.field_name)),
+    );
+    const gate = getReportGenerationGateStatus(gateData, drawings ?? [], resolvedKeys);
+    if (!gate.canGenerate) {
+      return NextResponse.json({ error: "Report is not ready to generate", blockers: gate.blockers }, { status: 422 });
+    }
   }
 
   // getOrCreateSnapshot's own queries all run through this same
@@ -134,8 +174,34 @@ export async function POST(request: Request) {
   // dates (generated vs. data-frozen-as-of) are shown separately.
   const reportData: ReportData = { ...result.reportData, generatedAt: new Date().toISOString(), snapshot: result.snapshot };
 
-  const html =
-    type === "internal" ? renderInternalReportHtml(reportData) : renderClientScopeOfWorkHtml(reportData);
+  let html: string;
+  if (type === "internal") {
+    html = renderInternalReportHtml(reportData);
+  } else if (type === "client") {
+    html = renderClientScopeOfWorkHtml(reportData);
+  } else {
+    const [{ data: project }, { data: drawings }] = await Promise.all([
+      supabase
+        .from("projects")
+        .select("org_id, building_front_faces")
+        .eq("id", projectId)
+        .single<{ org_id: string; building_front_faces: Compass8 | null }>(),
+      supabase
+        .from("drawings")
+        .select("id, extraction_status, extracted_data")
+        .eq("project_id", projectId)
+        .returns<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }[]>(),
+    ]);
+    const { data: org } = project
+      ? await supabase
+          .from("organizations")
+          .select("name, license_number, logo_data_uri")
+          .eq("id", project.org_id)
+          .single<OrgBranding>()
+      : { data: null };
+    const orgBranding: OrgBranding = org ?? { name: "Summit", license_number: null, logo_data_uri: null };
+    html = renderSummitReportHtml(reportData, orgBranding, project?.building_front_faces ?? null, drawings ?? []);
+  }
 
   let browser;
   try {
@@ -148,7 +214,8 @@ export async function POST(request: Request) {
       margin: { top: "0", bottom: "0.4in", left: "0", right: "0" },
     });
 
-    const fileNameSuffix = type === "internal" ? "internal-engineering-report" : "scope-of-work";
+    const fileNameSuffix =
+      type === "internal" ? "internal-engineering-report" : type === "client" ? "scope-of-work" : "load-calculation-report";
     const fileName = `${reportData.project.name.replace(/[^a-z0-9]+/gi, "-")}-${fileNameSuffix}.pdf`;
 
     return new NextResponse(new Uint8Array(pdfBuffer), {

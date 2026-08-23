@@ -43,6 +43,7 @@ import {
   type ProcessLoad,
 } from "./manualIndustrial";
 import { latestResolutions, type FieldResolution } from "./fieldResolutions";
+import { resolveCounty } from "./countyLookup";
 
 export type ReportProject = {
   id: string;
@@ -127,12 +128,32 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
 
   if (!project) return null;
 
-  const { data: climateZoneRows } = await supabase
+  // County-scoped, not just state-scoped - a state-only match returns an
+  // arbitrary county's design temps whenever a state has more than one
+  // county row (e.g. Texas has 254). Mirrors the resolution used to show
+  // climate data on the project page (app/dashboard/[id]/page.tsx) so the
+  // report and the on-screen UI can never disagree.
+  const resolvedCounty = await resolveCounty({
+    addressLine1: project.address_line1,
+    city: project.city,
+    state: project.state,
+    zip: project.zip,
+  });
+
+  let climateZoneQuery = supabase
     .from("climate_zone_reference")
     .select("county, iecc_zone, winter_design_temp_f, summer_design_temp_f, summer_coincident_wetbulb_f")
-    .eq("state", project.state)
-    .limit(1)
-    .returns<ReportClimateZone[]>();
+    .eq("state", project.state);
+
+  // Only scope by county when we could actually resolve one - a resolved
+  // county with no matching row should surface as "no data for this
+  // county" rather than silently falling back to some other county's
+  // design temps.
+  if (resolvedCounty) {
+    climateZoneQuery = climateZoneQuery.eq("county", resolvedCounty);
+  }
+
+  const { data: climateZoneRows } = await climateZoneQuery.limit(1).returns<ReportClimateZone[]>();
   const climateZone = climateZoneRows?.[0] ?? null;
 
   const { data: fieldResolutions } = await supabase

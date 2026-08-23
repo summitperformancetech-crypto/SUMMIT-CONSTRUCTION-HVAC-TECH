@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npx tsx lib/__tests__/reportValidation.test.mts"
+    "test": "npx tsx lib/__tests__/reportValidation.test.mts && npx tsx lib/__tests__/reportData.test.mts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

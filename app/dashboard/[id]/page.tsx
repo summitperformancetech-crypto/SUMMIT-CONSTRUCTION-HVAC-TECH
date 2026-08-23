@@ -4,11 +4,10 @@ import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import { GenerateReportsButton, type SnapshotStatus } from "@/components/generate-reports-button";
 import { StalenessBanner } from "@/components/staleness-banner";
-import type { RoomRow } from "@/components/manual-j-workflow";
+import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 import type {
   AtticConstructionType,
   ManualJEnvelope,
-  ManualJZone,
   RoomTypeDefault,
 } from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
@@ -57,8 +56,6 @@ type Project = {
   window_count: number | null;
   available_static_pressure_iwc: number | null;
   supply_air_temp_f: number | null;
-  selected_equipment_id: string | null;
-  equipment_selection_notes: string | null;
   building_front_faces: Compass8 | null;
 };
 
@@ -109,7 +106,8 @@ const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
 
-const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
+const ZONE_COLUMNS =
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes";
 
 // Duplicated from duct-design-section.tsx's own DUCT_RUN_COLUMNS rather
 // than imported - that file is a "use client" module, and importing a
@@ -229,7 +227,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, selected_equipment_id, equipment_selection_notes, building_front_faces",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -518,7 +516,7 @@ export default async function ProjectDetailPage({
       .select(ZONE_COLUMNS)
       .eq("project_id", project.id)
       .order("created_at", { ascending: true })
-      .returns<ManualJZone[]>(),
+      .returns<ZoneRow[]>(),
     supabase
       .from("room_type_defaults")
       .select(
@@ -720,8 +718,6 @@ export default async function ProjectDetailPage({
         summerCoincidentWetbulbF={climateZone?.summer_coincident_wetbulb_f ?? null}
         equipmentCatalog={equipmentCatalog}
         equipmentPerformancePoints={equipmentPerformancePoints}
-        initialSelectedEquipmentId={project.selected_equipment_id}
-        initialEquipmentSelectionNotes={project.equipment_selection_notes}
         preferredEquipmentIds={preferredEquipmentIds}
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimumRows ?? []}

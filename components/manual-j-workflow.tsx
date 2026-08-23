@@ -65,6 +65,16 @@ export type RoomRow = ManualJRoom & {
   window_right_area_sqft: number | null;
 };
 
+// SUMMIT-REPORT-STANDARD.md Section 5.3 - equipment selection is per
+// zone/AHU, not project-wide (see zones.selected_equipment_id). Not
+// added to lib/manualJ.ts's ManualJZone itself - that's the pure calc
+// engine's grouping type, shared with contexts that have no reason to
+// know about equipment selection.
+export type ZoneRow = ManualJZone & {
+  selected_equipment_id: string | null;
+  equipment_selection_notes: string | null;
+};
+
 const ATTIC_CONSTRUCTION_OPTIONS = [
   { value: "vented_unconditioned", label: "Vented / Unconditioned (insulation at ceiling plane)" },
   { value: "sealed_conditioned", label: "Sealed / Conditioned (spray foam at roof deck)" },
@@ -99,7 +109,8 @@ type EnvelopeFormValues = {
 export const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, window_front_area_sqft, window_rear_area_sqft, window_left_area_sqft, window_right_area_sqft, door_count";
 
-const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
+const ZONE_COLUMNS =
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes";
 
 // The only Building Envelope fields a drawing extraction is allowed to fill.
 // ACH50, occupants, and indoor design temps are never populated from a drawing.
@@ -334,7 +345,7 @@ export const ManualJWorkflow = forwardRef<
     winterDesignTempF: number | null;
     summerDesignTempF: number | null;
     roomTypeDefaults: RoomTypeDefault[];
-    initialZones: ManualJZone[];
+    initialZones: ZoneRow[];
     initialAvailableStaticPressureIwc: number | null;
     initialSupplyAirTempF: number | null;
     initialDuctRuns: DuctRunRow[];
@@ -342,8 +353,6 @@ export const ManualJWorkflow = forwardRef<
     summerCoincidentWetbulbF: number | null;
     equipmentCatalog: EquipmentCatalogEntry[];
     equipmentPerformancePoints: PerformancePoint[];
-    initialSelectedEquipmentId: string | null;
-    initialEquipmentSelectionNotes: string | null;
     preferredEquipmentIds: ReadonlySet<string>;
     exclusiveEquipmentIds: ReadonlySet<string>;
     ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
@@ -370,8 +379,6 @@ export const ManualJWorkflow = forwardRef<
     summerCoincidentWetbulbF,
     equipmentCatalog,
     equipmentPerformancePoints,
-    initialSelectedEquipmentId,
-    initialEquipmentSelectionNotes,
     preferredEquipmentIds,
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
@@ -399,7 +406,7 @@ export const ManualJWorkflow = forwardRef<
   const [listError, setListError] = useState<string | null>(null);
   const roomsSectionRef = useRef<HTMLDivElement>(null);
 
-  const [zones, setZones] = useState<ManualJZone[]>(initialZones);
+  const [zones, setZones] = useState<ZoneRow[]>(initialZones);
   const [newZoneName, setNewZoneName] = useState("");
   const [newZoneAhuLabel, setNewZoneAhuLabel] = useState("");
   const [zoneError, setZoneError] = useState<string | null>(null);
@@ -522,7 +529,7 @@ export const ManualJWorkflow = forwardRef<
         ahu_label: toNullableString(newZoneAhuLabel),
       })
       .select(ZONE_COLUMNS)
-      .single<ManualJZone>();
+      .single<ZoneRow>();
     setZoneSaving(false);
     if (error) {
       setZoneError(error.message);
@@ -541,7 +548,7 @@ export const ManualJWorkflow = forwardRef<
       .update({ name, ahu_label: toNullableString(ahuLabel) })
       .eq("id", zoneId)
       .select(ZONE_COLUMNS)
-      .single<ManualJZone>();
+      .single<ZoneRow>();
     if (error) {
       setZoneError(error.message);
       return;
@@ -1374,23 +1381,36 @@ export const ManualJWorkflow = forwardRef<
         results &&
         winterDesignTempF != null &&
         summerDesignTempF != null &&
-        summerCoincidentWetbulbF != null && (
-          <EquipmentSelectionSection
-            projectId={projectId}
-            catalog={equipmentCatalog}
-            performancePoints={equipmentPerformancePoints}
-            manualJCoolingTotalBtuh={results.wholeHouse.coolingTotalBtuh}
-            manualJHeatingBtuh={results.wholeHouse.heatingBtuh}
-            summerOutdoorDesignF={summerDesignTempF}
-            summerCoincidentWetbulbF={summerCoincidentWetbulbF}
-            winterOutdoorDesignF={winterDesignTempF}
-            initialSelectedEquipmentId={initialSelectedEquipmentId}
-            initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
-            preferredEquipmentIds={preferredEquipmentIds}
-            exclusiveEquipmentIds={exclusiveEquipmentIds}
-            userRole={userRole}
-          />
-        )}
+        summerCoincidentWetbulbF != null &&
+        // SUMMIT-REPORT-STANDARD.md Section 5.3 - one equipment panel per
+        // AHU/zone, each evaluated against that zone's own load, not the
+        // whole house. A zone with no rooms assigned yet has nothing to
+        // size against (matches computeManualJ's own "empty zone
+        // contributes nothing" guard) - skipped rather than shown with
+        // zero load.
+        zones.map((zone) => {
+          const zoneLoad = results.zones.find((z) => z.zoneId === zone.id);
+          if (!zoneLoad || zoneLoad.coolingTotalBtuh <= 0) return null;
+          return (
+            <EquipmentSelectionSection
+              key={zone.id}
+              zoneId={zone.id}
+              zoneName={zone.name}
+              catalog={equipmentCatalog}
+              performancePoints={equipmentPerformancePoints}
+              manualJCoolingTotalBtuh={zoneLoad.coolingTotalBtuh}
+              manualJHeatingBtuh={zoneLoad.heatingBtuh}
+              summerOutdoorDesignF={summerDesignTempF}
+              summerCoincidentWetbulbF={summerCoincidentWetbulbF}
+              winterOutdoorDesignF={winterDesignTempF}
+              initialSelectedEquipmentId={zone.selected_equipment_id}
+              initialEquipmentSelectionNotes={zone.equipment_selection_notes}
+              preferredEquipmentIds={preferredEquipmentIds}
+              exclusiveEquipmentIds={exclusiveEquipmentIds}
+              userRole={userRole}
+            />
+          );
+        })}
       {canCalculate &&
         results &&
         winterDesignTempF != null &&

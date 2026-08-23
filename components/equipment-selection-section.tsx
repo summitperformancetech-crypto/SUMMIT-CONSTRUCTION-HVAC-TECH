@@ -62,7 +62,8 @@ function pct(value: number): string {
 }
 
 export function EquipmentSelectionSection({
-  projectId,
+  zoneId,
+  zoneName,
   catalog,
   performancePoints,
   manualJCoolingTotalBtuh,
@@ -76,7 +77,10 @@ export function EquipmentSelectionSection({
   exclusiveEquipmentIds,
   userRole,
 }: {
-  projectId: string;
+  // SUMMIT-REPORT-STANDARD.md Section 5.3 - one panel per AHU/zone, so
+  // this writes to zones.selected_equipment_id, not projects.
+  zoneId: string;
+  zoneName: string;
   catalog: EquipmentCatalogEntry[];
   performancePoints: PerformancePoint[];
   manualJCoolingTotalBtuh: number;
@@ -89,8 +93,9 @@ export function EquipmentSelectionSection({
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
   // Field Tech = data entry only: equipment selection is Estimator/Admin
-  // only. The real boundary is the projects.selected_equipment_id trigger
-  // (see 20260822190000_restrict_field_tech_equipment_and_reports.sql);
+  // only. The real boundary is the zones.selected_equipment_id trigger
+  // (see 20260822190000_restrict_field_tech_equipment_and_reports.sql,
+  // moved onto zones by 20260822210000_per_zone_equipment_selection.sql);
   // this just disables the action in the UI rather than letting a Field
   // Tech hit a raw database error.
   userRole: string;
@@ -152,9 +157,9 @@ export function EquipmentSelectionSection({
     setSaving(true);
     const supabase = createClient();
     const { error: saveError } = await supabase
-      .from("projects")
+      .from("zones")
       .update({ selected_equipment_id: equipmentId, equipment_selection_notes: notes || null })
-      .eq("id", projectId);
+      .eq("id", zoneId);
     setSaving(false);
     if (saveError) {
       setError(saveError.message);
@@ -165,7 +170,7 @@ export function EquipmentSelectionSection({
 
   return (
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
-      <h2 className="mb-2 text-lg font-semibold text-brand-gold">Equipment Selection (Manual S)</h2>
+      <h2 className="mb-2 text-lg font-semibold text-brand-gold">Equipment Selection (Manual S) — {zoneName}</h2>
       {!canSelectEquipment && (
         <p className="mb-4 text-xs text-brand-grey-text">
           Read-only — only an Estimator or Admin can select equipment for this project.

@@ -144,7 +144,7 @@ function baseReportData(residential: NonNullable<ReportData["residential"]>): Re
     envelope: {} as any,
     manualJ: { rooms: [r1, r2], zones: [z1], wholeHouse: wh },
     ductSchedule: [], ductRuns: [], rooms: [{ id: "r1", zone_id: "z1" } as any, { id: "r2", zone_id: "z1" } as any],
-    zones: [], equipmentEvaluations: [], selectedEquipment: null, equipmentSelectionNotes: null,
+    zones: [], zoneEquipment: [],
     ductInsulationCompliance: [],
   });
 
@@ -183,7 +183,7 @@ function baseReportData(residential: NonNullable<ReportData["residential"]>): Re
     manualJ: { rooms: [r1, r2], zones: [z1, z2], wholeHouse: wh },
     ductSchedule: [], ductRuns: [],
     rooms: [{ id: "r1", zone_id: "ahu1" } as any, { id: "r2", zone_id: "ahu2" } as any],
-    zones: [], equipmentEvaluations: [], selectedEquipment: null, equipmentSelectionNotes: null,
+    zones: [], zoneEquipment: [],
     ductInsulationCompliance: [],
   });
 

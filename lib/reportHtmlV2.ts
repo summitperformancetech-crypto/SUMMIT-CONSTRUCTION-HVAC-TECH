@@ -245,7 +245,8 @@ function renderPerSystemSummaryPage(data: ReportData, org: OrgBranding): string 
   const zonesHtml = r.manualJ.zones
     .map((z) => {
       const tons = computeRequiredTonnage(z.coolingSensibleBtuh);
-      const eq = r.selectedEquipment;
+      const zoneEq = z.zoneId != null ? r.zoneEquipment.find((ze) => ze.zoneId === z.zoneId) : undefined;
+      const eq = zoneEq?.selectedEquipment ?? null;
       return `
       <div class="panel" style="margin-bottom:16px;">
         <div style="font-size:14px;font-weight:700;color:${BRAND.navy700};margin-bottom:10px;">${esc(z.zoneName)}</div>
@@ -263,10 +264,10 @@ function renderPerSystemSummaryPage(data: ReportData, org: OrgBranding): string 
                 <tr><td>Interpolated capacity at design</td><td class="num">${fmt(eq.coolingCapacityAtDesign?.totalCapacityBtu)} Btuh (${pct(eq.coolingPercentOfLoad)} of load)</td></tr>
                 <tr><td>Rated airflow</td><td class="num">${eq.equipment.ratedCfm ?? "—"} CFM</td></tr>
                 <tr><td>Within ACCA sizing window</td><td class="num">${eq.withinCoolingWindow ? '<span class="badge badge-pass">Pass</span>' : '<span class="badge badge-fail">Fail</span>'}</td></tr>
-              </table>
-              <p class="muted" style="font-size:10px;">Equipment selection is currently project-wide in this system, not tracked per system/AHU independently - the same selection shown here applies to every system on this project. A known platform limitation, not specific to this project.</p>`
+              </table>`
             : `<p class="muted">No equipment selected.</p>`
         }
+        ${zoneEq?.equipmentSelectionNotes ? `<p class="muted" style="margin-top:8px;"><strong>Selection notes:</strong> ${esc(zoneEq.equipmentSelectionNotes)}</p>` : ""}
       </div>`;
     })
     .join("");

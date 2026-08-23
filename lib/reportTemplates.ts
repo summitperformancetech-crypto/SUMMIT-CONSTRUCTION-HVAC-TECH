@@ -116,8 +116,7 @@ export function renderInternalReportHtml(data: ReportData): string {
       ductSchedule,
       ductRuns,
       rooms,
-      selectedEquipment,
-      equipmentSelectionNotes,
+      zoneEquipment,
       ductInsulationCompliance,
     } = data.residential;
     const roomNameById = new Map(rooms.map((r) => [r.id, r.name]));
@@ -210,16 +209,29 @@ export function renderInternalReportHtml(data: ReportData): string {
       <section>
         <div class="section-title">Manual S — Equipment Selection</div>
         ${
-          selectedEquipment
-            ? `<table>
-                <tr><td>Selected equipment</td><td class="num">${esc(selectedEquipment.equipment.manufacturer)} ${esc(selectedEquipment.equipment.modelNumber)}</td></tr>
-                <tr><td>Interpolated capacity at design conditions</td><td class="num">${fmt(selectedEquipment.coolingCapacityAtDesign?.totalCapacityBtu)} Btu/hr (${selectedEquipment.coolingPercentOfLoad != null ? `${Math.round(selectedEquipment.coolingPercentOfLoad * 100)}%` : "—"} of Manual J cooling load)</td></tr>
-                <tr><td>Nominal / AHRI capacity (reference only — NOT used for sizing)</td><td class="num">${fmt(selectedEquipment.equipment.nominalCoolingCapacityBtu)} Btu/hr</td></tr>
-                <tr><td>Compatibility score</td><td class="num">${selectedEquipment.compatibilityScore != null ? `${Math.round(selectedEquipment.compatibilityScore * 100)}%` : "—"}</td></tr>
-                ${selectedEquipment.balancePointF != null ? `<tr><td>Balance point</td><td class="num">${selectedEquipment.balancePointF.toFixed(1)}°F</td></tr>` : ""}
-                ${selectedEquipment.supplementalHeatBtuh ? `<tr><td>Supplemental heat required at design</td><td class="num">${fmt(selectedEquipment.supplementalHeatBtuh)} Btu/hr</td></tr>` : ""}
-              </table>
-              ${equipmentSelectionNotes ? `<p><strong>Selection notes:</strong> ${esc(equipmentSelectionNotes)}</p>` : ""}`
+          zoneEquipment.length > 0
+            ? zoneEquipment
+                .map((ze) => {
+                  const zoneName = manualJ.zones.find((z) => z.zoneId === ze.zoneId)?.zoneName ?? "Zone";
+                  const eq = ze.selectedEquipment;
+                  return `<div style="margin-bottom:12px;">
+                    <p><strong>${esc(zoneName)}</strong></p>
+                    ${
+                      eq
+                        ? `<table>
+                            <tr><td>Selected equipment</td><td class="num">${esc(eq.equipment.manufacturer)} ${esc(eq.equipment.modelNumber)}</td></tr>
+                            <tr><td>Interpolated capacity at design conditions</td><td class="num">${fmt(eq.coolingCapacityAtDesign?.totalCapacityBtu)} Btu/hr (${eq.coolingPercentOfLoad != null ? `${Math.round(eq.coolingPercentOfLoad * 100)}%` : "—"} of this zone's Manual J cooling load)</td></tr>
+                            <tr><td>Nominal / AHRI capacity (reference only — NOT used for sizing)</td><td class="num">${fmt(eq.equipment.nominalCoolingCapacityBtu)} Btu/hr</td></tr>
+                            <tr><td>Compatibility score</td><td class="num">${eq.compatibilityScore != null ? `${Math.round(eq.compatibilityScore * 100)}%` : "—"}</td></tr>
+                            ${eq.balancePointF != null ? `<tr><td>Balance point</td><td class="num">${eq.balancePointF.toFixed(1)}°F</td></tr>` : ""}
+                            ${eq.supplementalHeatBtuh ? `<tr><td>Supplemental heat required at design</td><td class="num">${fmt(eq.supplementalHeatBtuh)} Btu/hr</td></tr>` : ""}
+                          </table>
+                          ${ze.equipmentSelectionNotes ? `<p><strong>Selection notes:</strong> ${esc(ze.equipmentSelectionNotes)}</p>` : ""}`
+                        : `<p class="muted">No equipment selected yet for this zone.</p>`
+                    }
+                  </div>`;
+                })
+                .join("")
             : `<p class="muted">No equipment selected yet for this project.</p>`
         }
         <p class="muted">Capacity shown above is interpolated from OEM extended performance data at this project's actual design conditions, never AHRI 210/240 nameplate rating, per ACCA Manual S.</p>
@@ -333,21 +345,36 @@ export function renderClientScopeOfWorkHtml(data: ReportData): string {
   let ductSummary = "";
 
   if (data.residential) {
-    const { manualJ, selectedEquipment, ductSchedule, ductRuns } = data.residential;
+    const { manualJ, zoneEquipment, ductSchedule, ductRuns } = data.residential;
     const tons = manualJ.wholeHouse.coolingTotalBtuh / 12000;
+    const selectedEquipmentList = zoneEquipment
+      .map((ze) => ze.selectedEquipment)
+      .filter((eq): eq is NonNullable<typeof eq> => eq != null);
     // Plain language only below - no raw Btu/hr figures or engineering
     // jargon in the client-facing document (see this function's own
     // header comment / the Phase 7 spec). Tonnage is the one figure kept,
     // since "X tons of cooling" is standard plain-English HVAC sizing
-    // language homeowners are already used to seeing on quotes.
-    systemDescription = selectedEquipment
-      ? `Your home will be served by a ${esc(selectedEquipment.equipment.manufacturer)} ${esc(selectedEquipment.equipment.modelNumber)}
-         (${selectedEquipment.equipment.equipmentType === "heat_pump" ? "heat pump" : "air conditioning system"}),
-         sized specifically to your home's actual heating and cooling needs — approximately
-         ${tons.toFixed(1)} tons of cooling capacity — rather than a generic estimate.`
-      : `Your home's heating and cooling system will be sized specifically to its actual needs —
+    // language homeowners are already used to seeing on quotes. Equipment
+    // selection is now per system/zone (Section 5.3), so a multi-system
+    // home gets a short list rather than one single-system sentence.
+    if (selectedEquipmentList.length === 0) {
+      systemDescription = `Your home's heating and cooling system will be sized specifically to its actual needs —
          approximately ${tons.toFixed(1)} tons of cooling capacity — based on a detailed room-by-room
          analysis of your home's construction, insulation, windows, and layout.`;
+    } else if (selectedEquipmentList.length === 1) {
+      const eq = selectedEquipmentList[0];
+      systemDescription = `Your home will be served by a ${esc(eq.equipment.manufacturer)} ${esc(eq.equipment.modelNumber)}
+         (${eq.equipment.equipmentType === "heat_pump" ? "heat pump" : "air conditioning system"}),
+         sized specifically to your home's actual heating and cooling needs — approximately
+         ${tons.toFixed(1)} tons of cooling capacity — rather than a generic estimate.`;
+    } else {
+      const items = selectedEquipmentList
+        .map((eq) => `${esc(eq.equipment.manufacturer)} ${esc(eq.equipment.modelNumber)}`)
+        .join(", ");
+      systemDescription = `Your home will be served by ${selectedEquipmentList.length} separate systems (${items}),
+         each sized specifically to the actual heating and cooling needs of the area it serves —
+         approximately ${tons.toFixed(1)} tons of cooling capacity combined — rather than a generic estimate.`;
+    }
 
     roomSummary = `
       <table>

@@ -8,9 +8,10 @@ import {
   ManualJWorkflow,
   type ManualJWorkflowHandle,
   type RoomRow,
+  type ZoneRow,
 } from "@/components/manual-j-workflow";
 import type { DuctRunRow } from "@/components/duct-design-section";
-import type { ManualJEnvelope, ManualJZone, RoomTypeDefault } from "@/lib/manualJ";
+import type { ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import type { DrawingRow } from "@/lib/drawingExtraction";
@@ -39,8 +40,6 @@ export function ProjectWorkspace({
   summerCoincidentWetbulbF,
   equipmentCatalog,
   equipmentPerformancePoints,
-  initialSelectedEquipmentId,
-  initialEquipmentSelectionNotes,
   preferredEquipmentIds,
   exclusiveEquipmentIds,
   ductInsulationCodeMinimums,
@@ -60,7 +59,7 @@ export function ProjectWorkspace({
   winterDesignTempF: number | null;
   summerDesignTempF: number | null;
   roomTypeDefaults: RoomTypeDefault[];
-  initialZones: ManualJZone[];
+  initialZones: ZoneRow[];
   initialAvailableStaticPressureIwc: number | null;
   initialSupplyAirTempF: number | null;
   initialDuctRuns: DuctRunRow[];
@@ -68,8 +67,6 @@ export function ProjectWorkspace({
   summerCoincidentWetbulbF: number | null;
   equipmentCatalog: EquipmentCatalogEntry[];
   equipmentPerformancePoints: PerformancePoint[];
-  initialSelectedEquipmentId: string | null;
-  initialEquipmentSelectionNotes: string | null;
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
   ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
@@ -150,8 +147,6 @@ export function ProjectWorkspace({
         summerCoincidentWetbulbF={summerCoincidentWetbulbF}
         equipmentCatalog={equipmentCatalog}
         equipmentPerformancePoints={equipmentPerformancePoints}
-        initialSelectedEquipmentId={initialSelectedEquipmentId}
-        initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
         preferredEquipmentIds={preferredEquipmentIds}
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimums}

@@ -64,6 +64,18 @@ export type ReportClimateZone = {
   summer_coincident_wetbulb_f: number;
 };
 
+type ZoneDbRow = ManualJZone & {
+  selected_equipment_id: string | null;
+  equipment_selection_notes: string | null;
+};
+
+export type ZoneEquipmentSelection = {
+  zoneId: string;
+  equipmentEvaluations: EquipmentEvaluation[];
+  selectedEquipment: EquipmentEvaluation | null;
+  equipmentSelectionNotes: string | null;
+};
+
 export type ReportData = {
   project: ReportProject;
   climateZone: ReportClimateZone | null;
@@ -85,9 +97,13 @@ export type ReportData = {
     ductRuns: DuctRunRow[];
     rooms: RoomRow[];
     zones: ManualJZone[];
-    equipmentEvaluations: EquipmentEvaluation[];
-    selectedEquipment: EquipmentEvaluation | null;
-    equipmentSelectionNotes: string | null;
+    // SUMMIT-REPORT-STANDARD.md Section 5.3 - "one panel per AHU/zone", not
+    // one selection for the whole project. One entry per real zone (the
+    // DB row, not the synthetic "Unassigned" bucket manualJ.zones can also
+    // contain - there's nowhere in the schema for an unassigned group of
+    // rooms to have its own equipment selection). Each zone's evaluations
+    // are computed against that zone's own load, not the whole house.
+    zoneEquipment: ZoneEquipmentSelection[];
     // Data Integrity Addendum, Section 3 - one entry per branch run with a
     // resolvable room/location (see checkDuctInsulationCompliance in
     // lib/manualD.ts for why trunk runs are never included).
@@ -102,7 +118,7 @@ export type ReportData = {
 
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
-const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at";
+const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 const COMMERCIAL_ZONE_COLUMNS =
@@ -121,7 +137,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, available_static_pressure_iwc, supply_air_temp_f, selected_equipment_id, equipment_selection_notes",
+      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, available_static_pressure_iwc, supply_air_temp_f",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -188,7 +204,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
           .select(ZONE_COLUMNS)
           .eq("project_id", projectId)
           .order("created_at", { ascending: true })
-          .returns<ManualJZone[]>(),
+          .returns<ZoneDbRow[]>(),
         supabase
           .from("room_type_defaults")
           .select(
@@ -264,7 +280,13 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       );
     }
 
-    let equipmentEvaluations: EquipmentEvaluation[] = [];
+    // SUMMIT-REPORT-STANDARD.md Section 5.3 - "one panel per AHU/zone."
+    // Catalog/performance-point reference data is fetched once (global,
+    // not zone-scoped), but evaluateEquipment runs once per real zone
+    // against THAT zone's own cooling/heating totals from manualJ.zones
+    // (matched by id) - not the whole-house total every zone used to be
+    // evaluated against.
+    const zoneEquipment: ZoneEquipmentSelection[] = [];
     if (climateZone.summer_coincident_wetbulb_f != null) {
       const [{ data: catalogRows }, { data: pointRows }] = await Promise.all([
         supabase.from("equipment_catalog").select(EQUIPMENT_CATALOG_COLUMNS).returns<
@@ -319,22 +341,32 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         if (!pointsByEquipment.has(p.equipmentId)) pointsByEquipment.set(p.equipmentId, []);
         pointsByEquipment.get(p.equipmentId)!.push(p);
       }
-      const evals = catalog.map((equipment) =>
-        evaluateEquipment(
-          equipment,
-          pointsByEquipment.get(equipment.id) ?? [],
-          manualJ.wholeHouse.coolingTotalBtuh,
-          manualJ.wholeHouse.heatingBtuh,
-          climateZone.summer_design_temp_f,
-          climateZone.summer_coincident_wetbulb_f,
-          climateZone.winter_design_temp_f,
-        ),
-      );
-      equipmentEvaluations = rankEquipment(evals);
+      for (const zoneRow of zones ?? []) {
+        // Only real zones with rooms actually assigned get an equipment
+        // panel - an empty zone has no load to size against (matches
+        // computeManualJ's own "empty zone contributes nothing" guard).
+        const zoneLoad = manualJ.zones.find((z) => z.zoneId === zoneRow.id);
+        if (!zoneLoad) continue;
+        const evals = catalog.map((equipment) =>
+          evaluateEquipment(
+            equipment,
+            pointsByEquipment.get(equipment.id) ?? [],
+            zoneLoad.coolingTotalBtuh,
+            zoneLoad.heatingBtuh,
+            climateZone.summer_design_temp_f,
+            climateZone.summer_coincident_wetbulb_f!,
+            climateZone.winter_design_temp_f,
+          ),
+        );
+        const evaluations = rankEquipment(evals);
+        zoneEquipment.push({
+          zoneId: zoneRow.id,
+          equipmentEvaluations: evaluations,
+          selectedEquipment: evaluations.find((e) => e.equipment.id === zoneRow.selected_equipment_id) ?? null,
+          equipmentSelectionNotes: zoneRow.equipment_selection_notes,
+        });
+      }
     }
-
-    const selectedEquipment =
-      equipmentEvaluations.find((e) => e.equipment.id === project.selected_equipment_id) ?? null;
 
     const roomsById = new Map(
       (rooms ?? []).map((r) => [
@@ -366,9 +398,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       ductRuns: ductRuns ?? [],
       rooms: rooms ?? [],
       zones: zones ?? [],
-      equipmentEvaluations,
-      selectedEquipment,
-      equipmentSelectionNotes: project.equipment_selection_notes,
+      zoneEquipment,
       ductInsulationCompliance,
     };
   } else if (

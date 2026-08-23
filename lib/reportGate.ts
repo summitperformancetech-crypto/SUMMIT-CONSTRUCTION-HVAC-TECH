@@ -44,43 +44,36 @@ export function getReportGenerationGateStatus(
   }
 
   if (data.residential) {
-    const { selectedEquipment, ductSchedule, ductRuns, rooms } = data.residential;
+    const { zones, zoneEquipment, ductSchedule, ductRuns, rooms } = data.residential;
 
     // Gate condition 2: "Manual S equipment selection is complete for
     // every system (make/model/AHRI ref, selected against OEM extended
     // performance data at this project's actual design conditions - not
-    // a placeholder or 'TBD' equipment block)."
-    //
-    // KNOWN GAP, not silently papered over: this schema has exactly one
-    // selected-equipment field per PROJECT (projects.selected_equipment_id),
-    // not one per system/zone. The standard's own Section 5.3 calls for a
-    // full equipment spec "one panel per AHU/zone" - true per-system
-    // tracking would need a real schema change (e.g. equipment_id on
-    // zones, or a join table), not built here. This check validates what
-    // the schema actually supports today: one real, fully-specified
-    // selection, evaluated against real interpolated capacity at this
-    // project's design conditions (not a nameplate/nominal figure).
-    if (!selectedEquipment) {
-      blockers.push({
-        code: "equipment_incomplete",
-        label: "Equipment selection incomplete",
-        detail: "No equipment has been selected for this project yet (Manual S).",
-      });
-    } else if (
-      !selectedEquipment.equipment.manufacturer ||
-      !selectedEquipment.equipment.modelNumber ||
-      selectedEquipment.coolingCapacityAtDesign == null
-    ) {
-      blockers.push({
-        code: "equipment_incomplete",
-        label: "Equipment selection incomplete",
-        detail:
-          "Selected equipment is missing make/model, or has no interpolated capacity at this project's actual design conditions (a placeholder/incomplete selection).",
-      });
+    // a placeholder or 'TBD' equipment block)." Now genuinely per-zone
+    // (SUMMIT-REPORT-STANDARD.md Section 5.3 - "one panel per AHU/zone"),
+    // not one project-wide selection - see zones.selected_equipment_id
+    // and lib/reportData.ts's per-zone evaluation.
+    const zonesWithRooms = zones.filter((zone) => rooms.some((r) => r.zone_id === zone.id && r.is_conditioned));
+    for (const zone of zonesWithRooms) {
+      const selection = zoneEquipment.find((z) => z.zoneId === zone.id)?.selectedEquipment ?? null;
+      if (!selection) {
+        blockers.push({
+          code: "equipment_incomplete",
+          label: "Equipment selection incomplete",
+          detail: `No equipment has been selected yet for ${zone.name} (Manual S).`,
+        });
+      } else if (!selection.equipment.manufacturer || !selection.equipment.modelNumber || selection.coolingCapacityAtDesign == null) {
+        blockers.push({
+          code: "equipment_incomplete",
+          label: "Equipment selection incomplete",
+          detail: `${zone.name}'s selected equipment is missing make/model, or has no interpolated capacity at this project's actual design conditions (a placeholder/incomplete selection).`,
+        });
+      }
     }
 
     // Gate condition 3: "Manual D duct design is complete and compatible
-    // with the selected equipment's CFM."
+    // with the selected equipment's CFM" - checked per zone, matching
+    // each zone's own duct runs against that zone's own equipment.
     const conditionedRooms = rooms.filter((r) => r.is_conditioned);
     if (conditionedRooms.length > 0) {
       if (ductSchedule.length === 0) {
@@ -102,18 +95,19 @@ export function getReportGenerationGateStatus(
           });
         }
 
-        if (selectedEquipment?.equipment.ratedCfm != null) {
-          const runIdToCfm = new Map(ductSchedule.map((d) => [d.runId, d.cfm]));
+        const runIdToCfm = new Map(ductSchedule.map((d) => [d.runId, d.cfm]));
+        for (const zone of zonesWithRooms) {
+          const ratedCfm = zoneEquipment.find((z) => z.zoneId === zone.id)?.selectedEquipment?.equipment.ratedCfm;
+          if (ratedCfm == null) continue;
           const totalBranchCfm = ductRuns
-            .filter((r) => r.run_type === "branch")
+            .filter((r) => r.run_type === "branch" && r.zone_id === zone.id)
             .reduce((sum, r) => sum + (runIdToCfm.get(r.id) ?? 0), 0);
-          const ratedCfm = selectedEquipment.equipment.ratedCfm;
           const deviation = Math.abs(totalBranchCfm - ratedCfm) / ratedCfm;
           if (deviation > CFM_COMPATIBILITY_TOLERANCE) {
             blockers.push({
               code: "duct_design_incomplete",
               label: "Duct design incompatible with selected equipment",
-              detail: `Total branch duct CFM (${Math.round(totalBranchCfm)}) differs from the selected equipment's rated airflow (${ratedCfm}) by more than ${Math.round(CFM_COMPATIBILITY_TOLERANCE * 100)}%.`,
+              detail: `${zone.name}'s total branch duct CFM (${Math.round(totalBranchCfm)}) differs from its selected equipment's rated airflow (${ratedCfm}) by more than ${Math.round(CFM_COMPATIBILITY_TOLERANCE * 100)}%.`,
             });
           }
         }

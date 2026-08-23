@@ -1921,3 +1921,71 @@ further this session.
     area gap, and deciding whether `computeManualJ` should itself guard
     against silently-incomplete rooms rather than relying entirely on
     the report-generation-layer gate.
+
+- 2026-08-23 (sixth entry) — **User clarified all test projects
+  (Vivian Street, Kinsela, Crossway, Jose Dominguez, Khawaja Mamoon)
+  exist specifically to find gaps like the fifth entry's, said "keep
+  working."** Root-caused the window-area gap definitively (not just
+  observed it), then built a real, tested, additive fix for visibility.
+  - Read Kinsela's raw `extracted_data` and `field_resolutions` rows
+    directly (drawing id `866b89a3-7b09-4d4f-b409-e7cf1d88d01f`).
+    **Extraction was honest and correct**: multiple rooms' raw `reason`
+    text explicitly says "window sizes not confirmed from schedule";
+    `window_schedule` in the extraction is genuinely `null` (this
+    drawing set has no window schedule sheet). **The real bug is in
+    review/resolution**: all 40 of Kinsela's room-level
+    `field_resolutions` rows have `resolution_type: "accepted"` with
+    `final_value` byte-identical to `ai_extracted_value` — a reviewer
+    accepted each room's bundled prose reason (which names floor area,
+    wall-orientation, AND window-size uncertainty all in one string) as
+    a whole, without that acceptance ever populating the structured
+    `window_north/south/east/west_area_sqft` fields the reason
+    actually names. 5 of 28 rooms show real, careful correction work
+    (wall-length axis-swap fixes derived from genuine dimension-line
+    inspection) — but even those never touch window area.
+  - **Separately, worse**: confirmed by reading `lib/manualJ.ts`
+    (~line 367) that `computeManualJ` reads glazing area ONLY from
+    per-room `window_*_area_sqft` fields. The project-level
+    `window_count` field (48 — correctly resolved by a reviewer at some
+    point, `resolution_type: "overridden"`) is never referenced
+    anywhere in the glazing calculation. So even a fact a human
+    correctly confirmed about the real house never reaches the number
+    the engine needs.
+  - **Built a fix for the visibility half of this** (not the deeper
+    review-UI redesign, which is a bigger product decision — see
+    below): added `lib/dataCompleteness.ts` (`checkDataCompleteness`)
+    and `lib/__tests__/dataCompleteness.test.mts` (7 tests). Pure,
+    read-only, additive — does not touch `validateReportTotals`, the
+    report gate, or any UI. Flags (a) a room with no floor area
+    recorded, (b) a room with floor area but zero wall lengths on any
+    side, and (c) — whole-house only, deliberately not per-room, to
+    avoid false-positiving on real windowless closets/hallways/baths,
+    since the schema has no "confirmed windowless" signal to
+    distinguish that from "not yet measured" — total glazing area
+    across every room being exactly zero despite nonzero conditioned
+    floor area.
+  - **Verified against both real cases this session already
+    diagnosed**: Vivian Street → 1 warning (whole-house zero glazing,
+    2,600 sqft conditioned floor area). Kinsela → 11 warnings (8 rooms
+    missing floor area, 1 missing walls, plus whole-house zero glazing,
+    4,866 sqft conditioned floor area) — matches the manually-diagnosed
+    findings exactly, confirming the checker is precise, not just
+    plausible.
+  - **Full verification re-run after the code addition**: `npx tsc
+    --noEmit` — PASS, 0 errors. `npm test` — 58/58 PASS (6 suites, the
+    new `dataCompleteness` suite added). `npm run lint` — PASS, 0
+    errors/0 warnings (took unusually long even for this machine's
+    documented slow-disk issue, but exit 0 once it returned).
+  - **Deliberately did not wire this into `app/api/reports/route.ts`'s
+    gate, `reportGate.ts`, or any UI.** Whether missing window data
+    should hard-block report generation, render a warning badge
+    (matching the existing `QA CORRECTED` visual pattern already used
+    for cross-footing corrections), gate the extraction "apply" step,
+    or something else is a real product decision — flagged as three
+    explicit open questions in `PHASE.md` rather than decided
+    unilaterally the way the diagnostic itself (a pure, non-blocking
+    addition) reasonably could be.
+  - Scratch verification scripts (raw-extraction inspection,
+    field_resolutions inspection, a live re-verification test file)
+    deleted after use, not committed — only `lib/dataCompleteness.ts`
+    and its test file are new, real, committed code.

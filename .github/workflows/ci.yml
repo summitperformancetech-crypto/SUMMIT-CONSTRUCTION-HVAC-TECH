@@ -33,4 +33,3 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
           NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder
           ANTHROPIC_API_KEY: placeholder
-ci: add lint/test/build workflow

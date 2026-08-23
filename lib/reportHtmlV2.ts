@@ -10,11 +10,6 @@
 //   calc, not an hourly simulation). Rendered as an explicit, specific
 //   "not yet computed by this engine" state - never a fabricated
 //   pass/fail or invented percentage.
-// - Building Analysis donut charts (Section 7): five real, data-driven
-//   categories (Envelope & Infiltration combined, Doors, Ducts,
-//   Ventilation, Internal Gains) rather than the standard's full nine -
-//   see lib/reportCharts.ts's own comment for why the finer split needs a
-//   separate, larger change to computeRoom's internals.
 // - Floor Plan page (Section 5.9): only renders when the project actually
 //   has an extracted drawing with a floor-plan page to crop - a project
 //   with no drawings (like the Vivian Street fixture, seeded directly

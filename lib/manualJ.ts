@@ -96,6 +96,26 @@ export type RoomLoadResult = {
   coolingSensibleBtuh: number;
   coolingLatentBtuh: number;
   coolingTotalBtuh: number;
+  // Full SUMMIT-REPORT-STANDARD.md Section 7 component breakdown - walls/
+  // glazing/ceilings/floors/infiltration below, plus doors/ducts/
+  // ventilation/internal gains further down, all already included in the
+  // totals above, not additional on top. Glazing's cooling figure includes
+  // both window conduction and solar gain (see SOLAR_GAIN_BTUH_PER_SQFT) -
+  // "glazing" is one ACCA component, not two. Walls/glazing/ceilings/floors
+  // have no latent component (structure conduction carries no moisture);
+  // infiltration does, so it gets a heating/cooling-sensible/
+  // cooling-latent split like ducts/ventilation/internal gains below.
+  wallsHeatingBtuh: number;
+  wallsCoolingBtuh: number;
+  glazingHeatingBtuh: number;
+  glazingCoolingBtuh: number;
+  ceilingsHeatingBtuh: number;
+  ceilingsCoolingBtuh: number;
+  floorsHeatingBtuh: number;
+  floorsCoolingBtuh: number;
+  infiltrationHeatingBtuh: number;
+  infiltrationCoolingSensibleBtuh: number;
+  infiltrationCoolingLatentBtuh: number;
   // Doors' own share of heatingBtuh/coolingSensibleBtuh, broken out for
   // reporting. Already included in the totals above, not additional on top.
   doorHeatingBtuh: number;
@@ -116,6 +136,17 @@ export type WholeHouseLoadResult = {
   coolingSensibleBtuh: number;
   coolingLatentBtuh: number;
   coolingTotalBtuh: number;
+  wallsHeatingBtuh: number;
+  wallsCoolingBtuh: number;
+  glazingHeatingBtuh: number;
+  glazingCoolingBtuh: number;
+  ceilingsHeatingBtuh: number;
+  ceilingsCoolingBtuh: number;
+  floorsHeatingBtuh: number;
+  floorsCoolingBtuh: number;
+  infiltrationHeatingBtuh: number;
+  infiltrationCoolingSensibleBtuh: number;
+  infiltrationCoolingLatentBtuh: number;
   doorHeatingBtuh: number;
   doorCoolingBtuh: number;
   // ASHRAE 62.2 mechanical ventilation, whole-house only (see
@@ -372,6 +403,10 @@ function computeRoom(
   let solarGainBtuh = 0;
   let doorHeatingBtuh = 0;
   let doorCoolingBtuh = 0;
+  let wallsHeatingBtuh = 0;
+  let wallsCoolingBtuh = 0;
+  let glazingHeatingBtuh = 0;
+  let glazingCoolingBtuh = 0;
 
   // Each compass direction is its own wall + window segment with its own
   // exposure type, since a room can have (for example) an exterior wall on
@@ -405,6 +440,10 @@ function computeRoom(
 
     envelopeHeatingBtuh += (wallUA + windowUA) * heatingDeltaT * factor;
     envelopeCoolingBtuh += (wallUA + windowUA) * coolingDeltaT * factor;
+    wallsHeatingBtuh += wallUA * heatingDeltaT * factor;
+    wallsCoolingBtuh += wallUA * coolingDeltaT * factor;
+    glazingHeatingBtuh += windowUA * heatingDeltaT * factor;
+    glazingCoolingBtuh += windowUA * coolingDeltaT * factor;
 
     const doorHeatingForDir = doorUA * heatingDeltaT * factor;
     const doorCoolingForDir = doorUA * coolingDeltaT * factor;
@@ -414,9 +453,14 @@ function computeRoom(
     envelopeCoolingBtuh += doorCoolingForDir;
 
     // Solar gain only applies to windows actually exposed to outdoor sun -
-    // a window into an unconditioned garage or another room isn't.
+    // a window into an unconditioned garage or another room isn't. Folded
+    // into glazingCoolingBtuh (not a separate reporting category) - ACCA's
+    // "Glazing" component is one line covering a window's total heat gain,
+    // conduction and solar together, not two.
     if (exposure === "exterior") {
-      solarGainBtuh += windowArea * n(envelope.window_shgc) * SOLAR_GAIN_BTUH_PER_SQFT;
+      const solarGainForDir = windowArea * n(envelope.window_shgc) * SOLAR_GAIN_BTUH_PER_SQFT;
+      solarGainBtuh += solarGainForDir;
+      glazingCoolingBtuh += solarGainForDir;
     }
   }
 
@@ -435,6 +479,8 @@ function computeRoom(
       : 0;
   envelopeHeatingBtuh += ceilingUA * heatingDeltaT * atticFactor;
   envelopeCoolingBtuh += ceilingUA * coolingDeltaT * atticFactor;
+  const ceilingsHeatingBtuh = ceilingUA * heatingDeltaT * atticFactor;
+  const ceilingsCoolingBtuh = ceilingUA * coolingDeltaT * atticFactor;
 
   const floorUA =
     room.floor_exposed && envelope.floor_insulation_r_value != null
@@ -442,6 +488,8 @@ function computeRoom(
       : 0;
   envelopeHeatingBtuh += floorUA * heatingDeltaT;
   envelopeCoolingBtuh += floorUA * coolingDeltaT;
+  const floorsHeatingBtuh = floorUA * heatingDeltaT;
+  const floorsCoolingBtuh = floorUA * coolingDeltaT;
 
   const volumeCuft = n(room.floor_area_sqft) * n(room.ceiling_height_ft);
   const naturalAch = n(envelope.ach50) / NATURAL_ACH_DIVISOR;
@@ -493,6 +541,17 @@ function computeRoom(
     coolingSensibleBtuh,
     coolingLatentBtuh,
     coolingTotalBtuh: coolingSensibleBtuh + coolingLatentBtuh,
+    wallsHeatingBtuh,
+    wallsCoolingBtuh,
+    glazingHeatingBtuh,
+    glazingCoolingBtuh,
+    ceilingsHeatingBtuh,
+    ceilingsCoolingBtuh,
+    floorsHeatingBtuh,
+    floorsCoolingBtuh,
+    infiltrationHeatingBtuh,
+    infiltrationCoolingSensibleBtuh,
+    infiltrationCoolingLatentBtuh,
     doorHeatingBtuh,
     doorCoolingBtuh,
     internalGainsSensibleBtuh: internalGains.sensibleBtuh,
@@ -509,6 +568,17 @@ function emptyLoadResult(): WholeHouseLoadResult {
     coolingSensibleBtuh: 0,
     coolingLatentBtuh: 0,
     coolingTotalBtuh: 0,
+    wallsHeatingBtuh: 0,
+    wallsCoolingBtuh: 0,
+    glazingHeatingBtuh: 0,
+    glazingCoolingBtuh: 0,
+    ceilingsHeatingBtuh: 0,
+    ceilingsCoolingBtuh: 0,
+    floorsHeatingBtuh: 0,
+    floorsCoolingBtuh: 0,
+    infiltrationHeatingBtuh: 0,
+    infiltrationCoolingSensibleBtuh: 0,
+    infiltrationCoolingLatentBtuh: 0,
     doorHeatingBtuh: 0,
     doorCoolingBtuh: 0,
     internalGainsSensibleBtuh: 0,
@@ -531,6 +601,19 @@ function sumRoomResults(roomResults: RoomLoadResult[]): WholeHouseLoadResult {
       coolingSensibleBtuh: totals.coolingSensibleBtuh + room.coolingSensibleBtuh,
       coolingLatentBtuh: totals.coolingLatentBtuh + room.coolingLatentBtuh,
       coolingTotalBtuh: totals.coolingTotalBtuh + room.coolingTotalBtuh,
+      wallsHeatingBtuh: totals.wallsHeatingBtuh + room.wallsHeatingBtuh,
+      wallsCoolingBtuh: totals.wallsCoolingBtuh + room.wallsCoolingBtuh,
+      glazingHeatingBtuh: totals.glazingHeatingBtuh + room.glazingHeatingBtuh,
+      glazingCoolingBtuh: totals.glazingCoolingBtuh + room.glazingCoolingBtuh,
+      ceilingsHeatingBtuh: totals.ceilingsHeatingBtuh + room.ceilingsHeatingBtuh,
+      ceilingsCoolingBtuh: totals.ceilingsCoolingBtuh + room.ceilingsCoolingBtuh,
+      floorsHeatingBtuh: totals.floorsHeatingBtuh + room.floorsHeatingBtuh,
+      floorsCoolingBtuh: totals.floorsCoolingBtuh + room.floorsCoolingBtuh,
+      infiltrationHeatingBtuh: totals.infiltrationHeatingBtuh + room.infiltrationHeatingBtuh,
+      infiltrationCoolingSensibleBtuh:
+        totals.infiltrationCoolingSensibleBtuh + room.infiltrationCoolingSensibleBtuh,
+      infiltrationCoolingLatentBtuh:
+        totals.infiltrationCoolingLatentBtuh + room.infiltrationCoolingLatentBtuh,
       doorHeatingBtuh: totals.doorHeatingBtuh + room.doorHeatingBtuh,
       doorCoolingBtuh: totals.doorCoolingBtuh + room.doorCoolingBtuh,
       internalGainsSensibleBtuh: totals.internalGainsSensibleBtuh + room.internalGainsSensibleBtuh,
@@ -681,6 +764,19 @@ export function computeManualJ(
       coolingSensibleBtuh: totals.coolingSensibleBtuh + zone.coolingSensibleBtuh,
       coolingLatentBtuh: totals.coolingLatentBtuh + zone.coolingLatentBtuh,
       coolingTotalBtuh: totals.coolingTotalBtuh + zone.coolingTotalBtuh,
+      wallsHeatingBtuh: totals.wallsHeatingBtuh + zone.wallsHeatingBtuh,
+      wallsCoolingBtuh: totals.wallsCoolingBtuh + zone.wallsCoolingBtuh,
+      glazingHeatingBtuh: totals.glazingHeatingBtuh + zone.glazingHeatingBtuh,
+      glazingCoolingBtuh: totals.glazingCoolingBtuh + zone.glazingCoolingBtuh,
+      ceilingsHeatingBtuh: totals.ceilingsHeatingBtuh + zone.ceilingsHeatingBtuh,
+      ceilingsCoolingBtuh: totals.ceilingsCoolingBtuh + zone.ceilingsCoolingBtuh,
+      floorsHeatingBtuh: totals.floorsHeatingBtuh + zone.floorsHeatingBtuh,
+      floorsCoolingBtuh: totals.floorsCoolingBtuh + zone.floorsCoolingBtuh,
+      infiltrationHeatingBtuh: totals.infiltrationHeatingBtuh + zone.infiltrationHeatingBtuh,
+      infiltrationCoolingSensibleBtuh:
+        totals.infiltrationCoolingSensibleBtuh + zone.infiltrationCoolingSensibleBtuh,
+      infiltrationCoolingLatentBtuh:
+        totals.infiltrationCoolingLatentBtuh + zone.infiltrationCoolingLatentBtuh,
       doorHeatingBtuh: totals.doorHeatingBtuh + zone.doorHeatingBtuh,
       doorCoolingBtuh: totals.doorCoolingBtuh + zone.doorCoolingBtuh,
       internalGainsSensibleBtuh: totals.internalGainsSensibleBtuh + zone.internalGainsSensibleBtuh,

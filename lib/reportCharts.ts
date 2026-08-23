@@ -4,22 +4,9 @@
 // computed from actual component percentages - never illustrative/
 // placeholder values."
 //
-// KNOWN GRANULARITY GAP, flagged not hidden: lib/manualJ.ts's computeRoom
-// blends walls + glazing + doors + ceilings + floors + infiltration +
-// solar gain into single envelopeHeatingBtuh/envelopeCoolingBtuh/
-// infiltration* accumulators - only doors, ducts, ventilation, and
-// internal gains are separately exposed on RoomLoadResult/ZoneLoadResult
-// today. Splitting the remaining categories apart is a real, contained
-// change to computeRoom's internals (separate accumulators instead of one
-// combined envelope total), but it touches the core load-calc engine
-// directly - not attempted in this pass given the size of everything else
-// in this checkpoint and the stakes of an unreviewed change to
-// calculation logic other live projects depend on. What's built here is
-// still 100% real, data-driven segments (never illustrative) - just at
-// five categories (Envelope & Infiltration combined, Doors, Ducts,
-// Ventilation, Internal Gains) instead of the standard's full nine. A
-// follow-up to fully split computeRoom's envelope accumulator is a
-// natural next step, not done here.
+// All nine categories, each a real accumulator on RoomLoadResult/
+// ZoneLoadResult/WholeHouseLoadResult (see lib/manualJ.ts's computeRoom) -
+// never illustrative/placeholder segments.
 import type { ZoneLoadResult, WholeHouseLoadResult } from "./manualJ";
 
 export type ChartSegment = {
@@ -30,8 +17,12 @@ export type ChartSegment = {
 };
 
 const SEGMENT_COLORS = {
-  envelope: "#333333", // navy-700
+  walls: "#333333", // navy-700
+  glazing: "#5b8fb0", // slate blue - visually distinct from ducts' amber
   doors: "#9aa0a6", // silver
+  ceilings: "#6b6b6b", // mid-grey, adjacent to walls but distinguishable
+  floors: "#4a4a4a", // darker grey, adjacent to walls but distinguishable
+  infiltration: "#7d6a4f", // muted bronze, between walls and ducts
   ducts: "#a9822f", // amber
   ventilation: "#d4b06a", // amber-light
   internalGains: "#c9ccd0", // silver-light
@@ -42,6 +33,17 @@ type LoadTotals = Pick<
   | "heatingBtuh"
   | "coolingSensibleBtuh"
   | "coolingLatentBtuh"
+  | "wallsHeatingBtuh"
+  | "wallsCoolingBtuh"
+  | "glazingHeatingBtuh"
+  | "glazingCoolingBtuh"
+  | "ceilingsHeatingBtuh"
+  | "ceilingsCoolingBtuh"
+  | "floorsHeatingBtuh"
+  | "floorsCoolingBtuh"
+  | "infiltrationHeatingBtuh"
+  | "infiltrationCoolingSensibleBtuh"
+  | "infiltrationCoolingLatentBtuh"
   | "doorHeatingBtuh"
   | "doorCoolingBtuh"
   | "ductHeatingBtuh"
@@ -62,10 +64,13 @@ function buildSegments(total: number, parts: { label: string; value: number; col
 }
 
 export function buildHeatingSegments(totals: LoadTotals): ChartSegment[] {
-  const envelope = totals.heatingBtuh - totals.doorHeatingBtuh - totals.ductHeatingBtuh - totals.ventilationHeatingBtuh;
   return buildSegments(totals.heatingBtuh, [
-    { label: "Envelope & Infiltration", value: envelope, color: SEGMENT_COLORS.envelope },
+    { label: "Walls", value: totals.wallsHeatingBtuh, color: SEGMENT_COLORS.walls },
+    { label: "Glazing", value: totals.glazingHeatingBtuh, color: SEGMENT_COLORS.glazing },
     { label: "Doors", value: totals.doorHeatingBtuh, color: SEGMENT_COLORS.doors },
+    { label: "Ceilings", value: totals.ceilingsHeatingBtuh, color: SEGMENT_COLORS.ceilings },
+    { label: "Floors", value: totals.floorsHeatingBtuh, color: SEGMENT_COLORS.floors },
+    { label: "Infiltration", value: totals.infiltrationHeatingBtuh, color: SEGMENT_COLORS.infiltration },
     { label: "Ducts", value: totals.ductHeatingBtuh, color: SEGMENT_COLORS.ducts },
     { label: "Ventilation", value: totals.ventilationHeatingBtuh, color: SEGMENT_COLORS.ventilation },
   ]);
@@ -73,14 +78,20 @@ export function buildHeatingSegments(totals: LoadTotals): ChartSegment[] {
 
 export function buildCoolingSegments(totals: LoadTotals): ChartSegment[] {
   const total = totals.coolingSensibleBtuh + totals.coolingLatentBtuh;
-  const doors = totals.doorCoolingBtuh;
   const ducts = totals.ductCoolingSensibleBtuh + totals.ductCoolingLatentBtuh;
   const ventilation = totals.ventilationCoolingSensibleBtuh + totals.ventilationCoolingLatentBtuh;
   const internalGains = totals.internalGainsSensibleBtuh + totals.internalGainsLatentBtuh;
-  const envelope = total - doors - ducts - ventilation - internalGains;
   return buildSegments(total, [
-    { label: "Envelope & Infiltration", value: envelope, color: SEGMENT_COLORS.envelope },
-    { label: "Doors", value: doors, color: SEGMENT_COLORS.doors },
+    { label: "Walls", value: totals.wallsCoolingBtuh, color: SEGMENT_COLORS.walls },
+    { label: "Glazing", value: totals.glazingCoolingBtuh, color: SEGMENT_COLORS.glazing },
+    { label: "Doors", value: totals.doorCoolingBtuh, color: SEGMENT_COLORS.doors },
+    { label: "Ceilings", value: totals.ceilingsCoolingBtuh, color: SEGMENT_COLORS.ceilings },
+    { label: "Floors", value: totals.floorsCoolingBtuh, color: SEGMENT_COLORS.floors },
+    {
+      label: "Infiltration",
+      value: totals.infiltrationCoolingSensibleBtuh + totals.infiltrationCoolingLatentBtuh,
+      color: SEGMENT_COLORS.infiltration,
+    },
     { label: "Ducts", value: ducts, color: SEGMENT_COLORS.ducts },
     { label: "Ventilation", value: ventilation, color: SEGMENT_COLORS.ventilation },
     { label: "Internal Gains", value: internalGains, color: SEGMENT_COLORS.internalGains },

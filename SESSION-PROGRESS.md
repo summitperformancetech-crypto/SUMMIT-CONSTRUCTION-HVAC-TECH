@@ -1762,3 +1762,45 @@ further this session.
   - No calc-engine, schema, or migration files changed this session —
     the OEM-data fix was a live-data correction back to what the
     already-committed migration specifies, not a schema change.
+
+- 2026-08-23 (third entry) — **Ran the Vivian Street ground-truth
+  comparison** the user actually wanted: the user clarified mid-session
+  that Vivian Street's whole purpose is a real, already-completed Manual
+  J calc (done for an actual client, `REFERENCE-DOCS/4308 Vivian
+  Street.pdf` — the real Right-Suite Universal output) planted as ground
+  truth, so Summit's engine can be checked against a known-correct
+  answer — not a project that itself needs finishing. Extracted the real
+  PDF's text with `pypdf` (installed via `pip3 install --user pypdf`;
+  no system `poppler`/`pdftoppm` available on this machine, wasn't
+  needed since the PDF has selectable text) and got full whole-house and
+  per-AHU heating/cooling sensible/latent numbers, component breakdowns,
+  and equipment specs. Ran Summit's live `getReportData`/`computeManualJ`
+  against the seeded project (via a scratch Vitest test file, run then
+  deleted, not committed) and compared.
+  - **Result**: whole-house heating computed 37% low (26,446 vs. real
+    42,183 Btuh). Cooling sensible was coincidentally close (35,476 vs.
+    36,757).
+  - **Root cause, confirmed by reading the actual `rooms` rows**: the
+    project has only 2 rooms seeded (one aggregate box per zone, e.g.
+    "1st Floor Living Areas"), not the ~27 real rooms the real report
+    itemizes. Both synthetic rooms have `window_*_area_sqft` all `null`,
+    `floor_exposed: false`, and `door_count: 0` — so glazing (11.5%/
+    21.5% of real heating/cooling), floor (9.7%/7.8%), and door (1.5%/
+    1.9%) loads all compute as exactly zero for both zones. Also found
+    each room's `sensible_gain_override`/`latent_gain_override` set to a
+    value that exactly equals Summit's own computed internal-gains
+    output for that zone — a legitimate field-verification override
+    field used instead as a cosmetic patch to force the internal-gains
+    line to match, not a real measurement.
+  - **Not fixed this session** — the user asked to run the comparison
+    and capture what's learned, explicitly not to be pulled into further
+    decisions this session. Entering real per-room data for all ~27
+    rooms is nontrivial data entry against a real client's real house
+    and needs the user's go-ahead first.
+  - **Knowledge captured for reuse**, per the user's explicit ask to
+    retain and build on this rather than relearn it each time: saved as
+    two entries in Claude's persistent cross-session memory (not this
+    repo) — one on Vivian Street's actual purpose, one on the general
+    room-by-room data-model requirements this comparison surfaced
+    (applicable to auditing any Summit project's input completeness, not
+    just Vivian Street).

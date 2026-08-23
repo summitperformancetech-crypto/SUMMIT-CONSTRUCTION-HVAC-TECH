@@ -7,9 +7,15 @@ import type { ReportData } from "./reportData";
 import type { DrawingExtraction } from "./drawingExtraction";
 import { countUnresolvedFields } from "./fieldResolutions";
 import { validateReportTotals } from "./reportValidation";
+import { checkDataCompleteness } from "./dataCompleteness";
 
 export type ReportGenerationBlocker = {
-  code: "unresolved_fields" | "equipment_incomplete" | "duct_design_incomplete" | "totals_invalid";
+  code:
+    | "unresolved_fields"
+    | "equipment_incomplete"
+    | "duct_design_incomplete"
+    | "totals_invalid"
+    | "data_incomplete";
   label: string;
   detail: string;
 };
@@ -112,6 +118,29 @@ export function getReportGenerationGateStatus(
           }
         }
       }
+    }
+
+    // Gate condition 5 (added 2026-08-23, SUMMIT-REPORT-STANDARD.md §3
+    // extended to match): room-level data completeness. Diagnosed against
+    // real production data (Kinsela, not a fixture) - a project can pass
+    // every check above AND validateReportTotals below cleanly while
+    // several rooms have no floor area at all, or the whole house has
+    // exactly zero glazing despite real conditioned square footage. Those
+    // aren't arithmetic problems (validateReportTotals only proves the
+    // numbers agree with themselves, not that they're built on real
+    // input), so they need their own check - see lib/dataCompleteness.ts
+    // for the full reasoning behind exactly these three conditions and
+    // why the whole-house glazing check specifically (not a per-room one)
+    // was chosen to avoid false-positiving on real windowless closets.
+    for (const warning of checkDataCompleteness(rooms)) {
+      blockers.push({
+        code: "data_incomplete",
+        label:
+          warning.scope === "wholeHouse"
+            ? "Incomplete project data"
+            : `Incomplete room data: ${warning.roomName}`,
+        detail: warning.reason,
+      });
     }
   }
 

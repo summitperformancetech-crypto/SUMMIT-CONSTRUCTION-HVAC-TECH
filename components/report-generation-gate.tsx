@@ -20,6 +20,7 @@ const BLOCKER_LABELS: Record<ReportGenerationBlocker["code"], string> = {
   equipment_incomplete: "Equipment selection",
   duct_design_incomplete: "Duct design",
   totals_invalid: "Calculation totals",
+  data_incomplete: "Room data completeness",
 };
 
 export function ReportGenerationGate({

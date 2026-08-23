@@ -2149,3 +2149,47 @@ further this session.
     apply against on this specific project - only Kinsela (or another
     project with a real dimensioned drawing) would exercise them
     against fillable data.
+
+- 2026-08-23 (tenth entry) — **User answered the one product decision
+  left blocking further progress: "A" (hard-block report generation).**
+  Wired `lib/dataCompleteness.ts` into the actual gate.
+  - `lib/reportGate.ts`: `getReportGenerationGateStatus` gained a fifth
+    gate condition calling `checkDataCompleteness(rooms)`, pushing one
+    blocker per warning (real room name, or "Incomplete project data"
+    for the whole-house zero-glazing case). Added `"data_incomplete"`
+    to `ReportGenerationBlocker`'s `code` union.
+  - `components/report-generation-gate.tsx`: added the matching
+    `BLOCKER_LABELS` entry. `tsc` caught the missing entry as a real
+    compile error when the union type changed - without that fix the
+    new blocker would have rendered in the actual checklist UI with no
+    real label, a genuine bug the type system caught before it shipped.
+  - `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md` §3 updated with a fifth
+    bullet, keeping the spec and the code it describes honestly in
+    sync (the file's own stated philosophy).
+  - `lib/__tests__/reportGate.test.mts` (new, 4 tests) - scoped
+    narrowly to the new condition alone (`blockers.some(b => b.code
+    === "data_incomplete")`), not a full re-test of the other four
+    pre-existing gate conditions, which were already untested before
+    this session and aren't this change's responsibility to backfill.
+  - **Full verification**: `npx tsc --noEmit` caught 2 real errors on
+    first run (the missing UI label, and a wrong type in this session's
+    own new test fixture) - both fixed, then clean. `npm test` 71/71
+    passing (8 suites). `npm run lint` clean.
+  - **Validated live against real data, not just fixtures**: ran the
+    actual `getReportGenerationGateStatus` function against real
+    `ReportData` for both Kinsela and Vivian Street. Kinsela:
+    `canGenerate: false`, 11 `data_incomplete` blockers, each naming a
+    real room and a real reason. Vivian Street: `canGenerate: false`,
+    1 whole-house blocker (zero glazing despite 2,600 sqft conditioned
+    floor area). **Neither of these two real test projects could have
+    silently produced an incomplete report before this fix - both are
+    now correctly and specifically blocked.** This is the concrete
+    result the whole session's diagnosis chain (Vivian Street ground
+    truth → Kinsela systemic finding → root cause → windows fix →
+    floor-area/walls fix → this gate) was building toward.
+  - Scratch verification script deleted after use, not committed -
+    `lib/reportGate.ts`, `components/report-generation-gate.tsx`,
+    `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`, and the new test file
+    are the only real, committed changes.
+  - Memory (`report_generation_requirements`) updated marking this
+    open question RESOLVED with the full wiring and validation detail.

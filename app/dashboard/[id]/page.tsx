@@ -215,9 +215,16 @@ export default async function ProjectDetailPage({
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("org_id")
+    .select("org_id, role")
     .eq("id", user.id)
-    .maybeSingle<{ org_id: string }>();
+    .maybeSingle<{ org_id: string; role: string }>();
+  // Field Tech = data entry only (Phase 3 of the completion plan): no
+  // equipment selection, no report generation/finalization. Defaults to
+  // the least-privileged role if a profile row is somehow missing, rather
+  // than defaulting open - the RLS policies/trigger added alongside this
+  // (20260822190000_restrict_field_tech_equipment_and_reports.sql) are
+  // the real enforcement boundary; this is UI-layer mirroring only.
+  const userRole = profile?.role ?? "field_tech";
 
   const { data: project, error } = await supabase
     .from("projects")
@@ -460,7 +467,7 @@ export default async function ProjectDetailPage({
         </div>
 
         <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
-        <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} />
+        <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} userRole={userRole} />
 
         <CommercialWorkflow
           projectId={project.id}
@@ -689,7 +696,7 @@ export default async function ProjectDetailPage({
       </div>
 
       <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
-      <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} />
+      <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} userRole={userRole} />
 
       <ProjectWorkspace
         projectId={project.id}
@@ -719,6 +726,7 @@ export default async function ProjectDetailPage({
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimumRows ?? []}
         initialBuildingFrontFaces={project.building_front_faces}
+        userRole={userRole}
       />
     </div>
   );

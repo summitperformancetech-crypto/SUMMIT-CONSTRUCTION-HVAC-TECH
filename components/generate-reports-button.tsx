@@ -44,18 +44,28 @@ async function createRevision(projectId: string, reason: string): Promise<Snapsh
 export function GenerateReportsButton({
   projectId,
   initialSnapshot,
+  userRole,
 }: {
   projectId: string;
   // Data Integrity Addendum, Section 1 - null means this project has no
   // calculation_snapshots row yet (still unfinalized, live data). The
   // first report download freezes one; see app/api/reports/route.ts.
   initialSnapshot: SnapshotStatus | null;
+  // Field Tech = data entry only: cannot finalize (first-ever generate) or
+  // revise a report. Downloading an already-finalized report is still
+  // allowed - that's a read of frozen data, not a finalize/revise action.
+  // The real boundary is the calculation_snapshots INSERT policy (see
+  // 20260822190000_restrict_field_tech_equipment_and_reports.sql); this
+  // just avoids surfacing a raw RLS error to a Field Tech who clicks it.
+  userRole: string;
 }) {
   const [generating, setGenerating] = useState<"internal" | "client" | "summit_standard" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [revising, setRevising] = useState(false);
   const [summitStandardReady, setSummitStandardReady] = useState(false);
+  const canFinalizeOrRevise = userRole === "admin" || userRole === "estimator";
+  const generateDisabled = generating !== null || (!snapshot && !canFinalizeOrRevise);
 
   async function handleGenerate(type: "internal" | "client" | "summit_standard") {
     setGenerating(type);
@@ -101,19 +111,21 @@ export function GenerateReportsButton({
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={() => handleGenerate("internal")}
-          disabled={generating !== null}
+          disabled={generateDisabled}
+          title={!snapshot && !canFinalizeOrRevise ? "Only Estimators and Admins can finalize a project's first report" : undefined}
           className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
         >
           {generating === "internal" ? "Generating…" : "Internal Engineering Report"}
         </button>
         <button
           onClick={() => handleGenerate("client")}
-          disabled={generating !== null}
+          disabled={generateDisabled}
+          title={!snapshot && !canFinalizeOrRevise ? "Only Estimators and Admins can finalize a project's first report" : undefined}
           className="rounded-md border border-brand-gold px-4 py-2 text-sm font-semibold text-brand-gold transition hover:bg-brand-gold/10 disabled:opacity-50"
         >
           {generating === "client" ? "Generating…" : "Client Scope of Work"}
         </button>
-        {snapshot && (
+        {snapshot && canFinalizeOrRevise && (
           <button
             onClick={handleReviseClick}
             disabled={revising}
@@ -131,7 +143,9 @@ export function GenerateReportsButton({
       <p className="mt-2 text-xs text-brand-grey-text">
         {snapshot
           ? `Finalized as of ${new Date(snapshot.createdAt).toLocaleString()} (v${snapshot.version}${snapshot.reason ? ` — ${snapshot.reason}` : ""}). Reports always reflect this frozen data, not live edits, until a new revision is created.`
-          : "Not yet finalized — the first report you download freezes today's calculations. Later reference-data updates (new equipment models, corrected duct tables, etc.) will never silently change this project's reports once that happens."}
+          : canFinalizeOrRevise
+            ? "Not yet finalized — the first report you download freezes today's calculations. Later reference-data updates (new equipment models, corrected duct tables, etc.) will never silently change this project's reports once that happens."
+            : "Not yet finalized — only an Estimator or Admin can finalize this project's first report."}
       </p>
 
       <div className="mt-6 border-t border-brand-gold/30 pt-5">
@@ -146,7 +160,8 @@ export function GenerateReportsButton({
         <ReportGenerationGate projectId={projectId} onReady={setSummitStandardReady} />
         <button
           onClick={() => handleGenerate("summit_standard")}
-          disabled={generating !== null || !summitStandardReady}
+          disabled={generating !== null || !summitStandardReady || (!snapshot && !canFinalizeOrRevise)}
+          title={!snapshot && !canFinalizeOrRevise ? "Only Estimators and Admins can finalize a project's first report" : undefined}
           className="mt-3 rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           {generating === "summit_standard" ? "Generating…" : "Generate Summit Standard Report"}

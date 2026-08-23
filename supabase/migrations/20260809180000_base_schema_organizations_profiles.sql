@@ -24,8 +24,8 @@ create table public.organizations (
 );
 
 create table public.profiles (
-  id uuid primary key,
-  org_id uuid not null references public.organizations(id),
+  id uuid primary key references auth.users(id) on delete cascade,
+  org_id uuid not null references public.organizations(id) on delete cascade,
   full_name text not null,
   role text not null check (role = any (array['field_tech', 'estimator', 'admin'])),
   created_at timestamptz not null default now()

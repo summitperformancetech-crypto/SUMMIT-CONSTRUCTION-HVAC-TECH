@@ -348,6 +348,7 @@ export const ManualJWorkflow = forwardRef<
     exclusiveEquipmentIds: ReadonlySet<string>;
     ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
     initialBuildingFrontFaces: Compass8 | null;
+    userRole: string;
   }
 >(function ManualJWorkflow(
   {
@@ -375,6 +376,7 @@ export const ManualJWorkflow = forwardRef<
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
     initialBuildingFrontFaces,
+    userRole,
   },
   ref,
 ) {
@@ -1386,6 +1388,7 @@ export const ManualJWorkflow = forwardRef<
             initialEquipmentSelectionNotes={initialEquipmentSelectionNotes}
             preferredEquipmentIds={preferredEquipmentIds}
             exclusiveEquipmentIds={exclusiveEquipmentIds}
+            userRole={userRole}
           />
         )}
       {canCalculate &&

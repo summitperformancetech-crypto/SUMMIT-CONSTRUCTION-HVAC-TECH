@@ -74,6 +74,7 @@ export function EquipmentSelectionSection({
   initialEquipmentSelectionNotes,
   preferredEquipmentIds,
   exclusiveEquipmentIds,
+  userRole,
 }: {
   projectId: string;
   catalog: EquipmentCatalogEntry[];
@@ -87,7 +88,14 @@ export function EquipmentSelectionSection({
   initialEquipmentSelectionNotes: string | null;
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
+  // Field Tech = data entry only: equipment selection is Estimator/Admin
+  // only. The real boundary is the projects.selected_equipment_id trigger
+  // (see 20260822190000_restrict_field_tech_equipment_and_reports.sql);
+  // this just disables the action in the UI rather than letting a Field
+  // Tech hit a raw database error.
+  userRole: string;
 }) {
+  const canSelectEquipment = userRole === "admin" || userRole === "estimator";
   const [selectedEquipmentId, setSelectedEquipmentId] = useState(initialSelectedEquipmentId);
   const [notes, setNotes] = useState(initialEquipmentSelectionNotes ?? "");
   const [saving, setSaving] = useState(false);
@@ -158,6 +166,11 @@ export function EquipmentSelectionSection({
   return (
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
       <h2 className="mb-2 text-lg font-semibold text-brand-gold">Equipment Selection (Manual S)</h2>
+      {!canSelectEquipment && (
+        <p className="mb-4 text-xs text-brand-grey-text">
+          Read-only — only an Estimator or Admin can select equipment for this project.
+        </p>
+      )}
       <p className="mb-4 text-xs text-brand-grey-text">
         Capacity shown below is interpolated from each unit&apos;s OEM extended performance data at
         this project&apos;s actual design conditions ({summerOutdoorDesignF}°F / {summerCoincidentWetbulbF}°F
@@ -270,13 +283,15 @@ export function EquipmentSelectionSection({
                 >
                   {isExpanded ? "Hide capacity curve" : "Show capacity curve"}
                 </button>
-                <button
-                  onClick={() => handleSelect(evaluation.equipment.id)}
-                  disabled={saving}
-                  className="rounded-md bg-brand-gold px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
-                >
-                  {isSelected ? "Re-save selection" : "Select this equipment"}
-                </button>
+                {canSelectEquipment && (
+                  <button
+                    onClick={() => handleSelect(evaluation.equipment.id)}
+                    disabled={saving}
+                    className="rounded-md bg-brand-gold px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+                  >
+                    {isSelected ? "Re-save selection" : "Select this equipment"}
+                  </button>
+                )}
               </div>
 
               {isExpanded && (
@@ -341,7 +356,8 @@ export function EquipmentSelectionSection({
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={2}
-          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+          disabled={!canSelectEquipment}
+          className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
         />
       </div>
     </section>

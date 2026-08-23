@@ -804,6 +804,42 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
       const label = `room[${index}].windows:${room.name || "unnamed"}`;
       items.push(room.windows.reason ? `${label} - ${room.windows.reason}` : label);
     }
+    // Diagnosed 2026-08-23, same session as "windows" above, same root
+    // cause: floor_area_sqft/wall lengths are plain numbers, not
+    // ExtractedField<T> - they were only ever visible as part of the
+    // room's single bundled reason string, "resolvable" by accepting that
+    // whole string without ever supplying an actual number. Unlike
+    // windows (a genuine 3-state fact - detected/confirmed-absent/
+    // unknown - that needed a real value field), floor area and wall
+    // length are just "do we have a number or not," so the fix is
+    // lighter-weight: give each its own unresolved item, keyed to a real
+    // ai_extracted_value (the number itself, stringified, or null).
+    // FieldResolutionBadge already disables "Accept AI Value" whenever
+    // aiExtractedValue is null (see its own hasAiValue check) - so this
+    // alone forces a reviewer to either Override with a real measured
+    // number or leave the item genuinely unresolved, closing the exact
+    // gap windows just closed, without changing ExtractedRoom's type or
+    // touching applyExtractedData's floor-area-mismatch reconciliation
+    // logic at all. Mirrors lib/dataCompleteness.ts's own two room-level
+    // checks exactly (missing floor area; floor area present but no
+    // walls) - same nesting, same reasoning, so the two stay consistent.
+    if (room.floor_area_sqft == null) {
+      items.push(`room[${index}].floor_area:${room.name || "unnamed"}`);
+    } else {
+      const hasAnyWall = [
+        room.wall_north_len_ft,
+        room.wall_south_len_ft,
+        room.wall_east_len_ft,
+        room.wall_west_len_ft,
+        room.wall_front_len_ft,
+        room.wall_rear_len_ft,
+        room.wall_left_len_ft,
+        room.wall_right_len_ft,
+      ].some((v) => v != null);
+      if (!hasAnyWall) {
+        items.push(`room[${index}].walls:${room.name || "unnamed"}`);
+      }
+    }
   });
 
   // `?? []` here (unlike rooms/building_envelope above, which every

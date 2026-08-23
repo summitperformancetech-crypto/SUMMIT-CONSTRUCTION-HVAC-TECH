@@ -2088,3 +2088,64 @@ further this session.
     only real, committed changes.
   - Memory (`report_generation_requirements`) updated with the full
     build-and-validation result.
+
+- 2026-08-23 (ninth entry) — **User re-pasted the original "master
+  project recovery" prompt** as a check-in, not a redo request ("you
+  don't have to stop, but please give an update... then continue where
+  you left off"). Recognized its Phase-0 asks (export cleanup, GitHub
+  verification, docs/ memory-system structure) were already resolved
+  earlier this same session (second entry) and are now codified in
+  `CLAUDE.md`'s own Development Protocol section, which explicitly
+  rejects the `docs/` tree that prompt describes in favor of this
+  3-file system - did not re-run the audit. Answered with a status
+  update in the prompt's own requested format, then continued directly
+  from the eighth entry's still-open item: extending the same
+  per-field-resolution fix to floor area and wall lengths.
+  - Scoping this surfaced a real difference from windows: found a
+    second `applyExtractedData` code path (a re-extraction
+    reconciliation branch, ~line 780-889) with a genuine safety check
+    (`floorAreaMismatch`) comparing re-extracted floor area against an
+    existing room's value and refusing to apply new wall/window data
+    on disagreement - protects against a bad re-extraction silently
+    overwriting good field-verified data. Wrapping `floor_area_sqft`/
+    wall lengths in `ExtractedField<T>` (the windows approach) would
+    have touched this safety-critical arithmetic across multiple call
+    sites - judged too risky to do the same way.
+  - **Used a lighter, lower-risk fix**: floor area/walls don't need a
+    3-state signal like windows did (no "confirmed absent" case makes
+    sense for a room's floor area) - just "do we have a number or
+    not." Extended `collectUnresolvedItems` (`lib/drawingExtraction.ts`)
+    with `room[N].floor_area` and `room[N].walls` items, each with
+    `aiExtractedValue: null`. `FieldResolutionBadge`'s pre-existing
+    behavior already disables "Accept AI Value" when the AI value is
+    null - so this alone closes the same gap windows closed, without
+    touching `ExtractedRoom`'s type, the extraction prompt, or
+    `applyExtractedData` at all. Mirrors `lib/dataCompleteness.ts`'s
+    own nesting exactly (only check walls when floor area is present),
+    keeping the two checks consistent with each other.
+  - `components/drawings-section.tsx`: added "Floor area"/"Walls"
+    status lines with badges, same visual pattern as ducts/windows.
+  - 9 new tests in `lib/__tests__/drawingExtraction.test.mts` (14
+    total). `npx tsc --noEmit` clean, `npm test` 67/67 passing (up
+    from 63), `npm run lint` clean.
+  - **Validated live again**: re-ran extraction against the same
+    Vivian Street floor-plan crop. All 30 rooms correctly got a
+    `room[N].floor_area` item - accurate, not noise, since this
+    drawing genuinely has zero dimensioned rooms (already established
+    by prior runs on this exact input). Total unresolved items rose
+    106→146, the expected effect of adding real granularity, not a
+    regression. This particular drawing isn't a strong "before/after"
+    showcase for this check specifically (no partial-credit case
+    exists in it) - the 9 unit tests are the stronger evidence of
+    correctness; the live run confirms nothing broke in real
+    integration.
+  - Scratch verification script deleted after use, not committed -
+    `lib/drawingExtraction.ts`, `components/drawings-section.tsx`, and
+    the test file are the only real, committed changes.
+  - Memory (`report_generation_requirements`) updated with the full
+    result. Both this and the eighth entry's fix still leave the same
+    underlying fact unresolved: Vivian Street's real dimensioned plan
+    set isn't in this repo, so neither fix has real data to actually
+    apply against on this specific project - only Kinsela (or another
+    project with a real dimensioned drawing) would exercise them
+    against fillable data.

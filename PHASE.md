@@ -11,7 +11,7 @@ Phase name: Testing & Deployment Readiness
 Add a real test runner, add direct unit tests for the calc engines (previously zero direct coverage beyond report-layer regression tests), fix Puppeteer for actual Vercel deployment, add a minimal CI workflow.
 
 ## Status
-COMPLETE — all 4 phase items done, verified, and on `origin/main`. **This session (2026-08-23, second entry)**: resolved the open questions carried over from Phase 5 closeout — see "Open Questions Resolved This Session" below — before starting Phase 6 scoping.
+COMPLETE — all 4 phase items done, verified, and on `origin/main`. **This session (2026-08-23, second entry)**: resolved the open questions carried over from Phase 5 closeout — see "Open Questions Resolved This Session" below — before starting Phase 6 scoping. **Ninth entry, same day**: the user re-pasted the original "master project recovery" prompt as a check-in ("give an update... continue where you left off"), not a request to redo it — its Phase-0 goals (export cleanup, GitHub verification, memory-system structure) were already resolved in this same session's second entry, and this repo's own `CLAUDE.md` already codifies the decision to keep this 3-file memory system over the `docs/` tree that prompt describes. Answered with a status update in the format the prompt itself specifies, then continued the actual engineering work already in progress (see entries five through nine below).
 
 ## Overall V1 Completion
 Estimated percentage: ~75%
@@ -54,6 +54,8 @@ The user made four calls on Phase 5's carried-over open questions before Phase 6
 
 **This session (2026-08-23, eighth entry) additionally created:** `lib/__tests__/drawingExtraction.test.mts` (5 tests). **Additionally modified:** `lib/drawingExtraction.ts` (new `windows: ExtractedField<boolean>` field on `ExtractedRoom`, JSON schema template, STEP 4 prompt text, `collectUnresolvedItems`), `components/drawings-section.tsx` (new windows status line + `FieldResolutionBadge`). User-authorized, real production code — see Systems / Features Implemented for the full change and its live validation result.
 
+**This session (2026-08-23, ninth entry) additionally modified:** `lib/drawingExtraction.ts` (`collectUnresolvedItems` extended with `floor_area`/`walls` items — no type change), `components/drawings-section.tsx` (floor area/walls status lines + badges), `lib/__tests__/drawingExtraction.test.mts` (+9 tests, 14 total). No new files. See Systems / Features Implemented for the full change and its live validation result.
+
 ## Files Removed
 None.
 
@@ -64,6 +66,7 @@ None.
 - CI (GitHub Actions): lint + typecheck + test + build gate on every PR/push to main.
 - **(Sixth entry, 2026-08-23) `lib/dataCompleteness.ts`** — a new, additive, read-only diagnostic (`checkDataCompleteness`) that flags rooms with missing floor area or wall geometry, plus a whole-house check for total glazing area being exactly zero. Not wired into any gate yet — see Deferred Work.
 - **(Eighth entry, 2026-08-23) Per-room window detection, its own resolvable field** — `windows: ExtractedField<boolean>` added to `ExtractedRoom` (`lib/drawingExtraction.ts`), mirroring the existing `duct_location`/`duct_insulation_r_value` pattern: `true` = a window opening is visible on some side (area may still need sizing separately), `false` = positively confirmed no windows on any side (a real "confirmed windowless" signal that did not exist before this fix), `null` = couldn't tell. `buildExtractionPrompt`'s STEP 4 now asks for this explicitly; `collectUnresolvedItems` emits it as its own `room[N].windows` item (was previously buried inside the room's single bundled prose `reason`, resolved by one Accept/Override that never touched the real geometry fields); `components/drawings-section.tsx` renders a dedicated status line + `FieldResolutionBadge` for it. **Validated with a real, live re-extraction** against the Vivian Street floor-plan crop already in storage: went from 30 undifferentiated bundled flags to 13 rooms cleanly resolved (zero human work) + 17 precisely and individually flagged.
+- **(Ninth entry, 2026-08-23) Same fix extended to floor area and wall lengths — lower risk, no type/prompt/apply-logic change.** Discovered while scoping this that `applyExtractedData` has a second path beyond room creation — a re-extraction reconciliation path (~line 780-889) with a genuine safety check (`floorAreaMismatch`) that refuses to apply new wall/window data when re-extracted floor area disagrees with an existing room's value by more than a tolerance. Wrapping `floor_area_sqft`/wall lengths in `ExtractedField<T>` like `windows` would have touched that safety-critical arithmetic across multiple call sites — real risk, unlike windows' purely-additive change. Used a lighter fix instead: floor area/walls don't need a 3-state signal like windows did (it's just "do we have a number or not"), so `collectUnresolvedItems` now emits `room[N].floor_area` and `room[N].walls` items with `aiExtractedValue: null` — `FieldResolutionBadge`'s pre-existing behavior already disables "Accept AI Value" when the AI value is null, so this alone forces a real Override or leaves it genuinely unresolved, without touching `ExtractedRoom`'s type or `applyExtractedData` at all. Mirrors `lib/dataCompleteness.ts`'s own nesting exactly (walls only checked when floor area is present). 9 new tests (14 total in `drawingExtraction.test.mts`). Full verification clean (`tsc`, 67/67 tests, lint). Live-validated again: correctly flagged all 30 rooms on the same Vivian Street crop (accurate, not noise — this drawing genuinely has zero dimensioned rooms, confirmed by prior runs), total unresolved items 106→146 (expected from added granularity, not a regression).
 
 ## Bugs Fixed
 None (this phase was additive infrastructure work, not a bug-fix pass).
@@ -87,6 +90,8 @@ npm run build          PASS (production build succeeds, Turbopack, 58s compile)
 **Sixth entry (2026-08-23) addendum**: `npx tsc --noEmit` re-run after adding `lib/dataCompleteness.ts` — PASS (0 errors). `npm test` re-run — 58/58 PASS (6 suites, +1: `dataCompleteness`). `npm run lint` re-run — PASS (0 errors, 0 warnings; took unusually long even for this machine's documented slow-disk issue, exit 0 once it returned).
 
 **Eighth entry (2026-08-23) addendum**: `npx tsc --noEmit` re-run after the `windows` field addition — PASS (0 errors), confirming nothing else needed updating for the schema change. `npm test` re-run — 63/63 PASS (7 suites, +1: `drawingExtraction`). `npm run lint` re-run — PASS (0 errors, 0 warnings). **Beyond static checks**: a real, live extraction re-run (paid Claude API call) against real drawing data, not just unit tests — see Systems / Features Implemented for the result.
+
+**Ninth entry (2026-08-23) addendum**: `npx tsc --noEmit` re-run after the `floor_area`/`walls` addition — PASS (0 errors). `npm test` re-run — 67/67 PASS (7 suites, `drawingExtraction` now 14 tests). `npm run lint` re-run — PASS. **Beyond static checks**: another real, live extraction re-run — see Systems / Features Implemented for the result and why it's a correct, not noisy, outcome on this particular drawing.
 
 ## What Is Verified Working
 - All four Phase 5 deliverables individually verified as above.
@@ -150,4 +155,4 @@ Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CON
 All of this phase's substantive work is on `origin/main`. The CI workflow file specifically was added/fixed via github.com's web UI, not `git push` (see Known Issues for why), and local was synced to match via `git reset --hard origin/main` after — verified byte-identical, no work lost. This file's own closeout commit follows immediately.
 
 ## Updated
-Date/time: 2026-08-23 (eighth entry — built, tested, and live-validated the window-detection fix at the user's go-ahead; see Systems / Features Implemented)
+Date/time: 2026-08-23 (ninth entry — extended the same per-field resolution fix to floor area and wall lengths, lower-risk than windows since no schema/prompt/apply-logic change was needed; see Systems / Features Implemented)

@@ -150,3 +150,73 @@ describe("collectUnresolvedItems - windows field", () => {
     expect(collectUnresolvedItems(extraction)).toEqual([]);
   });
 });
+
+describe("collectUnresolvedItems - floor area and wall lengths", () => {
+  it("flags a room with no floor area recorded, independent of the room's general reason", () => {
+    const extraction = baseExtraction([
+      baseRoom({
+        name: "Bath 4",
+        floor_area_sqft: null,
+        wall_north_len_ft: null,
+        wall_south_len_ft: null,
+        wall_east_len_ft: null,
+        wall_west_len_ft: null,
+      }),
+    ]);
+    const items = collectUnresolvedItems(extraction);
+    expect(items).toContainEqual("room[0].floor_area:Bath 4");
+    // No separate "walls" item when floor area itself is already missing -
+    // mirrors lib/dataCompleteness.ts's own nesting, avoids double-flagging
+    // the same underlying "we know nothing about this room" gap twice.
+    expect(items.some((i) => i.startsWith("room[0].walls"))).toBe(false);
+  });
+
+  it("flags a room with floor area but no wall lengths on any side (compass or drawing-relative)", () => {
+    const extraction = baseExtraction([
+      baseRoom({
+        name: "Mud Room",
+        floor_area_sqft: 80,
+        wall_north_len_ft: null,
+        wall_south_len_ft: null,
+        wall_east_len_ft: null,
+        wall_west_len_ft: null,
+        wall_front_len_ft: null,
+        wall_rear_len_ft: null,
+        wall_left_len_ft: null,
+        wall_right_len_ft: null,
+      }),
+    ]);
+    const items = collectUnresolvedItems(extraction);
+    expect(items).toContainEqual("room[0].walls:Mud Room");
+    expect(items.some((i) => i.startsWith("room[0].floor_area"))).toBe(false);
+  });
+
+  it("does not flag a room with real floor area and real wall data", () => {
+    const extraction = baseExtraction([
+      baseRoom({ name: "Kitchen", floor_area_sqft: 200, wall_north_len_ft: 15 }),
+    ]);
+    const items = collectUnresolvedItems(extraction);
+    expect(items.some((i) => i.startsWith("room[0].floor_area") || i.startsWith("room[0].walls"))).toBe(
+      false,
+    );
+  });
+
+  it("accepts drawing-relative wall lengths (front/rear/left/right) as satisfying the walls check, not just compass", () => {
+    const extraction = baseExtraction([
+      baseRoom({
+        name: "Study",
+        floor_area_sqft: 120,
+        wall_north_len_ft: null,
+        wall_south_len_ft: null,
+        wall_east_len_ft: null,
+        wall_west_len_ft: null,
+        wall_front_len_ft: 10,
+        wall_rear_len_ft: 10,
+        wall_left_len_ft: 12,
+        wall_right_len_ft: 12,
+      }),
+    ]);
+    const items = collectUnresolvedItems(extraction);
+    expect(items.some((i) => i.startsWith("room[0].walls"))).toBe(false);
+  });
+});

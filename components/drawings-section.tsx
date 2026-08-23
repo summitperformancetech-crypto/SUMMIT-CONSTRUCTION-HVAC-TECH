@@ -650,6 +650,64 @@ function ReviewPanel({
                 )}
                 <div className="mt-2 flex items-center gap-2 border-t border-brand-gold/50 pt-2">
                   <span className="text-xs text-brand-grey-text">
+                    Floor area: {room.floor_area_sqft != null ? `${room.floor_area_sqft} sqft` : "—"}
+                  </span>
+                  {room.floor_area_sqft == null && (
+                    <FieldResolutionBadge
+                      projectId={projectId}
+                      tableName="drawings"
+                      recordId={drawing.id}
+                      fieldName={`room[${index}].floor_area`}
+                      aiExtractedValue={null}
+                      resolution={resolutionMap.get(
+                        resolutionKey("drawings", drawing.id, `room[${index}].floor_area`),
+                      )}
+                      onResolved={onResolved}
+                    />
+                  )}
+                </div>
+                <div className="mt-2 flex items-center gap-2 border-t border-brand-gold/50 pt-2">
+                  <span className="text-xs text-brand-grey-text">
+                    Walls:{" "}
+                    {[
+                      room.wall_north_len_ft,
+                      room.wall_south_len_ft,
+                      room.wall_east_len_ft,
+                      room.wall_west_len_ft,
+                      room.wall_front_len_ft,
+                      room.wall_rear_len_ft,
+                      room.wall_left_len_ft,
+                      room.wall_right_len_ft,
+                    ].some((v) => v != null)
+                      ? "recorded"
+                      : "—"}
+                  </span>
+                  {room.floor_area_sqft != null &&
+                    ![
+                      room.wall_north_len_ft,
+                      room.wall_south_len_ft,
+                      room.wall_east_len_ft,
+                      room.wall_west_len_ft,
+                      room.wall_front_len_ft,
+                      room.wall_rear_len_ft,
+                      room.wall_left_len_ft,
+                      room.wall_right_len_ft,
+                    ].some((v) => v != null) && (
+                      <FieldResolutionBadge
+                        projectId={projectId}
+                        tableName="drawings"
+                        recordId={drawing.id}
+                        fieldName={`room[${index}].walls`}
+                        aiExtractedValue={null}
+                        resolution={resolutionMap.get(
+                          resolutionKey("drawings", drawing.id, `room[${index}].walls`),
+                        )}
+                        onResolved={onResolved}
+                      />
+                    )}
+                </div>
+                <div className="mt-2 flex items-center gap-2 border-t border-brand-gold/50 pt-2">
+                  <span className="text-xs text-brand-grey-text">
                     Ducts: {room.duct_location?.value ?? "—"}
                     {room.duct_insulation_r_value?.value != null &&
                       ` (R-${room.duct_insulation_r_value.value})`}

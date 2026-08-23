@@ -159,6 +159,27 @@ export type ExtractedRoom = {
   window_left_area_sqft: number | null;
   window_right_area_sqft: number | null;
   window_count: number | null;
+  // Diagnosed 2026-08-23: the fields above (window_count, window_*_area_sqft)
+  // and STEP 4's "don't guess" rule correctly leave window AREA null very
+  // often (most floor plans have no window schedule/labeled sizes) - but
+  // that null was structurally indistinguishable from "this room genuinely
+  // has no windows," and the only place window uncertainty ever showed up
+  // was buried inside the room's single bundled "reason" string alongside
+  // unrelated facts (floor area, wall-orientation guesses), resolved by one
+  // Accept/Override that never touched window_*_area_sqft at all - a real
+  // room could end up "resolved" with every window field still null. This
+  // mirrors duct_location/duct_insulation_r_value below exactly (the same
+  // "give it its own resolvable field instead of burying it in prose"
+  // pattern, already proven out for ducts) rather than inventing a new
+  // mechanism. value: true = the model found visual evidence of a window
+  // opening on at least one side of this room (area may still be
+  // unresolved separately - see STEP 4); false = the model positively
+  // confirmed no window openings are drawn on any side (a real signal now,
+  // not an absence of one); null = couldn't tell either way. unresolved
+  // should be true whenever value is null OR true-with-area-still-missing;
+  // false only when value is a confirmed true-with-area or a confirmed
+  // false with no visible ambiguity.
+  windows: ExtractedField<boolean>;
   door_count: number | null;
   unresolved: boolean;
   reason: string | null;
@@ -656,6 +677,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "window_left_area_sqft": number | null,
       "window_right_area_sqft": number | null,
       "window_count": number | null,
+      "windows": { "value": boolean | null, "unresolved": boolean, "reason": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
       "door_count": number | null,
       "ceiling_height_ft": number | null,
       "ceiling_height_ft_elevation_derived": number | null,
@@ -700,6 +722,8 @@ ${buildOrientationStep3Branch(knownOrientation)}
 - For every room, also set "room_label_text" to ALL text printed on or near that room on the floor plan, copied verbatim - concatenate every distinct piece you find with " / " between them: the room name, its printed dimensions (e.g. "24'-10\" X 37'-4\""), and any ceiling height callout for that room (e.g. "10' CEILING") if one appears anywhere near the room, even when it sits as its own separate label a short distance from the room name rather than directly overlapping it (e.g. "3-CAR GARAGE / 10' CEILING / 24'-10\" X 37'-4\""). Do NOT report just the room name alone when other text - dimensions, a ceiling height label - is also printed near that room; a bare room name here silently discards information a downstream check depends on to catch ceiling-height conflicts, so treat this as a completeness requirement, not a best-effort summary. This is a plain transcription task, not a judgment call: do not summarize, interpret, or decide part of it is unimportant to omit; leave it null only if the room genuinely has no printed text of its own at all.
 
 STEP 4 — Window area, per room, same north/south/east/west vs. front/rear/left/right split as STEP 3, governed by the SAME orientation-detected/not-detected branch (do not re-decide it here). This is a much harder read than wall length — most floor plans mark a window opening as a gap in the wall line with a width, but not a height, so only fill a side's window area when you can combine an actual opening on that room's wall (visible in the floor plan) with an actual height reference for that opening (a window schedule entry, a labeled window size like "3068" i.e. 3'-0" x 6'-8", or a spec note) - width times height. If a room clearly has a window on a given side but you have no way to size it, leave that side null rather than assume a typical size - this is the same "don't guess" standard as duct routing (STEP 8) and R-values, not an exception to it. It is expected and fine for most or all window area fields to come back null when a drawing doesn't include a window schedule or labeled sizes; a false area is worse than a missing one, since it would silently misstate solar gain rather than leave it visibly unresolved. When you do fill any window area for a room, set that room's "unresolved" to true with "reason" noting it's an AI-estimated window area pending confirmation (unless the room is already unresolved for another reason, in which case leave the existing reason as-is).
+
+Also set this room's "windows" field, separately from the area fields above and from this room's own top-level "unresolved"/"reason" - this is a distinct, individually-resolvable fact, not a summary of the area work you just did: "value": true if you can see at least one window opening drawn on any side of this room in the floor plan (regardless of whether you could size it), "value": false if you specifically looked and this room has no window openings drawn on any side (a real, positive room type like an interior closet, hallway, or windowless bath - not a default), "value": null if the room's boundary or wall lines aren't clear enough in this sheet set to tell either way. Set "unresolved": false ONLY when "value" is false (confirmed no windows) or when "value" is true AND every side's window area was actually filled in above (not left null); set "unresolved": true in every other case - value is true but some/all area is still null, or value is null. Set "reason" whenever "unresolved" is true, naming specifically what's missing (e.g. "window visible on north wall, no height reference to size it" or "room boundary partially obscured by a callout, can't confirm any side is windowless"). Do not skip this field or leave it at its default - every room needs an explicit judgment here, the same standard as duct_location in STEP 8.
 
 STEP 5 — Ceiling height. Two levels:
 - Building-wide default: look for a plate height or ceiling height labeled on a wall section, a building section, an elevation, or a general note (e.g. "9'-0" PLATE HT.", "8' CEILINGS TYP."). Set "building_envelope.ceiling_height_ft" to that value only if it is actually labeled — do not infer a typical residential height. If the drawing labels different heights per story, use the ground-floor/primary living-area figure and set "unresolved": true.
@@ -775,6 +799,10 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
     }
     if (room.duct_insulation_r_value?.unresolved) {
       items.push(`room[${index}].duct_insulation_r_value:${room.name || "unnamed"}`);
+    }
+    if (room.windows?.unresolved) {
+      const label = `room[${index}].windows:${room.name || "unnamed"}`;
+      items.push(room.windows.reason ? `${label} - ${room.windows.reason}` : label);
     }
   });
 

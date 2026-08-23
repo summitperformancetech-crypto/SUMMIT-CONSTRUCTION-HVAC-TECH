@@ -52,6 +52,8 @@ The user made four calls on Phase 5's carried-over open questions before Phase 6
 
 **This session (2026-08-23, sixth entry) additionally created:** `lib/dataCompleteness.ts` (`checkDataCompleteness` — see Deferred Work's "sixth entry" bullet below for the full finding this came from) + `lib/__tests__/dataCompleteness.test.mts` (7 tests). Real code, not just docs — `npx tsc --noEmit`, `npm run lint`, and `npm test` (58/58 passing including the 7 new tests) all re-run and passing after this addition. **Deliberately not wired into any report-generation gate, `reportGate.ts`, or UI** — that's a product decision flagged for the user, not made unilaterally; see Open Questions.
 
+**This session (2026-08-23, eighth entry) additionally created:** `lib/__tests__/drawingExtraction.test.mts` (5 tests). **Additionally modified:** `lib/drawingExtraction.ts` (new `windows: ExtractedField<boolean>` field on `ExtractedRoom`, JSON schema template, STEP 4 prompt text, `collectUnresolvedItems`), `components/drawings-section.tsx` (new windows status line + `FieldResolutionBadge`). User-authorized, real production code — see Systems / Features Implemented for the full change and its live validation result.
+
 ## Files Removed
 None.
 
@@ -61,6 +63,7 @@ None.
 - Vercel-compatible headless-Chromium launcher, shared between both PDF/PNG rendering call sites.
 - CI (GitHub Actions): lint + typecheck + test + build gate on every PR/push to main.
 - **(Sixth entry, 2026-08-23) `lib/dataCompleteness.ts`** — a new, additive, read-only diagnostic (`checkDataCompleteness`) that flags rooms with missing floor area or wall geometry, plus a whole-house check for total glazing area being exactly zero. Not wired into any gate yet — see Deferred Work.
+- **(Eighth entry, 2026-08-23) Per-room window detection, its own resolvable field** — `windows: ExtractedField<boolean>` added to `ExtractedRoom` (`lib/drawingExtraction.ts`), mirroring the existing `duct_location`/`duct_insulation_r_value` pattern: `true` = a window opening is visible on some side (area may still need sizing separately), `false` = positively confirmed no windows on any side (a real "confirmed windowless" signal that did not exist before this fix), `null` = couldn't tell. `buildExtractionPrompt`'s STEP 4 now asks for this explicitly; `collectUnresolvedItems` emits it as its own `room[N].windows` item (was previously buried inside the room's single bundled prose `reason`, resolved by one Accept/Override that never touched the real geometry fields); `components/drawings-section.tsx` renders a dedicated status line + `FieldResolutionBadge` for it. **Validated with a real, live re-extraction** against the Vivian Street floor-plan crop already in storage: went from 30 undifferentiated bundled flags to 13 rooms cleanly resolved (zero human work) + 17 precisely and individually flagged.
 
 ## Bugs Fixed
 None (this phase was additive infrastructure work, not a bug-fix pass).
@@ -82,6 +85,8 @@ npm run build          PASS (production build succeeds, Turbopack, 58s compile)
 ```
 
 **Sixth entry (2026-08-23) addendum**: `npx tsc --noEmit` re-run after adding `lib/dataCompleteness.ts` — PASS (0 errors). `npm test` re-run — 58/58 PASS (6 suites, +1: `dataCompleteness`). `npm run lint` re-run — PASS (0 errors, 0 warnings; took unusually long even for this machine's documented slow-disk issue, exit 0 once it returned).
+
+**Eighth entry (2026-08-23) addendum**: `npx tsc --noEmit` re-run after the `windows` field addition — PASS (0 errors), confirming nothing else needed updating for the schema change. `npm test` re-run — 63/63 PASS (7 suites, +1: `drawingExtraction`). `npm run lint` re-run — PASS (0 errors, 0 warnings). **Beyond static checks**: a real, live extraction re-run (paid Claude API call) against real drawing data, not just unit tests — see Systems / Features Implemented for the result.
 
 ## What Is Verified Working
 - All four Phase 5 deliverables individually verified as above.
@@ -113,7 +118,7 @@ npm run build          PASS (production build succeeds, Turbopack, 58s compile)
 - When AED is actually picked up: which real solar irradiance dataset/API (NOAA vs. NREL) is the right specific source? Decided in principle this session (real data over from-scratch), specific source TBD at implementation time.
 - Where exactly does PWA/offline capture land in the phase sequence — before or after Phase 6?
 - **(Sixth entry, 2026-08-23)** How should `lib/dataCompleteness.ts`'s new warnings actually be surfaced — hard-block report generation in `app/api/reports/route.ts`'s gate (same fail-closed pattern as `validateReportTotals`), a non-blocking warning badge in the report (matching the existing `QA CORRECTED` visual pattern), a checklist item in the project workflow UI before extraction can be "applied," or something else? Built and tested but deliberately left unwired pending this decision.
-- **(Seventh entry, 2026-08-23) The deeper root cause is now precisely scoped, not just diagnosed.** `applyExtractedData` (`components/manual-j-workflow.tsx`) is confirmed NOT buggy — it faithfully copies whatever window area extraction found. The real gap: `collectUnresolvedItems` (`lib/drawingExtraction.ts`) already breaks `duct_location`/`duct_insulation_r_value` out as their own individually-resolvable per-room items (each gets its own `FieldResolutionBadge`) — window area, floor area, and wall lengths never got the same treatment, staying bundled inside one freeform `room.reason` string resolved by a single Accept/Override that never touches the actual columns. **Concrete fix, not implemented**: add a structured `windows: ExtractedField<...>` to `ExtractedRoom`, have the extraction prompt state per-room "windows detected: yes/no/uncertain" explicitly instead of folding it into prose, break it out as its own `room[N].windows` unresolved item, give it its own badge in `drawings-section.tsx` (reuses the existing generic component, no new UI primitive). Not built this session because it touches the extraction prompt itself — this file's own comments document a fragile, multi-round tuning history (several past regressions each diagnosed the hard way against real drawings), and every real test costs a paid Claude API call. This is the one item in this list worth the user's explicit go-ahead before touching, given that risk profile — everything else already built this session (the diagnostic module) was safe enough to do unilaterally.
+- **(Eighth entry, 2026-08-23) RESOLVED — the window-detection fix is built, tested, and validated live.** See "Systems / Features Implemented" and "Testing Performed" above for the full detail; this is no longer an open question.
 - **(Sixth entry, 2026-08-23)** Should the project-level `window_count`/`window_type` fields be wired into `computeManualJ` as a distribution fallback (e.g. average window area per room when per-room data is missing), or are they meant to stay purely informational/for-the-technician's-reference, with per-room area as the only real input the engine should ever trust? Affects how big a fix this ultimately needs to be.
 
 ## Claude Browser Input Needed
@@ -145,4 +150,4 @@ Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CON
 All of this phase's substantive work is on `origin/main`. The CI workflow file specifically was added/fixed via github.com's web UI, not `git push` (see Known Issues for why), and local was synced to match via `git reset --hard origin/main` after — verified byte-identical, no work lost. This file's own closeout commit follows immediately.
 
 ## Updated
-Date/time: 2026-08-23 (seventh entry — traced the window-area gap to its exact code-level mechanism and scoped a concrete fix, not yet built pending the user's go-ahead on touching the extraction prompt; see Open Questions)
+Date/time: 2026-08-23 (eighth entry — built, tested, and live-validated the window-detection fix at the user's go-ahead; see Systems / Features Implemented)

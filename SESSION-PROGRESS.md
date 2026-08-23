@@ -2027,3 +2027,64 @@ further this session.
     "keep working" latitude the rest of this session used.
   - Memory (`report_generation_requirements`) updated with the full
     precise mechanism and fix scope.
+
+- 2026-08-23 (eighth entry) — **User authorized building the
+  window-detection fix** ("yes, build prompt/schema change and then
+  continue... report to me when you are completely finished"). Built,
+  tested, and validated live.
+  - `lib/drawingExtraction.ts`: added `windows: ExtractedField<boolean>`
+    to `ExtractedRoom`, mirroring `duct_location`/`duct_insulation_r_value`
+    exactly - `true` = window opening visible on some side (area may
+    still need sizing), `false` = positively confirmed no windows on any
+    side (a real "confirmed windowless" signal that never existed
+    before), `null` = couldn't tell. Added to the JSON schema template.
+    Extended STEP 4's prompt text with an explicit instruction to set it
+    deliberately, same standard as STEP 8's duct_location. Extended
+    `collectUnresolvedItems` to emit `room[N].windows` as its own item.
+  - `components/drawings-section.tsx`: added a "Windows:
+    detected/none (confirmed)/unresolved" status line with its own
+    `FieldResolutionBadge`, reusing the existing generic component - no
+    new UI primitive built.
+  - `lib/__tests__/drawingExtraction.test.mts` (new file, 5 tests):
+    covers confirmed-windowless (no flag), detected-but-unsized
+    (flagged with reason), presence-uncertain (flagged), independence
+    from the room's general unresolved/reason, and a defensive test
+    that historical extractions without this field don't throw.
+  - **Static verification**: `npx tsc --noEmit` clean (0 errors -
+    confirms no other file needed updating, since `applyExtractedData`
+    already copied window area correctly; only the unresolved-tracking
+    layer needed the new field). `npm test` 63/63 passing (7 suites,
+    the new `drawingExtraction` suite added). `npm run lint` clean.
+  - **Then validated with a real, live, paid Claude API call** - not
+    just unit tests. Re-ran extraction against the same Vivian Street
+    floor-plan crop already in storage (drawing id
+    `90f801a2-23f7-4099-bb6c-36462041a58c`), using the updated prompt.
+    Compared to the pre-fix run (all 30 rooms bundled into one
+    undifferentiated unresolved flag each): **13 rooms came back
+    cleanly resolved as confirmed-windowless** (CLOS., STAIRS UP, B.P.,
+    PANTRY, SECRET CLOS., M. WIC, M. W/C, DRESS. 3, UPPER HALL, B4 WIC,
+    B2 WIC, UTIL, UPPER STAIRS) - zero human work needed, a signal that
+    simply didn't exist before this fix. **17 rooms flagged
+    individually and specifically** - 10 with "window opening visible
+    on [side], no schedule to size it" (a real, scoped review task) and
+    7 with genuine presence uncertainty. The GAME room's earlier
+    site-visit-discrepancy catch (drawn window count vs. a site note)
+    persisted and got more specific, now correctly attached to the new
+    field rather than buried in general prose. The live `drawings` row
+    and `drawing_extraction_history` were updated with this improved
+    extraction (appropriate given this project's explicit fixture
+    status).
+  - **Still true, not resolved by this fix**: this makes the gap
+    visible and individually resolvable, it doesn't force a reviewer to
+    actually fill in the 10 detected-but-unsized rooms' window area (or
+    source Vivian Street's real dimensioned plan set, which still isn't
+    in this repo). And the same "bundled reason, silently-skippable"
+    pattern still exists for floor area and wall lengths specifically -
+    only windows got this treatment, since it was the one concretely
+    evidenced by real data this session.
+  - Scratch verification script (the live re-extraction runner) deleted
+    after use, not committed - `lib/drawingExtraction.ts`,
+    `components/drawings-section.tsx`, and the new test file are the
+    only real, committed changes.
+  - Memory (`report_generation_requirements`) updated with the full
+    build-and-validation result.

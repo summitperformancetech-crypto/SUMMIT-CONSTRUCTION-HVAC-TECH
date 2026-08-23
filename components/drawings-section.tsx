@@ -691,6 +691,31 @@ function ReviewPanel({
                     />
                   )}
                 </div>
+                <div className="mt-2 flex items-center gap-2 border-t border-brand-gold/50 pt-2">
+                  <span className="text-xs text-brand-grey-text">
+                    Windows:{" "}
+                    {room.windows?.value === true
+                      ? "detected"
+                      : room.windows?.value === false
+                        ? "none (confirmed)"
+                        : "unresolved"}
+                  </span>
+                  {room.windows?.unresolved && (
+                    <FieldResolutionBadge
+                      projectId={projectId}
+                      tableName="drawings"
+                      recordId={drawing.id}
+                      fieldName={`room[${index}].windows`}
+                      aiExtractedValue={
+                        room.windows.value != null ? String(room.windows.value) : null
+                      }
+                      resolution={resolutionMap.get(
+                        resolutionKey("drawings", drawing.id, `room[${index}].windows`),
+                      )}
+                      onResolved={onResolved}
+                    />
+                  )}
+                </div>
               </li>
             ))}
           </ul>

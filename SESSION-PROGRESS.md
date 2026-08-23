@@ -1804,3 +1804,22 @@ further this session.
     room-by-room data-model requirements this comparison surfaced
     (applicable to auditing any Summit project's input completeness, not
     just Vivian Street).
+  - **User correction, same entry**: the room-by-room data (walls,
+    windows, floor exposure/construction, door counts, room type,
+    orientation) is not meant to be manually typed in as the baseline
+    path — it's meant to come from the existing AI drawing-extraction
+    pipeline (`lib/drawingExtraction.ts`/`app/api/drawings/extract/
+    route.ts`) when a plan set is uploaded at project start, with the
+    technician only prompted for whatever the drawing doesn't clearly
+    provide (the existing UNRESOLVED workflow). Checked and confirmed:
+    the `drawings` table and storage bucket are both empty for the
+    Vivian Street project — no drawing was ever uploaded, so the
+    fixture's 2-room hand-seed bypassed extraction entirely rather than
+    extraction failing to produce good data. Pages 15-16 of
+    `REFERENCE-DOCS/4308 Vivian Street.pdf` are genuine floor-plan
+    drawings of the real house (room labels, north arrow, scale) and
+    are a plausible candidate to actually push through
+    `app/api/drawings/extract/route.ts` as the real end-to-end test —
+    not attempted this session (a real, paid Claude-API call; flagged
+    for the user's go-ahead rather than triggered unilaterally). Memory
+    updated to reflect this corrected understanding.

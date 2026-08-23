@@ -1823,3 +1823,53 @@ further this session.
     not attempted this session (a real, paid Claude-API call; flagged
     for the user's go-ahead rather than triggered unilaterally). Memory
     updated to reflect this corrected understanding.
+
+- 2026-08-23 (fourth entry) — **User said "let's go" — ran the real
+  drawing-extraction pipeline** against Vivian Street's floor-plan
+  pages, the validation step flagged (not run) in the prior entry.
+  Cropped `REFERENCE-DOCS/4308 Vivian Street.pdf` to just pages 15-16
+  (the two floor-plan drawings, deliberately blind to the calculated
+  numbers on pages 1-14) using `pdf-lib`, uploaded that 2-page PDF to
+  the real `drawings` storage bucket, inserted a real `drawings` row,
+  and called Anthropic through a script that faithfully reimplements
+  `app/api/drawings/extract/route.ts`'s exact pipeline (same
+  `buildExtractionPrompt`/post-processing functions from
+  `lib/drawingExtraction.ts`, service-role key instead of the route's
+  browser-session auth since this was a script, not a UI click).
+  - **Result: extraction worked correctly and was honest about its
+    limits.** Correctly named and found all 30/30 real rooms (matching
+    the real report's room list almost exactly) and correctly used the
+    project's pre-confirmed orientation (front faces S). But it
+    honestly flagged every room's geometry (floor area, walls, windows)
+    as `unresolved: true` with a specific reason each time — e.g. "No
+    printed dimensions for this room ... no explicit dimension lines
+    present" — rather than guessing from the sheet's bare "Scale: 1:91"
+    note. That's the correct, intended behavior: these two pages are
+    Wrightsoft's own schematic room-layout diagrams generated for the
+    calc report, not the original dimensioned architectural CAD plan
+    set the MJS PDF's own disclaimer references ("per site visit ...
+    and plan '7/1/16' provided") — that original set isn't in this
+    repo, so there was nothing with real dimensions to extract. It also
+    independently surfaced a real discrepancy as a "revision concern" —
+    a site-visit note on the Level 2 sheet contradicting the drawn
+    game-room window count — unprompted, which is the audit-trail
+    differentiator working as designed.
+  - 106 total unresolved items (30 rooms × geometry+duct fields, plus
+    ~15 building-envelope fields also unresolved since a floor plan
+    alone doesn't carry wall-assembly/insulation specs).
+  - Did **not** touch the `rooms` table — matches production behavior;
+    extraction only writes `drawings.extracted_data`/`unresolved_items`,
+    merging into `rooms` is a separate human-reviewed "apply" step this
+    session didn't exercise (nothing meaningful to apply yet, since
+    everything came back unresolved).
+  - The real `drawings` row (id `90f801a2-23f7-4099-bb6c-36462041a58c`)
+    and its `drawing_extraction_history` entry were **left in place
+    live**, not cleaned up — a legitimate completed-extraction artifact
+    a future session could open in the real UI to test the
+    UNRESOLVED-review/apply flow next.
+  - Scratch script files (the PDF-cropping script and the
+    extraction-runner script) were deleted after the run, not committed
+    — matches this session's established pattern for one-off DB/API
+    scripts.
+  - Memory (`report_generation_requirements`) updated with the full
+    real result, superseding the prior entry's "not attempted" framing.

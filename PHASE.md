@@ -11,7 +11,7 @@ Phase name: Testing & Deployment Readiness
 Add a real test runner, add direct unit tests for the calc engines (previously zero direct coverage beyond report-layer regression tests), fix Puppeteer for actual Vercel deployment, add a minimal CI workflow.
 
 ## Status
-COMPLETE WITH ONE FOLLOW-UP — 3 of 4 phase items pushed to `origin/main`; the CI workflow file (`.github/workflows/ci.yml`) is written and correct but not yet on GitHub — see Known Issues.
+COMPLETE — all 4 phase items done, verified, and on `origin/main`.
 
 ## Overall V1 Completion
 Estimated percentage: ~75%
@@ -78,7 +78,7 @@ npm run build          PASS (production build succeeds, Turbopack, 58s compile)
 ## Known Issues
 - Same disk-space/load-average slowness on this dev machine as documented in prior sessions — `tsc`, `lint`, and `build` all took 1-2 minutes each this session and had to run in the background. Not a code issue.
 - The stale `.next/types/* 2.ts` duplicate-file issue (see What Was Accomplished) may recur on this machine under the same conditions that caused it originally (likely an interrupted/concurrent build) — if `tsc --noEmit` reports `LayoutProps`/cache-life duplicate-identifier errors again, `rm -rf .next && npx next typegen` is the fix, not a real regression.
-- **`.github/workflows/ci.yml` exists locally (committed in git history) but is not yet on `origin/main`.** GitHub rejects pushes that add/modify files under `.github/workflows/` from this repo's cached git credential (a VS Code-issued OAuth App token) unless it carries the `workflow` scope, and re-authenticating through VS Code's built-in GitHub sign-in twice this session did not add that scope — VS Code's built-in GitHub Authentication provider's OAuth app registration does not appear to request `workflow` at all, regardless of how many times it's re-authorized. The rest of this phase's commit was split out and pushed successfully; only the CI file is affected. **Fix options for a future session:** (a) add the file directly via github.com's web UI (Add file → Create new file → paste `.github/workflows/ci.yml`'s content — the web UI isn't subject to this OAuth scope restriction), or (b) generate a classic Personal Access Token with `repo` + `workflow` scopes at github.com → Settings → Developer settings → Personal access tokens, and use it as the git credential instead of the VS Code-issued one.
+- **This session's git credential (VS Code-issued OAuth App token) cannot push any change to `.github/workflows/*` — create or edit — no matter how many times VS Code's built-in GitHub sign-in is re-run.** GitHub rejects such pushes without the `workflow` scope, and that provider's OAuth app registration does not appear to request it at all. Worked around this session by adding/editing `.github/workflows/ci.yml` directly through github.com's web UI (not subject to this restriction), then `git reset --hard origin/main` locally to sync. **If this comes up again**, skip retrying VS Code sign-in and go straight to the web UI, or generate a classic Personal Access Token with `repo` + `workflow` scopes (github.com → Settings → Developer settings → Personal access tokens) and use it as the git credential instead.
 
 ## Deferred Work
 - AED Assessment (needs solar-position engine + latitude) — from Phase 4, still deferred.
@@ -114,14 +114,14 @@ Start a fresh chat (see recommendation below) and scope Phase 6: what specific s
 
 ## Git Status
 Branch: `main`
-Working tree: clean as of this file's last update (see below) — will have uncommitted changes for this closeout commit until it lands.
-Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CONSTRUCTION-HVAC-TECH.git`, up to date as of session start.
+Working tree: clean, verified via `git status`/`git fetch` immediately before this closeout — will show this file's own final commit as a small delta until that lands.
+Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CONSTRUCTION-HVAC-TECH.git`, in sync (`git log --oneline origin/main` matches local exactly).
 
 ## Last Commit
-`ec5ba1b` — "docs: add PHASE.md and a phase-closeout/fresh-chat protocol" (pre-session; this phase's own commit follows immediately).
+`ed83585` — "Add ANTHROPIC_API_KEY to CI workflow" (a github.com web-UI commit fixing the CI file; see this phase's own commit, `3dd5ac5`, for the substantive Phase 5 work).
 
 ## GitHub Push Status
-This phase's commit(s) will be pushed immediately after this file is saved.
+All of this phase's substantive work is on `origin/main`. The CI workflow file specifically was added/fixed via github.com's web UI, not `git push` (see Known Issues for why), and local was synced to match via `git reset --hard origin/main` after — verified byte-identical, no work lost. This file's own closeout commit follows immediately.
 
 ## Updated
 Date/time: 2026-08-23

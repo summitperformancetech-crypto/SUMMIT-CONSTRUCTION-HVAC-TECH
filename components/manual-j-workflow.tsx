@@ -112,6 +112,60 @@ export const ROOM_COLUMNS =
 const ZONE_COLUMNS =
   "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes";
 
+// Diagnosed 2026-08-23 against real data (Kinsela): a room this drawing
+// genuinely shows (e.g. a wet bar, a second hallway) that doesn't match
+// any EXISTING room by name during re-extraction reconciliation was being
+// silently discarded - worse, discarded with no signal at all whenever it
+// also had no duct/wall/window data to report missing. The fix is that a
+// zero-name-match room isn't an error case to skip, it's a genuinely new
+// room the drawing revealed that this project doesn't have yet - it
+// should be created, the same way every room is on a brand-new project's
+// first apply. Shared by both call sites below so the two paths can't
+// drift out of sync with each other.
+function buildRoomInsertPayload(
+  room: ExtractedRoom,
+  projectId: string,
+  zoneId: string | null,
+  envelopeCeilingHeightFt: number | null,
+) {
+  return {
+    project_id: projectId,
+    name: room.name || "Untitled room",
+    level: "single_story",
+    zone_id: zoneId,
+    floor_area_sqft: room.floor_area_sqft,
+    ceiling_height_ft: envelopeCeilingHeightFt,
+    ceiling_exposed: false,
+    floor_exposed: false,
+    is_bedroom: false,
+    room_type: null,
+    occupant_count: null,
+    sensible_gain_override: null,
+    latent_gain_override: null,
+    duct_location: normalizeDuctLocation(room.duct_location?.value),
+    duct_insulation_r_value: room.duct_insulation_r_value?.value ?? null,
+    duct_source: room.duct_source ?? null,
+    duct_confidence: room.duct_confidence ?? null,
+    wall_north_len_ft: room.wall_north_len_ft,
+    wall_south_len_ft: room.wall_south_len_ft,
+    wall_east_len_ft: room.wall_east_len_ft,
+    wall_west_len_ft: room.wall_west_len_ft,
+    wall_front_len_ft: room.wall_front_len_ft,
+    wall_rear_len_ft: room.wall_rear_len_ft,
+    wall_left_len_ft: room.wall_left_len_ft,
+    wall_right_len_ft: room.wall_right_len_ft,
+    window_north_area_sqft: room.window_north_area_sqft,
+    window_south_area_sqft: room.window_south_area_sqft,
+    window_east_area_sqft: room.window_east_area_sqft,
+    window_west_area_sqft: room.window_west_area_sqft,
+    window_front_area_sqft: room.window_front_area_sqft,
+    window_rear_area_sqft: room.window_rear_area_sqft,
+    window_left_area_sqft: room.window_left_area_sqft,
+    window_right_area_sqft: room.window_right_area_sqft,
+    door_count: room.door_count ?? 0,
+  };
+}
+
 // The only Building Envelope fields a drawing extraction is allowed to fill.
 // ACH50, occupants, and indoor design temps are never populated from a drawing.
 // foundation_type/window_type/window_count aren't consumed by
@@ -667,65 +721,9 @@ export const ManualJWorkflow = forwardRef<
         // first zone too, same as rooms added one at a time via
         // handleAddRoom.
         const defaultZoneId = zones.length > 0 ? zones[0].id : null;
-        const payloads = extractedRooms.map((room) => ({
-          project_id: projectId,
-          name: room.name || "Untitled room",
-          level: "single_story",
-          zone_id: defaultZoneId,
-          floor_area_sqft: room.floor_area_sqft,
-          // Building-wide default from the drawing's building_envelope
-          // (see ExtractedEnvelope.ceiling_height_ft) - a new room has
-          // nothing of its own to override it with yet, unlike the
-          // UPDATE branch below which only fills an existing room's
-          // ceiling_height_ft if it's still empty.
-          ceiling_height_ft: extractedEnvelope.ceiling_height_ft,
-          ceiling_exposed: false,
-          floor_exposed: false,
-          // Bedroom status/room type/occupants are never inferred from a
-          // drawing extraction, same as indoor design temps - a tech
-          // confirms them.
-          is_bedroom: false,
-          room_type: null,
-          occupant_count: null,
-          sensible_gain_override: null,
-          latent_gain_override: null,
-          // normalizeDuctLocation is a last defensive layer: the server
-          // route already runs it (see applyDuctFallbackDefaults), but a
-          // human can also free-type an override value in the Unresolved
-          // badge (see FieldResolutionBadge) that reaches here via
-          // drawings-section.tsx's resolvedRoom - that text field isn't
-          // constrained to the enum at all. A value this can't map is
-          // dropped to null rather than sent to the DB, where it would
-          // fail rooms_duct_location_check for every room in this batch.
-          duct_location: normalizeDuctLocation(room.duct_location?.value),
-          duct_insulation_r_value: room.duct_insulation_r_value?.value ?? null,
-          duct_source: room.duct_source ?? null,
-          duct_confidence: room.duct_confidence ?? null,
-          wall_north_len_ft: room.wall_north_len_ft,
-          wall_south_len_ft: room.wall_south_len_ft,
-          wall_east_len_ft: room.wall_east_len_ft,
-          wall_west_len_ft: room.wall_west_len_ft,
-          // Building-orientation-driven wall auto-population: real
-          // drawing-relative data even when the compass fields above are
-          // null (see lib/orientation.ts) - the tech applies the project's
-          // Building Orientation selector once to convert these into the
-          // compass fields computeManualJ actually reads.
-          wall_front_len_ft: room.wall_front_len_ft,
-          wall_rear_len_ft: room.wall_rear_len_ft,
-          wall_left_len_ft: room.wall_left_len_ft,
-          wall_right_len_ft: room.wall_right_len_ft,
-          // Same compass-vs-drawing-relative split as the wall fields
-          // above, same reason (see ExtractedRoom's window_* fields).
-          window_north_area_sqft: room.window_north_area_sqft,
-          window_south_area_sqft: room.window_south_area_sqft,
-          window_east_area_sqft: room.window_east_area_sqft,
-          window_west_area_sqft: room.window_west_area_sqft,
-          window_front_area_sqft: room.window_front_area_sqft,
-          window_rear_area_sqft: room.window_rear_area_sqft,
-          window_left_area_sqft: room.window_left_area_sqft,
-          window_right_area_sqft: room.window_right_area_sqft,
-          door_count: room.door_count ?? 0,
-        }));
+        const payloads = extractedRooms.map((room) =>
+          buildRoomInsertPayload(room, projectId, defaultZoneId, extractedEnvelope.ceiling_height_ft),
+        );
 
         const { data, error } = await supabase
           .from("rooms")
@@ -770,8 +768,47 @@ export const ManualJWorkflow = forwardRef<
         const FLOOR_AREA_MISMATCH_TOLERANCE_SQFT = 15;
 
         const updatedRooms: RoomRow[] = [];
+        const createdRooms: RoomRow[] = [];
         const updateErrors: string[] = [];
         for (const extractedRoom of extractedRooms) {
+          const key = extractedRoom.name ? normalizeRoomNameForMatch(extractedRoom.name) : "";
+          const matchCount = key ? (nameCounts.get(key) ?? 0) : 0;
+
+          // Diagnosed 2026-08-23 against real data (Kinsela): a room this
+          // pass' extraction shows that matches NO existing room by name
+          // is a genuinely new room the drawing revealed - "Wet Bar" -
+          // not an error case to skip. The old code below only ever
+          // updated an existing room; a zero-match room fell through to
+          // the ambiguous-name skip path (or, worse, was discarded with
+          // no note at all whenever it also had no duct/wall/window data
+          // to report missing - see hasDuctData/hasWallData/hasWindowData
+          // below, which used to gate reaching that skip path in the
+          // first place). Create it exactly like the initial bulk-insert
+          // does, regardless of whether it also carries duct/wall/window
+          // data - even a name-and-floor-area-only room is real
+          // information that was being silently thrown away here.
+          if (key && matchCount === 0) {
+            const defaultZoneId = zones.length > 0 ? zones[0].id : null;
+            const payload = buildRoomInsertPayload(
+              extractedRoom,
+              projectId,
+              defaultZoneId,
+              extractedEnvelope.ceiling_height_ft,
+            );
+            const { data, error } = await supabase
+              .from("rooms")
+              .insert(payload)
+              .select(ROOM_COLUMNS)
+              .single<RoomRow>();
+            if (error) {
+              updateErrors.push(`${extractedRoom.name || "unnamed room"} (new room): ${error.message}`);
+            } else if (data) {
+              createdRooms.push(data);
+              roomsCreated += 1;
+            }
+            continue;
+          }
+
           const rawDuctLocation = extractedRoom.duct_location?.value ?? null;
           // See the comment on the insert path above - same normalization,
           // same reason (this value can come from a free-typed Unresolved
@@ -796,14 +833,13 @@ export const ManualJWorkflow = forwardRef<
             extractedRoom.window_left_area_sqft != null ||
             extractedRoom.window_right_area_sqft != null;
 
-          // Name-match first (needed below regardless) so a possible
-          // ceiling-height fill-in can be checked against the matched
-          // room - unlike duct/wall/window above, a room with only a
-          // ceiling-height gap to fill still needs to reach the "no data
-          // at all" skip below.
-          const key = extractedRoom.name ? normalizeRoomNameForMatch(extractedRoom.name) : "";
+          // key/matchCount already computed above (needed there to decide
+          // whether this room is a new-room-create case before reaching
+          // this point at all). matchCount === 0 already `continue`d, so
+          // by construction this is either a real single match (1) or a
+          // genuinely ambiguous/nameless one (0 with no key, or 2+).
           const target =
-            key && nameCounts.get(key) === 1
+            key && matchCount === 1
               ? rooms.find((r) => normalizeRoomNameForMatch(r.name) === key)
               : undefined;
 
@@ -819,10 +855,12 @@ export const ManualJWorkflow = forwardRef<
 
           if (!hasDuctData && !hasWallData && !hasWindowData && !hasCeilingHeightFill) continue;
 
-          if (!key || nameCounts.get(key) !== 1) {
+          if (!key || matchCount > 1) {
             if (extractedRoom.name) {
               unmatchedRoomNotes.push(
-                `"${extractedRoom.name}" - name missing or matches more than one existing room, skipped`,
+                key
+                  ? `"${extractedRoom.name}" - name matches more than one existing room, skipped (ambiguous - review manually)`
+                  : `"${extractedRoom.name}" - room has no name, skipped`,
               );
             }
             continue;
@@ -889,13 +927,14 @@ export const ManualJWorkflow = forwardRef<
           }
         }
         if (updateErrors.length > 0) {
-          applyError = `Failed to update ${updateErrors.length} room(s): ${updateErrors.join("; ")}`;
+          applyError = `Failed to update/create ${updateErrors.length} room(s): ${updateErrors.join("; ")}`;
         }
 
-        if (updatedRooms.length > 0) {
-          setRooms((prev) =>
-            prev.map((r) => updatedRooms.find((u) => u.id === r.id) ?? r),
-          );
+        if (updatedRooms.length > 0 || createdRooms.length > 0) {
+          setRooms((prev) => [
+            ...prev.map((r) => updatedRooms.find((u) => u.id === r.id) ?? r),
+            ...createdRooms,
+          ]);
         }
       }
 

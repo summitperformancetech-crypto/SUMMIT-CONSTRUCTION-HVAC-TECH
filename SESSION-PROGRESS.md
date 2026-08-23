@@ -2193,3 +2193,87 @@ further this session.
     are the only real, committed changes.
   - Memory (`report_generation_requirements`) updated marking this
     open question RESOLVED with the full wiring and validation detail.
+
+- 2026-08-23 (eleventh entry) — **User corrected two mistakes in this
+  session's own findings**, directly and (justifiably) frustrated at
+  the repetition on one of them. Both verified and fixed rather than
+  just apologized for.
+  - **Correction 1 - Vivian Street**: the user stated, for the second
+    time this session, that Vivian Street was never intended to have
+    architectural drawings uploaded at all - it's a sample/reference
+    report defining the target output, not a project with a "missing"
+    plan set. Multiple entries earlier in this session (third, fourth,
+    fifth) incorrectly suggested "sourcing the real dimensioned plan
+    set" for this project - wrong, and now corrected in both this file
+    and Claude's persistent memory (`vivian_street_purpose` and
+    `report_generation_requirements`, both got explicit correction
+    blocks so a future session can't repeat this).
+  - **Correction 2 - Kinsela**: the user disputed the "someone needs
+    to go measure it in the field" framing from the tenth entry.
+    Verified directly rather than argued: downloaded Kinsela's actual
+    uploaded drawing (`Final House design Kinsela, Stevenl_OCT-03_
+    2025.pdf`, confirmed a real 13-page CAD-exported vector PDF with
+    genuine extractable text, not a scan) and read the real floor plan
+    pages (A1.1/A1.2) with `pypdf`. **Found real printed dimensions
+    for rooms the extraction/apply pipeline had marked as having
+    none** - `"LAUNDRY 10' CEILING 9'-10" X 9'5""` and `"MASTER BATH
+    BARREL CEILING 18'10" X 11'4""` are both printed directly next to
+    the room name on the sheet; both rooms show `floor_area_sqft:
+    null` and the extraction's own `reason` incorrectly claims "Floor
+    area not explicitly labeled." A genuine model vision-reading miss,
+    confirmed with evidence, not assumed.
+  - **A second, more serious, and directly fixable problem surfaced
+    from the same investigation**: diffed the raw 28-room extraction
+    against the 25-room applied `rooms` table. 5 rooms the extraction
+    genuinely found - Wet Bar, M. Hall, Master Closet (Second Level),
+    Powder Bath, Bath 4 (Bonus Room) - were silently absent from the
+    project. Root cause, confirmed by reading `applyExtractedData`
+    (`components/manual-j-workflow.tsx`) directly: the re-extraction
+    reconciliation loop only ever updates a room matched by exact
+    normalized name; a zero-match room (a genuinely new room a later
+    extraction pass discovered) fell into a misleadingly-worded,
+    ephemeral, non-actionable "skipped" message - or, worse, was
+    dropped with no signal at all whenever it also had no duct/wall/
+    window data (the check that gated whether the skip-note even ran).
+  - **Fixed, this time a real code bug, not a product ambiguity**:
+    extracted a shared `buildRoomInsertPayload` helper (previously
+    duplicated inline in the bulk-create branch); restructured the
+    reconciliation loop so a zero-name-match room is created as a real
+    new room (using the same payload the initial bulk-insert uses),
+    regardless of whether it carries duct/wall/window data. A truly
+    ambiguous match (2+ existing rooms share the name) still skips,
+    with a clearer, reworded note distinguishing it from the "new
+    room" case. `npx tsc --noEmit` clean, full suite 71/71 passing (no
+    regressions - this client-only React component using the browser
+    Supabase client has no existing unit-test harness; not built this
+    session, a separate scope decision from the bug fix itself), lint
+    clean.
+  - **Live-validated against Kinsela's real data, not just reasoned
+    about**: simulated the exact fixed logic in a faithful script port
+    (the real component can't run outside a browser - it uses the
+    client-side Supabase client) against Kinsela's actual current
+    `rooms` table and its already-stored extraction. Confirmed it
+    would create exactly the 5 missing rooms, then actually applied it
+    live: room count went from 25 to 30, all 5 rooms created
+    successfully with real database ids.
+  - **Honest caveat surfaced, not hidden**: 2 of the 5 recovered rooms
+    look like likely near-duplicates of already-existing rooms under
+    slightly different names from a different extraction pass -
+    "Powder Bath" vs. the existing "Powder Room"; "Bath 4 (Bonus
+    Room)" vs. the existing "Bath 4 (Bonus)". The fix correctly stops
+    silent data loss (strictly worse, and what the user was upset
+    about) but can, as a side effect, create a visible near-duplicate
+    when naming drifts between extraction passes. Did not guess which
+    name in each pair is "correct" or merge/delete either one -
+    flagged as a new open question for a human to resolve by actually
+    checking the drawing, consistent with this whole session's
+    "don't guess, surface it" standard. Wet Bar, M. Hall, and Master
+    Closet (Second Level) are genuinely new, non-duplicate rooms.
+  - Scratch validation scripts (drawing download/text-extraction,
+    room-list diffing, the fix simulation/live-apply script) deleted
+    after use, not committed - `components/manual-j-workflow.tsx` is
+    the only real, committed code change.
+  - Memory (`vivian_street_purpose.md`, `report_generation_
+    requirements.md`) updated with explicit correction blocks for both
+    mistakes, plus the full fix detail, so neither is repeated in a
+    future session.

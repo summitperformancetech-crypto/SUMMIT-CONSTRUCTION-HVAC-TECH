@@ -10,18 +10,24 @@
 // deferred as a separate, larger effort. What's here is still 100% the
 // real source drawing page, never approximated - just not yet cropped.
 //
-// Technique: Chromium's built-in PDF viewer (already bundled with the
-// Puppeteer dependency this app uses for report-to-PDF rendering) renders
-// a PDF page natively when navigated to a file:// URL with a #page=N
-// fragment. Verified empirically that it renders at exactly 96 CSS px per
-// 72pt page-point at 100% zoom (the #zoom=page-fit open parameter is
+// Technique: Chromium's built-in PDF viewer (bundled with headless
+// Chromium regardless of which launcher provides it - see lib/browser.ts)
+// renders a PDF page natively when navigated to a file:// URL with a
+// #page=N fragment. Verified empirically that it renders at exactly 96 CSS
+// px per 72pt page-point at 100% zoom (the #zoom=page-fit open parameter is
 // silently ignored) - sizing the viewport to that exact conversion, with
 // the toolbar/side-panel UI hidden via #toolbar=0&navpanes=0, produces a
 // clean single-page screenshot with no viewer chrome and no peek of an
 // adjacent page. A data: URL was tried first and failed (net::ERR_ABORTED
 // - Chromium's PDF viewer does not reliably handle data: URLs the way it
 // does file:// ones), which is why this writes to a temp file first.
-import puppeteer from "puppeteer";
+// NOT YET VERIFIED against @sparticuz/chromium's serverless binary
+// specifically (only against the full local `puppeteer` package's bundled
+// Chromium) - the PDF-viewer plugin is standard headless Chromium
+// behavior, not something @sparticuz/chromium's build strips, but this is
+// flagged for confirmation on the first real Vercel deploy alongside
+// lib/browser.ts's own unverified-serverless note.
+import { launchBrowser } from "./browser";
 import { PDFDocument } from "pdf-lib";
 import { writeFile, rm, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
@@ -49,7 +55,7 @@ export async function renderPdfPageToPngDataUri(pdfBytes: Buffer, pageNumber: nu
 
   let browser;
   try {
-    browser = await puppeteer.launch();
+    browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setViewport({ width: viewportWidth, height: viewportHeight });
     await page.goto(`file://${tmpPdfPath}#toolbar=0&navpanes=0&page=${pageNumber}`, {

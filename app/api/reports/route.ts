@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import puppeteer from "puppeteer";
+import { launchBrowser } from "@/lib/browser";
 import { createClient } from "@/lib/supabase/server";
 import { getReportData, type ReportData } from "@/lib/reportData";
 import { renderInternalReportHtml, renderClientScopeOfWorkHtml } from "@/lib/reportTemplates";
@@ -87,14 +87,6 @@ async function getOrCreateSnapshot(
   };
 }
 
-// Puppeteer here is the full package (bundles its own Chromium, works
-// out of the box for local dev per CLAUDE.md's planned
-// "PDF/report generation: Puppeteer via serverless function" architecture).
-// Deploying this route to Vercel's serverless environment will need
-// puppeteer-core + @sparticuz/chromium(-min) instead - the full Chromium
-// binary this package downloads is too large for a standard Vercel
-// function bundle. Flagged here rather than solved now since this app
-// isn't deployed yet (see CLAUDE.md "Current Status: Early setup phase").
 export async function POST(request: Request) {
   let body: { projectId?: string; type?: "internal" | "client" | "summit_standard" };
   try {
@@ -246,7 +238,7 @@ export async function POST(request: Request) {
 
   let browser;
   try {
-    browser = await puppeteer.launch();
+    browser = await launchBrowser();
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "load" });
     const pdfBuffer = await page.pdf({

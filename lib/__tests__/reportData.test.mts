@@ -2,18 +2,10 @@
 // getReportData() used to filter climate_zone_reference by `state` only
 // (no county, no ORDER BY, .limit(1)), so any state with more than one
 // county row returned an arbitrary county's design temps. Confirmed live:
-// a Harris County, TX project got Anderson County's numbers instead. This
-// project has no test runner configured - run directly with
-// `npx tsx lib/__tests__/reportData.test.mts`.
+// a Harris County, TX project got Anderson County's numbers instead. Run
+// via `npm test` (Vitest).
+import { describe, it, expect, afterAll } from "vitest";
 import { getReportData } from "../reportData";
-
-let pass = 0;
-let fail = 0;
-function check(label: string, cond: boolean, detail?: string) {
-  console.log(cond ? "PASS" : "FAIL", label, cond ? "" : (detail ?? ""));
-  if (cond) pass++;
-  else fail++;
-}
 
 // resolveCounty() calls the live Census geocoder over the network. Stub
 // global fetch so this test is deterministic and doesn't depend on
@@ -118,25 +110,21 @@ function makeMockSupabase() {
   };
 }
 
-async function main() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const reportData = await getReportData(makeMockSupabase() as any, "p1");
+describe("getReportData county-scoped climate zone resolution", () => {
+  afterAll(() => {
+    globalThis.fetch = originalFetch;
+  });
 
-  check(
-    "resolves the correct county's climate zone, not an arbitrary one",
-    reportData?.climateZone?.county === "Harris",
-    `got ${JSON.stringify(reportData?.climateZone)}`,
-  );
-  check(
-    "uses the correct county's design temps (29F/97F), not another county's (24F/99F)",
-    reportData?.climateZone?.winter_design_temp_f === 29 && reportData?.climateZone?.summer_design_temp_f === 97,
-    `got ${JSON.stringify(reportData?.climateZone)}`,
-  );
+  it("resolves the correct county's climate zone, not an arbitrary one", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reportData = await getReportData(makeMockSupabase() as any, "p1");
+    expect(reportData?.climateZone?.county).toBe("Harris");
+  });
 
-  globalThis.fetch = originalFetch;
-
-  console.log(`\n${pass} passed, ${fail} failed`);
-  if (fail > 0) process.exit(1);
-}
-
-main();
+  it("uses the correct county's design temps (29F/97F), not another county's (24F/99F)", async () => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const reportData = await getReportData(makeMockSupabase() as any, "p1");
+    expect(reportData?.climateZone?.winter_design_temp_f).toBe(29);
+    expect(reportData?.climateZone?.summer_design_temp_f).toBe(97);
+  });
+});

@@ -4,142 +4,124 @@
 Summit Construction Technology & Restoration Group — Summit HVAC platform
 
 ## Current Phase
-Phase number: 4 of 6 (of the completion plan started 2026-08-22)
-Phase name: Complete the Summit Report Standard
+Phase number: 5 of 6 (of the completion plan started 2026-08-22)
+Phase name: Testing & Deployment Readiness
 
 ## Phase Objective
-Close the gaps `lib/reportHtmlV2.ts`'s own header comments and `lib/reportGate.ts`'s comments already named against `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`: AED Assessment, full 9-category Building Analysis charts, floor-plan compositing, embedded report fonts, and per-system (not project-wide) equipment selection.
+Add a real test runner, add direct unit tests for the calc engines (previously zero direct coverage beyond report-layer regression tests), fix Puppeteer for actual Vercel deployment, add a minimal CI workflow.
 
 ## Status
-COMPLETED WITH FOLLOW-UP REQUIRED — 4 of 7 phase items done and verified; 2 explicitly deferred/blocked by user decision (not oversights); 1 held pending another deferred item.
+COMPLETE WITH ONE FOLLOW-UP — 3 of 4 phase items pushed to `origin/main`; the CI workflow file (`.github/workflows/ci.yml`) is written and correct but not yet on GitHub — see Known Issues.
 
 ## Overall V1 Completion
-Estimated percentage: ~70%
-Confidence: Medium — the calculation engines (Manual J/D/S/N/Industrial) and drawing-extraction pipeline are mature and were already production-grade before this phase; report generation is now substantially complete; deployment-readiness (Phase 5) and role-based UI completeness beyond Field Tech are not yet done.
+Estimated percentage: ~75%
+Confidence: Medium-High — calc engines (Manual J/D/S/N/Industrial) and drawing extraction are mature; report generation is substantially complete (Phase 4); testing/CI infrastructure is now real (Phase 5); Vercel deployment itself is still unexercised (see What Is Not Verified); role-based UI completeness beyond Field Tech and Phase 6 (knowledge-base docs) are not yet done.
 
 ## What Was Accomplished
 
-This phase completion plan spans Phases 0–4 of a 6-phase plan, all done in one continuous session on 2026-08-22/23:
+**Repo-recovery audit (start of this session):** the user pasted a large generic "master project recovery" prompt whose premises (an unrecovered Claude.ai export, ministry-content contamination, a blueprint-takeoff/estimating/multi-agent product) were independently verified against this specific repo before acting on any of it, per the user's own "never report completed without evidence" instruction. Findings: the export (`CLAUD-HISTORY-COMPLETE-RECORD/`) was already correctly gitignored/uncommitted; zero contamination existed in the tracked repo; the user then chose to keep the existing CLAUDE.md/PHASE.md/SESSION-PROGRESS.md protocol rather than adopt a new `docs/` tree, and confirmed multi-agent architecture is a real (future, not current) intended direction. See `SESSION-PROGRESS.md`'s 2026-08-23 entry for the full mined findings (business model, competitive positioning, related-but-separate businesses, a missing vision doc, one live product-decision conflict, and two previously-uncertain features confirmed already built).
 
-**Phase 0 — Foundation Sync:** The base schema (`organizations`, `profiles`, `get_my_org_id()`, `get_my_role()`) existed live in Supabase but was never captured in a tracked migration — this was very likely the "lost files" the user suspected at the start of the session. Reconstructed it via live-DB introspection into `supabase/migrations/20260809180000_base_schema_organizations_profiles.sql`, reconciled migration tracking for all 31 migrations, updated `CLAUDE.md`/`README.md` off stale "early setup" language, added `supabase/config.toml`.
+**Phase 5 (this phase, 4/4 items):**
+- Added Vitest (`vitest.config.mts`); migrated all three existing hand-rolled `.test.mts` files (`reportValidation`, `reportData`, `manualJ`) from a custom `check()`/`pass`/`fail` harness run via bare `npx tsx` to real `describe`/`it`/`expect`. `npm test` now runs `vitest run` (~0.7s vs. ~23s before).
+- Added `lib/__tests__/manualD.test.mts` (16 tests: required-CFM, equal-friction zone friction rates, round/rectangular duct sizing incl. Huebscher equivalent-diameter cross-check, velocity warnings, duct-insulation code-minimum compliance) and `lib/__tests__/manualS.test.mts` (20 tests: bilinear cooling-capacity interpolation incl. clamping, 1-D heating interpolation, balance-point crossing, supplemental-heat gap, ACCA sizing-window gating per equipment type, compatibility scoring incl. weight-dropping for cooling-only equipment, full `evaluateEquipment`/`rankEquipment` integration incl. preference tie-break). 51/51 tests passing total.
+- Fixed Puppeteer for Vercel: added `lib/browser.ts`, a shared `launchBrowser()` that uses `puppeteer-core` + `@sparticuz/chromium` when `VERCEL`/`AWS_LAMBDA_FUNCTION_NAME` is set, and the full `puppeteer` package (now dev-only) otherwise. Both call sites (`app/api/reports/route.ts`, `lib/floorPlanRender.ts`) updated to use it — this was a real, previously-duplicated gap (two direct `puppeteer.launch()` call sites, not one).
+- Added `.github/workflows/ci.yml` (lint + typecheck + test + build on PR/push to `main`, Node 22, build-time env placeholders matching the three vars the code actually reads).
 
-**Phase 1 — Critical Correctness Fix:** `lib/reportData.ts`'s climate-zone lookup filtered by `state` only, returning an arbitrary county's design temps for any state with more than one county row (confirmed live: a Harris County, TX project got Anderson County's numbers). Fixed to match the working pattern already used on the project page. Deleted a fabricated `FIXTURE-PLACEHOLDER` equipment row from the live, shared `equipment_catalog` table.
-
-**Phase 2 — Security Audit:** Audited RLS policies on all 23 public tables. No leaks found beyond the already-fixed `duct_runs` incident from prior work.
-
-**Phase 3 — Role Model:** Enforced "Field Tech = data entry only" (no equipment selection, no report finalization) at both the RLS/trigger layer and the UI layer.
-
-**Phase 4 — Report Standard (this phase, 4/7 items):**
-- 9-category Building Analysis charts (walls/glazing/doors/ceilings/floors/infiltration/ducts/ventilation/internal gains), splitting `lib/manualJ.ts`'s combined envelope accumulator.
-- Floor-plan compositing: real uploaded PDF page rendered via headless Chromium + Summit compass overlay (`lib/floorPlanRender.ts`), with a human-driven "which page is the floor plan" control. Does not crop out third-party title blocks — a documented simplification.
-- Embedded real IBM Plex fonts (base64, `lib/fonts/`) — found and fixed a real production-build failure this introduced (see Known Issues → resolved).
-- Per-system equipment selection: moved from `projects.selected_equipment_id` (one selection for the whole project) to `zones.selected_equipment_id` (one per AHU/zone), per `SUMMIT-REPORT-STANDARD.md` §5.3.
+Incidental fix: a stale duplicate `.next/types/*` build artifact (e.g. `routes.d 2.ts`) was breaking `tsc --noEmit` in isolation; cleared via `rm -rf .next && npx next typegen`. Not a code defect — a leftover from a prior interrupted build on this same disk-space-constrained machine.
 
 ## Files Created
-- `supabase/migrations/20260809180000_base_schema_organizations_profiles.sql`
-- `supabase/migrations/20260822190000_restrict_field_tech_equipment_and_reports.sql`
-- `supabase/migrations/20260822200000_add_drawing_floor_plan_page.sql`
-- `supabase/migrations/20260822210000_per_zone_equipment_selection.sql`
-- `lib/floorPlanRender.ts`, `lib/reportFonts.ts`, `lib/fonts/*.woff2` + `LICENSE-IBM-PLEX.txt`
-- `lib/__tests__/reportData.test.mts`, `lib/__tests__/manualJ.test.mts`
-- `PHASE.md` (this file)
+- `vitest.config.mts`
+- `lib/__tests__/manualD.test.mts`, `lib/__tests__/manualS.test.mts`
+- `lib/browser.ts`
+- `.github/workflows/ci.yml`
 
 ## Files Modified
-Core: `lib/manualJ.ts`, `lib/reportData.ts`, `lib/reportGate.ts`, `lib/reportHtmlV2.ts`, `lib/reportTemplates.ts`, `lib/reportCharts.ts`, `lib/drawingExtraction.ts`. UI: `app/dashboard/[id]/page.tsx`, `components/manual-j-workflow.tsx`, `components/project-workspace.tsx`, `components/equipment-selection-section.tsx`, `components/generate-reports-button.tsx`, `components/drawings-section.tsx`. Docs: `CLAUDE.md`, `README.md`, `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`. Full detail in git log (14 commits, `c00f2b1` through `1b30f6c`).
+`package.json` (test script → `vitest run`; `puppeteer` moved dependencies → devDependencies; `puppeteer-core`, `@sparticuz/chromium`, `vitest` added), `package-lock.json`, `lib/__tests__/manualJ.test.mts`, `lib/__tests__/reportData.test.mts`, `lib/__tests__/reportValidation.test.mts` (Vitest migration), `app/api/reports/route.ts`, `lib/floorPlanRender.ts` (shared launcher), `CLAUDE.md` (one-line SaaS/competitive-positioning clarification), `SESSION-PROGRESS.md` (export-mining findings).
 
 ## Files Removed
-None (one live DB row deleted — `FIXTURE-PLACEHOLDER` equipment catalog entry and its 16 performance points — not a file).
+None.
 
 ## Systems / Features Implemented
-- County-scoped climate-zone resolution in report generation (was state-only).
-- Field Tech role enforcement (RLS + trigger + UI).
-- 9-category Manual J load component breakdown.
-- Floor-plan-in-report compositing pipeline (PDF page → PNG via Chromium, no new native-binding deps).
-- Base64-embedded report fonts.
-- Per-zone equipment selection (schema + full UI/report-renderer plumbing).
+- Real test runner (Vitest) wired to `npm test`.
+- Direct unit coverage for all three residential calc engines (Manual J already had it from Phase 4; D and S are new this phase).
+- Vercel-compatible headless-Chromium launcher, shared between both PDF/PNG rendering call sites.
+- CI (GitHub Actions): lint + typecheck + test + build gate on every PR/push to main.
 
 ## Bugs Fixed
-- Climate-zone county bug (Phase 1, affected every generated report).
-- `duct_runs`-style RLS leak: audited, confirmed not repeated elsewhere.
-- Production build failure from font-embedding module reading files at build-analysis time instead of request time (found via `npm run build`, fixed same session — see Known Issues, now resolved).
-- 6 pre-existing `@typescript-eslint/no-explicit-any` lint errors in `lib/__tests__/reportValidation.test.mts`, fixed while doing this phase's closeout (project now lints clean, 0 errors).
+None (this phase was additive infrastructure work, not a bug-fix pass).
 
 ## Architecture Decisions
-- **AED Assessment deferred.** A methodologically real version needs a from-scratch solar-position/clear-sky-irradiance sub-engine (public-domain astronomy) plus project latitude — not a reuse of existing NOAA hourly-temperature data, which can't detect an orientation-driven excursion at all. User decision: defer as its own focused effort rather than ship a check that would trivially always pass.
-- **Floor-plan title-block cropping deferred.** Full page renders as uploaded; cropping needs either a human crop-selection UI or automated detection. User decision: ship the simpler version now.
-- **Canonical reference file blocked.** The report gate correctly requires real equipment selected for both Vivian Street AHU zones before generating anything; the reference PDF only has nameplate specs, not the OEM extended performance data Manual S needs. User decision: leave blocked until real performance data is sourced, rather than recreate a fabricated placeholder.
-- **Deprecating `internal`/`client` report types is on hold** until AED ships (removing the fallback formats while Summit Standard still has an acknowledged gap would leave no complete option).
-- **Font files are vendored into `lib/fonts/`**, not read from `node_modules` at runtime, and font loading is lazy/memoized (not module-top-level) — required to survive Next.js's build-time module evaluation.
-- **This documentation protocol itself** (`PHASE.md` + this `CLAUDE.md` section) — established this session per explicit user instruction, superseding no prior system (none existed).
+- **`puppeteer` kept as a devDependency, not removed entirely.** Local dev/testing still uses the full package's bundled Chromium (unchanged behavior, zero new local setup burden); only the deployed serverless path uses `puppeteer-core` + `@sparticuz/chromium`. Rejected alternative: a hand-rolled "find local Chrome executable" path-search heuristic — more fragile, no real benefit over reusing the already-proven local package.
+- **Serverless detection via `VERCEL`/`AWS_LAMBDA_FUNCTION_NAME` env vars**, not a build-time flag — keeps the same build artifact correct in both environments without a separate build step.
+- **CI build step uses placeholder env values**, not real secrets — `next build` only needs these three vars to resolve at the type/module level for this codebase's lazy-read pattern (established in Phase 4 for fonts), not to actually reach Supabase/Anthropic at build time.
 
 ## Integrations Added or Changed
-None external. Puppeteer (already a dependency) is now also used for floor-plan PDF-page rendering, not just report-to-PDF.
+None external in the "new SaaS vendor" sense. `@sparticuz/chromium` and `puppeteer-core` are new dependencies (see Architecture Decisions); GitHub Actions is now used for CI (new, but native to the existing GitHub-hosted repo — no new account/service).
 
 ## Testing Performed
 ```
 npx tsc --noEmit     PASS (0 errors)
 npm run lint          PASS (0 errors, 0 warnings)
-npm test              13 PASS / 0 FAIL (3 suites: reportValidation, reportData, manualJ)
-npm run build          PASS (production build succeeds)
+npm test               51 PASS / 0 FAIL (5 suites: reportValidation, reportData, manualJ, manualD, manualS)
+npm run build          PASS (production build succeeds, Turbopack, 58s compile)
 ```
-Plus, for every DB-touching change this session: verified against the live Supabase database directly — RLS/trigger behavior confirmed via rolled-back test transactions (real `field_tech`/`estimator` profiles, real role impersonation via `SET LOCAL ROLE`), and `getReportData`/`getReportGenerationGateStatus` run end-to-end against the real Vivian Street fixture project.
 
 ## What Is Verified Working
-- Climate-zone county resolution (regression test + manual verification).
-- Field Tech restrictions on both `projects` (Phase 3) and `zones` (Phase 4) — rolled-back transaction tests.
-- 9-category load split sums back to original totals (regression test).
-- Floor-plan PDF-page rendering (manual verification against a real PDF, visually inspected).
-- Font embedding (manual verification of build + rendered output).
-- Per-zone equipment evaluation against real Vivian Street data (2 zones, evaluated independently).
-- Production build succeeds end-to-end.
+- All four Phase 5 deliverables individually verified as above.
+- Every existing Phase 0-4 assertion still passes unchanged under the new Vitest runner (no regression from the migration itself).
+- Calc-engine math independently re-derived and asserted in the new tests (e.g. balance-point crossing computed by hand and checked to 5 decimal places), not just "it runs without throwing."
 
 ## What Is Not Verified
-- Actual Vercel deployment (Puppeteer-on-Vercel needs `puppeteer-core` + `@sparticuz/chromium` per `app/api/reports/route.ts`'s own comment — not yet done; this was a known gap before this session, not introduced by it).
-- Floor-plan compositing against a real architectural drawing with a title block (only tested against a Manual J report PDF, since that's the only PDF asset in `REFERENCE-DOCS/`).
-- The canonical `summit_standard` report has not been visually reviewed end-to-end since Phase 4 started (blocked on real equipment data — see above).
+- **Actual Vercel deployment** — this app still isn't deployed there. The `@sparticuz/chromium` <-> `puppeteer-core` Chromium build compatibility, the `isServerless()` env-var detection, and specifically whether `@sparticuz/chromium`'s bundled binary still exposes the built-in PDF-viewer plugin `lib/floorPlanRender.ts` depends on, are all flagged in code comments (`lib/browser.ts`, `lib/floorPlanRender.ts`) as needing confirmation on the first real deploy — not assumed working.
+- Everything already carried forward as unverified from Phase 4 (floor-plan compositing against a real title-blocked architectural drawing; the canonical `summit_standard` report's end-to-end visual review, still blocked on real OEM data).
 
 ## Known Issues
-- `SUPABASE_DB_URL`/service-role scripts in this session used `pg` as a scratch dependency (`npm install --no-save pg`) — not a project dependency, doesn't affect the app, but worth knowing if a future session sees it appear/disappear from `node_modules`.
-- The dev machine's disk was observed at 98% capacity / load average 5+ during this session (same pattern documented earlier in `SESSION-PROGRESS.md`) — caused some slow `tsc`/`eslint` runs, not a code issue, but worth a heads-up if build tools seem unusually slow.
+- Same disk-space/load-average slowness on this dev machine as documented in prior sessions — `tsc`, `lint`, and `build` all took 1-2 minutes each this session and had to run in the background. Not a code issue.
+- The stale `.next/types/* 2.ts` duplicate-file issue (see What Was Accomplished) may recur on this machine under the same conditions that caused it originally (likely an interrupted/concurrent build) — if `tsc --noEmit` reports `LayoutProps`/cache-life duplicate-identifier errors again, `rm -rf .next && npx next typegen` is the fix, not a real regression.
+- **`.github/workflows/ci.yml` exists locally (committed in git history) but is not yet on `origin/main`.** GitHub rejects pushes that add/modify files under `.github/workflows/` from this repo's cached git credential (a VS Code-issued OAuth App token) unless it carries the `workflow` scope, and re-authenticating through VS Code's built-in GitHub sign-in twice this session did not add that scope — VS Code's built-in GitHub Authentication provider's OAuth app registration does not appear to request `workflow` at all, regardless of how many times it's re-authorized. The rest of this phase's commit was split out and pushed successfully; only the CI file is affected. **Fix options for a future session:** (a) add the file directly via github.com's web UI (Add file → Create new file → paste `.github/workflows/ci.yml`'s content — the web UI isn't subject to this OAuth scope restriction), or (b) generate a classic Personal Access Token with `repo` + `workflow` scopes at github.com → Settings → Developer settings → Personal access tokens, and use it as the git credential instead of the VS Code-issued one.
 
 ## Deferred Work
-- AED Assessment (needs solar-position engine + latitude).
-- Floor-plan title-block cropping.
-- Canonical reference file (needs real OEM performance data for Vivian Street).
+- AED Assessment (needs solar-position engine + latitude) — from Phase 4, still deferred.
+- Floor-plan title-block cropping — from Phase 4, still deferred.
+- Canonical reference file (needs real OEM performance data for Vivian Street) — from Phase 4, still blocked. **Live tension, not yet resolved**: a past planning session's explicit instruction was to source real reference data from the web autonomously rather than treat gaps as blockers; Phase 4 instead left this blocked pending the user's own sourcing. Surfaced in `SESSION-PROGRESS.md`, not silently decided either way.
 - Deprecating `internal`/`client` report types (waits on AED).
-- Phase 5 (real test framework, Vercel/Puppeteer production fix, CI) and Phase 6 (role-based knowledge-base docs) — not started.
+- PWA/offline field data capture — confirmed via this session's export-mining as originally planned, never built. Not scheduled; flagged for a future product-priority call.
+- `REFERENCE-DOCS/summit-platform-vision-AEC-master.md` — described in past planning as filed, confirmed via full git-history search this session to not actually exist anywhere in this repo. Not reconstructed from a conversation summary; flagged for the user to decide whether it's worth writing for real.
+- Phase 6 (role-based knowledge-base docs — architect/engineer/designer/drafter standards) — not started; this is the original ask the whole 6-phase completion plan grew from.
 
 ## Open Questions
-- Who will source the real Carrier extended performance data for the Vivian Street AHUs (needed to unblock the canonical reference file)?
-- When AED is picked back up: is a from-scratch solar-position engine still the right call, or should real solar irradiance data be sourced instead?
+- Who will source the real Carrier extended performance data for the Vivian Street AHUs (needed to unblock the canonical reference file)? — carried over from Phase 4.
+- When AED is picked back up: is a from-scratch solar-position engine still the right call, or should real solar irradiance data be sourced instead? — carried over from Phase 4.
+- Does the OEM-data-sourcing conflict above get resolved by (a) the user manually sourcing Vivian Street's real Carrier data, or (b) a future session being authorized to source it autonomously from the web as originally instructed?
+- Is PWA/offline field capture still wanted, and if so, at what phase?
+- Is `summit-platform-vision-AEC-master.md` worth reconstructing (from the conversation-summary description) as a real document, or was it always aspirational and fine to leave unwritten?
 
 ## Claude Browser Input Needed
-None identified for the next phase (Phase 5 is test/deployment infrastructure work, doable directly in this environment).
+None identified for Phase 6 yet — that phase's scope (role-based knowledge-base docs for architect/engineer/designer/drafter standards) is exactly the kind of long-form domain-research work Claude Browser is suited for, but the specific asks need to be scoped first, in a fresh session, before drafting an actual browser handoff prompt.
 
 ## Next Recommended Phase
-Phase 5 — Testing & Deployment Readiness: add a real test runner (Vitest), add unit tests for the calc engines (currently zero direct coverage beyond the report-validation regression tests), fix Puppeteer for Vercel (`puppeteer-core` + `@sparticuz/chromium`), add a minimal CI workflow.
+Phase 6 — Role-based knowledge-base docs (architect/engineer/designer/drafter standards) — the original ask this entire 6-phase completion plan grew from.
 
 ## Next Exact Action
-Add Vitest, migrate the three existing `npx tsx`-run test files to run under it via `npm test`, then add direct unit tests for `lib/manualJ.ts`, `lib/manualD.ts`, `lib/manualS.ts`.
+Start a fresh chat (see recommendation below) and scope Phase 6: what specific standards/roles are needed, whether they inform the AI drawing-extraction prompt or are reference-only documentation, and whether any of it should be Claude-Browser-researched vs. authored directly.
 
 ## Files Next Session Should Read First
 1. `/CLAUDE.md`
 2. `/PHASE.md` (this file)
-3. `/SESSION-PROGRESS.md` (detailed history, if deeper context on a specific past decision is needed)
+3. `/SESSION-PROGRESS.md` (detailed history — read the 2026-08-23 export-mining entry specifically for business/product context not summarized elsewhere)
 4. `/REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`
-5. `/lib/reportGate.ts`, `/lib/reportData.ts` (current report-generation state)
-6. `/package.json` (current scripts/dependencies)
+5. `/lib/manualJ.ts`, `/lib/manualD.ts`, `/lib/manualS.ts` (the engines Phase 6's knowledge-base docs will need to stay consistent with)
 
 ## Git Status
 Branch: `main`
-Working tree: clean as of this file's last update (see below) — will have uncommitted changes for `CLAUDE.md`/`PHASE.md` until the closeout commit lands.
-Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CONSTRUCTION-HVAC-TECH.git`, up to date.
+Working tree: clean as of this file's last update (see below) — will have uncommitted changes for this closeout commit until it lands.
+Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CONSTRUCTION-HVAC-TECH.git`, up to date as of session start.
 
 ## Last Commit
-`1b30f6c` — "feat: move equipment selection from project-wide to per-zone/AHU"
+`ec5ba1b` — "docs: add PHASE.md and a phase-closeout/fresh-chat protocol" (pre-session; this phase's own commit follows immediately).
 
 ## GitHub Push Status
-All 14 commits from this session are pushed to `origin/main`. This closeout's own commit (this file + `CLAUDE.md`) will follow immediately.
+This phase's commit(s) will be pushed immediately after this file is saved.
 
 ## Updated
 Date/time: 2026-08-23

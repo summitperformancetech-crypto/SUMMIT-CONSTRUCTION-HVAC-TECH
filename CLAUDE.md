@@ -8,6 +8,8 @@ Summit is a branded multi-user cloud platform for Summit Construction Technology
 
 A web application that lets field technicians, estimators, and admins collect HVAC project data (residential, commercial, industrial) and generate accurate load calculations following ACCA Manual J, Manual D, and Manual S, using auto-detected climate zone and NOAA/ASHRAE design temperatures based on project address.
 
+Built for eventual multi-tenant SaaS sale to other HVAC contracting organizations nationwide, not only Summit's own internal use — the org-scoped RLS model already reflects this. Core differentiator vs. competitors (Wrightsoft, AutoHVAC, Cool Calc, Elite RHVAC): the UNRESOLVED field-review workflow and audit trail, not raw calculation speed.
+
 ## Roles
 
 Three-tier role hierarchy:

@@ -4,17 +4,9 @@
 // must sum back to the same totals computeManualJ already produced before
 // this change - a silent mismatch here would mean the Building Analysis
 // donut chart (lib/reportCharts.ts) doesn't actually foot to the load
-// short form on the same report. Run directly with
-// `npx tsx lib/__tests__/manualJ.test.mts`.
+// short form on the same report. Run via `npm test` (Vitest).
+import { describe, it, expect } from "vitest";
 import { computeManualJ, type ManualJRoom, type ManualJEnvelope } from "../manualJ";
-
-let pass = 0;
-let fail = 0;
-function check(label: string, cond: boolean, detail?: string) {
-  console.log(cond ? "PASS" : "FAIL", label, cond ? "" : (detail ?? ""));
-  if (cond) pass++;
-  else fail++;
-}
 
 function approxEqual(a: number, b: number, tolerance = 0.5): boolean {
   return Math.abs(a - b) <= tolerance;
@@ -75,75 +67,64 @@ const result = computeManualJ([room], envelope, winterOutdoorF, summerOutdoorF, 
 const r = result.rooms[0];
 const wh = result.wholeHouse;
 
-// --- Room-level: the nine components must foot to the same
-// heatingBtuh/coolingSensibleBtuh/coolingLatentBtuh computeRoom already
-// returns. Ducts scale off the pre-split envelope+infiltration subtotal,
-// so it's included as its own term here rather than re-derived.
-const heatingSum =
-  r.wallsHeatingBtuh +
-  r.glazingHeatingBtuh +
-  r.doorHeatingBtuh +
-  r.ceilingsHeatingBtuh +
-  r.floorsHeatingBtuh +
-  r.infiltrationHeatingBtuh +
-  r.ductHeatingBtuh;
-check(
-  "room: walls+glazing+doors+ceilings+floors+infiltration+ducts = heatingBtuh",
-  approxEqual(heatingSum, r.heatingBtuh),
-  `sum=${heatingSum} vs heatingBtuh=${r.heatingBtuh}`,
-);
+describe("computeManualJ nine-category component split", () => {
+  // Room-level: the nine components must foot to the same
+  // heatingBtuh/coolingSensibleBtuh/coolingLatentBtuh computeRoom already
+  // returns. Ducts scale off the pre-split envelope+infiltration subtotal,
+  // so it's included as its own term here rather than re-derived.
+  it("room: walls+glazing+doors+ceilings+floors+infiltration+ducts = heatingBtuh", () => {
+    const heatingSum =
+      r.wallsHeatingBtuh +
+      r.glazingHeatingBtuh +
+      r.doorHeatingBtuh +
+      r.ceilingsHeatingBtuh +
+      r.floorsHeatingBtuh +
+      r.infiltrationHeatingBtuh +
+      r.ductHeatingBtuh;
+    expect(approxEqual(heatingSum, r.heatingBtuh)).toBe(true);
+  });
 
-const coolingSensibleSum =
-  r.wallsCoolingBtuh +
-  r.glazingCoolingBtuh +
-  r.doorCoolingBtuh +
-  r.ceilingsCoolingBtuh +
-  r.floorsCoolingBtuh +
-  r.infiltrationCoolingSensibleBtuh +
-  r.internalGainsSensibleBtuh +
-  r.ductCoolingSensibleBtuh;
-check(
-  "room: components sum to coolingSensibleBtuh",
-  approxEqual(coolingSensibleSum, r.coolingSensibleBtuh),
-  `sum=${coolingSensibleSum} vs coolingSensibleBtuh=${r.coolingSensibleBtuh}`,
-);
+  it("room: components sum to coolingSensibleBtuh", () => {
+    const coolingSensibleSum =
+      r.wallsCoolingBtuh +
+      r.glazingCoolingBtuh +
+      r.doorCoolingBtuh +
+      r.ceilingsCoolingBtuh +
+      r.floorsCoolingBtuh +
+      r.infiltrationCoolingSensibleBtuh +
+      r.internalGainsSensibleBtuh +
+      r.ductCoolingSensibleBtuh;
+    expect(approxEqual(coolingSensibleSum, r.coolingSensibleBtuh)).toBe(true);
+  });
 
-const coolingLatentSum = r.infiltrationCoolingLatentBtuh + r.internalGainsLatentBtuh + r.ductCoolingLatentBtuh;
-check(
-  "room: infiltration+internalGains+ducts (latent) sum to coolingLatentBtuh",
-  approxEqual(coolingLatentSum, r.coolingLatentBtuh),
-  `sum=${coolingLatentSum} vs coolingLatentBtuh=${r.coolingLatentBtuh}`,
-);
+  it("room: infiltration+internalGains+ducts (latent) sum to coolingLatentBtuh", () => {
+    const coolingLatentSum = r.infiltrationCoolingLatentBtuh + r.internalGainsLatentBtuh + r.ductCoolingLatentBtuh;
+    expect(approxEqual(coolingLatentSum, r.coolingLatentBtuh)).toBe(true);
+  });
 
-// --- Glazing must actually include solar gain, not just conduction - a
-// south-facing window at this SHGC/area should swing cooling well above
-// what U-value conduction alone would produce (150 Btuh/sqft * 0.25 SHGC *
-// 40 sqft = 1500 Btuh solar alone, before any conduction term).
-check(
-  "room: glazingCoolingBtuh includes solar gain, not conduction alone",
-  r.glazingCoolingBtuh > 1000,
-  `glazingCoolingBtuh=${r.glazingCoolingBtuh}`,
-);
+  // Glazing must actually include solar gain, not just conduction - a
+  // south-facing window at this SHGC/area should swing cooling well above
+  // what U-value conduction alone would produce (150 Btuh/sqft * 0.25 SHGC *
+  // 40 sqft = 1500 Btuh solar alone, before any conduction term).
+  it("room: glazingCoolingBtuh includes solar gain, not conduction alone", () => {
+    expect(r.glazingCoolingBtuh).toBeGreaterThan(1000);
+  });
 
-// --- Whole-house: same sums, at the whole-house rollup level (confirms
-// sumRoomResults/addVentilation/the computeManualJ reduce all carry the
-// new fields through correctly, not just computeRoom itself). Ventilation
-// has no walls/glazing/doors/ceilings/floors/infiltration component of its
-// own, so it's excluded here exactly like the room-level check above.
-const wholeHeatingSum =
-  wh.wallsHeatingBtuh +
-  wh.glazingHeatingBtuh +
-  wh.doorHeatingBtuh +
-  wh.ceilingsHeatingBtuh +
-  wh.floorsHeatingBtuh +
-  wh.infiltrationHeatingBtuh +
-  wh.ductHeatingBtuh +
-  wh.ventilationHeatingBtuh;
-check(
-  "whole-house: components sum to heatingBtuh",
-  approxEqual(wholeHeatingSum, wh.heatingBtuh),
-  `sum=${wholeHeatingSum} vs heatingBtuh=${wh.heatingBtuh}`,
-);
-
-console.log(`\n${pass} passed, ${fail} failed`);
-if (fail > 0) process.exit(1);
+  // Whole-house: same sums, at the whole-house rollup level (confirms
+  // sumRoomResults/addVentilation/the computeManualJ reduce all carry the
+  // new fields through correctly, not just computeRoom itself). Ventilation
+  // has no walls/glazing/doors/ceilings/floors/infiltration component of its
+  // own, so it's excluded here exactly like the room-level check above.
+  it("whole-house: components sum to heatingBtuh", () => {
+    const wholeHeatingSum =
+      wh.wallsHeatingBtuh +
+      wh.glazingHeatingBtuh +
+      wh.doorHeatingBtuh +
+      wh.ceilingsHeatingBtuh +
+      wh.floorsHeatingBtuh +
+      wh.infiltrationHeatingBtuh +
+      wh.ductHeatingBtuh +
+      wh.ventilationHeatingBtuh;
+    expect(approxEqual(wholeHeatingSum, wh.heatingBtuh)).toBe(true);
+  });
+});

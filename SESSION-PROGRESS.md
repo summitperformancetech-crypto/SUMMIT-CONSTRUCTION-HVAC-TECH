@@ -1649,3 +1649,66 @@ further this session.
   open architectural question of whether this new report type replaces
   the existing Internal/Client PDFs or coexists alongside them
   permanently.
+
+- 2026-08-23 — **Mined the user's exported Claude.ai history** (53
+  conversation summaries scanned via `jq`, not full transcripts loaded)
+  after the user asked for it as part of a broader repo-recovery audit.
+  The export lives at `CLAUD-HISTORY-COMPLETE-RECORD/` (gitignored,
+  never committed — confirmed clean). Findings that add real information
+  not already in this file or `CLAUDE.md`:
+  - **Business model**: Summit is being built for eventual **nationwide
+    SaaS sale to other HVAC contracting orgs**, not just Summit's own
+    internal use — CLAUDE.md's "Purpose" section read as internal-tool
+    framing and has been given one clarifying line. Draft 3-tier pricing
+    already exists from a past session (Starter $129/mo, Pro $299/mo,
+    Enterprise $799+/mo, capped free "Preview" tier, +2mo free annual) —
+    not implemented anywhere in code, just a prior planning artifact; not
+    acted on now, noted for whenever pricing/billing becomes real work.
+  - **Competitive positioning** (already informally understood, now
+    concretely documented): Wrightsoft Right-Suite Universal is the
+    ACCA-recognized market leader but desktop-only (forces a second site
+    visit for field techs). AutoHVAC is the closest philosophical
+    competitor but its AI blueprint extraction is a black box with no
+    audit trail and is not ACCA-certified — this is the direct
+    validation for why Summit's UNRESOLVED review/audit-trail workflow
+    is the core differentiator, not a cosmetic feature.
+  - **Related-but-separate businesses surfaced in the export, confirmed
+    NOT part of this codebase**: First Defense Insulation, LLC (a
+    crawlspace/attic inspection-report business where the user is
+    Director of Sales — several conversations produce branded .docx/PDF
+    inspection reports for that company, unrelated to Summit HVAC's
+    calculation engine); Crossway Mechanical (referenced as a demo/pilot
+    HVAC client, not confirmed as user-owned). Noting these so a future
+    session doesn't confuse First Defense's navy/red branding or
+    "Director of Sales" title with Summit's own black/silver/bronze-gold
+    identity if the export is ever revisited.
+  - **`REFERENCE-DOCS/summit-platform-vision-AEC-master.md` does not
+    exist in this repo** (checked full git history, not just working
+    tree — never committed here). The export describes it as a
+    long-term vision document covering structural/electrical/plumbing/
+    fire-safety/civil/accessibility analysis beyond HVAC, explicitly
+    filed as future scope and excluded from active extraction
+    instructions at the time ("current build scope remaining Manual
+    J/D/S only"). Genuinely missing, not deferred-and-tracked — flagged
+    to the user rather than reconstructed from a conversation summary.
+  - **Two items described in past planning that turned out to already be
+    built** (verified against current code before assuming otherwise):
+    org-level preferred/exclusive equipment lines
+    (`supabase/migrations/20260811030638_add_equipment_org_preferences.sql`
+    + `app/dashboard/settings/equipment/page.tsx`), and the
+    drawing-extraction "literacy practices" — dimensional reconciliation
+    hierarchy, source-authority hierarchy, uncertainty tiers — present in
+    `lib/drawingExtraction.ts` / `app/api/drawings/extract/route.ts`.
+  - **One item confirmed still missing** against original architecture
+    intent: offline-capable PWA field data capture with sync (no
+    service worker, no manifest.json, no offline handling anywhere in
+    the app) — flagged as an open question, not started.
+  - **One real conflict surfaced, not resolved unilaterally**: a past
+    session gave the explicit instruction "actively source all
+    reference data (ACCA duct tables, manufacturer extended performance
+    data, NREL climate bin data) from credible web sources rather than
+    treating any data gap as a blocker." Phase 4 of this build (see
+    `PHASE.md`) instead left the canonical `summit_standard` reference
+    file blocked, waiting on the user to manually source real Carrier
+    OEM performance data for Vivian Street. These two are in tension —
+    surfaced to the user, not silently picked.

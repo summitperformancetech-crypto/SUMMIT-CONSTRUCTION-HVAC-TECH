@@ -16,14 +16,6 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-// DEPLOYMENT RISK, flagged alongside the existing Puppeteer/Vercel gap in
-// app/api/reports/route.ts: Next.js's serverless output file tracing
-// needs to detect this fs.readFileSync(join(__dirname, ...)) pattern at
-// build time to bundle lib/fonts/*.woff2 into the deployed function.
-// Works in local dev (this file resolves relative to the actual source
-// tree); not yet verified against an actual Vercel deployment - if the
-// fonts silently fall back to system fonts in production, check the
-// build's file-tracing output for lib/fonts/ first.
 const FONT_DIR = join(__dirname, "fonts");
 
 function fontFaceDataUri(fileName: string): string {
@@ -31,13 +23,25 @@ function fontFaceDataUri(fileName: string): string {
   return `data:font/woff2;base64,${bytes.toString("base64")}`;
 }
 
-// Computed once per process (module-level, not per-request) - the font
-// files never change at runtime, so there's no reason to re-read and
-// re-encode them on every report generation.
-export const EMBEDDED_FONT_FACES = `
+// Lazy + memoized, NOT a module-level constant - confirmed via a real
+// `npm run build` that Next.js evaluates API route modules during its
+// build-time "collecting page data" pass in a context where __dirname
+// resolves to a virtualized path (seen literally as /ROOT/lib/fonts/...)
+// that the real font files don't exist at yet. Reading the files inside
+// a function instead means disk access only happens the first time an
+// actual request renders a report (real runtime, real __dirname), never
+// during that build-time pass - this fixed a real build failure, not a
+// hypothetical one.
+let cached: string | null = null;
+
+export function getEmbeddedFontFaces(): string {
+  if (cached) return cached;
+  cached = `
   @font-face { font-family: 'IBM Plex Sans'; font-weight: 400; font-style: normal; src: url('${fontFaceDataUri("ibm-plex-sans-400.woff2")}') format('woff2'); }
   @font-face { font-family: 'IBM Plex Sans'; font-weight: 600; font-style: normal; src: url('${fontFaceDataUri("ibm-plex-sans-600.woff2")}') format('woff2'); }
   @font-face { font-family: 'IBM Plex Sans'; font-weight: 700; font-style: normal; src: url('${fontFaceDataUri("ibm-plex-sans-700.woff2")}') format('woff2'); }
   @font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-style: normal; src: url('${fontFaceDataUri("ibm-plex-mono-400.woff2")}') format('woff2'); }
   @font-face { font-family: 'IBM Plex Mono'; font-weight: 600; font-style: normal; src: url('${fontFaceDataUri("ibm-plex-mono-600.woff2")}') format('woff2'); }
 `;
+  return cached;
+}

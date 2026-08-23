@@ -27,7 +27,7 @@ import { buildHeatingSegments, buildCoolingSegments, renderDonutSvg, type ChartS
 import { computeRequiredCfmForRooms } from "./manualD";
 import type { Compass8 } from "./constants/compass";
 import type { DrawingExtraction } from "./drawingExtraction";
-import { EMBEDDED_FONT_FACES } from "./reportFonts";
+import { getEmbeddedFontFaces } from "./reportFonts";
 
 export type OrgBranding = {
   name: string;
@@ -610,7 +610,7 @@ export function renderSummitReportHtml(
 <head>
 <meta charset="utf-8" />
 <title>${esc(data.project.name)} — Load Calculation Report</title>
-<style>${EMBEDDED_FONT_FACES}${STYLES}</style>
+<style>${getEmbeddedFontFaces()}${STYLES}</style>
 </head>
 <body>
 ${pages}

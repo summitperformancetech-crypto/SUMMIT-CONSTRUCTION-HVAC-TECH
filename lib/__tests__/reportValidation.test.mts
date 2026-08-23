@@ -11,7 +11,8 @@
 // hypothetical.
 import { validateReportTotals, computeRequiredTonnage } from "../reportValidation";
 import type { ReportData } from "../reportData";
-import type { RoomLoadResult, ZoneLoadResult, WholeHouseLoadResult } from "../manualJ";
+import type { RoomLoadResult, ZoneLoadResult, WholeHouseLoadResult, ManualJEnvelope } from "../manualJ";
+import type { RoomRow } from "../../components/manual-j-workflow";
 
 let pass = 0;
 let fail = 0;
@@ -141,9 +142,9 @@ function baseReportData(residential: NonNullable<ReportData["residential"]>): Re
   const wh = wholeHouse({ heatingBtuh: z1.heatingBtuh, coolingSensibleBtuh: z1.coolingSensibleBtuh, coolingLatentBtuh: z1.coolingLatentBtuh });
 
   const data = baseReportData({
-    envelope: {} as any,
+    envelope: {} as ManualJEnvelope,
     manualJ: { rooms: [r1, r2], zones: [z1], wholeHouse: wh },
-    ductSchedule: [], ductRuns: [], rooms: [{ id: "r1", zone_id: "z1" } as any, { id: "r2", zone_id: "z1" } as any],
+    ductSchedule: [], ductRuns: [], rooms: [{ id: "r1", zone_id: "z1" } as RoomRow, { id: "r2", zone_id: "z1" } as RoomRow],
     zones: [], zoneEquipment: [],
     ductInsulationCompliance: [],
   });
@@ -179,10 +180,10 @@ function baseReportData(residential: NonNullable<ReportData["residential"]>): Re
   });
 
   const data = baseReportData({
-    envelope: {} as any,
+    envelope: {} as ManualJEnvelope,
     manualJ: { rooms: [r1, r2], zones: [z1, z2], wholeHouse: wh },
     ductSchedule: [], ductRuns: [],
-    rooms: [{ id: "r1", zone_id: "ahu1" } as any, { id: "r2", zone_id: "ahu2" } as any],
+    rooms: [{ id: "r1", zone_id: "ahu1" } as RoomRow, { id: "r2", zone_id: "ahu2" } as RoomRow],
     zones: [], zoneEquipment: [],
     ductInsulationCompliance: [],
   });

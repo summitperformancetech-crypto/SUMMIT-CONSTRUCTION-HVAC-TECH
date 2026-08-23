@@ -10,13 +10,14 @@
 //   calc, not an hourly simulation). Rendered as an explicit, specific
 //   "not yet computed by this engine" state - never a fabricated
 //   pass/fail or invented percentage.
-// - Floor Plan page (Section 5.9): only renders when the project actually
-//   has an extracted drawing with a floor-plan page to crop - a project
-//   with no drawings (like the Vivian Street fixture, seeded directly
-//   from a Manual J assessment PDF, not from an uploaded/extracted floor
-//   plan) shows an explicit "no floor plan on file" state, never a
-//   fabricated or approximated drawing (Section 7 explicitly forbids
-//   regenerating floor plan geometry from room dimension data).
+// - Floor Plan page (Section 5.9): renders the actual uploaded drawing
+//   page (see lib/floorPlanRender.ts) with the Summit compass overlaid,
+//   once a human has marked which drawing/page is the floor plan (see
+//   drawings-section.tsx). Does NOT yet crop out a third-party title
+//   block, which Section 7 also calls for - a project with no drawing
+//   marked (like the Vivian Street fixture, seeded directly from a Manual
+//   J assessment PDF) shows an explicit "no floor plan on file" state,
+//   never a fabricated or approximated drawing.
 // - Fonts: IBM Plex Sans/Mono are declared by name with system-font
 //   fallbacks, not embedded as base64 - embedding real font files was out
 //   of scope for this pass. The report stays fully self-contained/
@@ -455,17 +456,28 @@ function renderOrientationPage(
 function renderFloorPlanPage(
   data: ReportData,
   org: OrgBranding,
-  hasDrawing: boolean,
+  buildingFrontFaces: Compass8 | null,
+  floorPlanImageDataUri: string | null,
 ): string {
-  const body = hasDrawing
-    ? `<div class="section-title">Floor Plan</div><p class="muted">Floor plan compositing (source drawing + Summit compass overlay) not yet wired into this render path.</p>`
+  const body = floorPlanImageDataUri
+    ? `<div class="section-title">Floor Plan</div>
+       <div style="position:relative;display:inline-block;">
+         <img src="${floorPlanImageDataUri}" alt="Floor plan" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};" />
+         <div style="position:absolute;top:12px;right:12px;background:rgba(255,255,255,0.85);border-radius:8px;padding:6px;">
+           ${renderCompassSvg({ size: 90, frontFaces: buildingFrontFaces })}
+         </div>
+       </div>
+       <p class="muted" style="margin-top:8px;">
+         Source drawing shown as uploaded, Summit compass overlaid per Section 7. Not yet cropped
+         to remove any third-party title block (a documented simplification - see
+         lib/floorPlanRender.ts).
+       </p>`
     : `<div class="section-title">Floor Plan</div>
        <div class="callout">
-         No extracted drawing is on file for this project. Section 7 explicitly forbids
-         regenerating floor plan geometry from room dimension data - a floor plan page is only
-         ever the actual source drawing, cropped and compass-overlaid, never approximated. This
-         project's data was entered directly from a Manual J assessment (no floor plan upload),
-         so no source drawing exists to show here.
+         No extracted drawing is on file for this project, or none has been marked as the report
+         floor plan yet (see the Drawings section's "Use as report floor plan" control). Section 7
+         explicitly forbids regenerating floor plan geometry from room dimension data - a floor
+         plan page is only ever the actual source drawing, never approximated.
        </div>`;
   return pageShell("Floor Plan", org, body, projectAddress(data));
 }
@@ -575,12 +587,12 @@ export function renderSummitReportHtml(
   org: OrgBranding,
   buildingFrontFaces: Compass8 | null,
   drawings: Array<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }> = [],
+  floorPlanImageDataUri: string | null = null,
 ): string {
   if (!data.residential) {
     throw new Error("renderSummitReportHtml: only residential projects are supported by this baseline (Section 9 - commercial/industrial sections are explicitly out of scope).");
   }
   const validation = validateReportTotals(data);
-  const hasDrawing = drawings.some((d) => d.extraction_status === "completed" && d.extracted_data != null);
 
   const pages = [
     renderCoverPage(data, org, buildingFrontFaces),
@@ -591,7 +603,7 @@ export function renderSummitReportHtml(
     renderAedPage(data, org),
     renderBuildingAnalysisPage(data, org),
     renderOrientationPage(data, org, buildingFrontFaces),
-    renderFloorPlanPage(data, org, hasDrawing),
+    renderFloorPlanPage(data, org, buildingFrontFaces, floorPlanImageDataUri),
     renderExtractionStatusPage(data, org, drawings),
     renderAuditTrailPage(data, org, validation),
   ].join("\n");

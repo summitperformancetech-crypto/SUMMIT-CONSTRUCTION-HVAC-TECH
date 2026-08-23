@@ -58,8 +58,61 @@ export function DrawingsSection({
 
   const resolutionMap = useMemo(() => latestResolutions(resolutions), [resolutions]);
 
+  const [floorPlanPageInputs, setFloorPlanPageInputs] = useState<Record<string, string>>({});
+  const [floorPlanError, setFloorPlanError] = useState<string | null>(null);
+
   function handleResolved(resolution: FieldResolution) {
     setResolutions((prev) => [...prev, resolution]);
+  }
+
+  // At most one drawing per project is the floor plan (SUMMIT-REPORT-
+  // STANDARD.md Section 5.9 - one Floor Plan page, not one per drawing) -
+  // clears any other drawing's flag before setting this one's, so the
+  // report-generation query (a single "which drawing has this set"
+  // lookup) never has to pick among more than one.
+  async function handleSetFloorPlan(drawingId: string) {
+    const pageNumber = Number(floorPlanPageInputs[drawingId]);
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      setFloorPlanError("Enter a valid page number (1 or higher).");
+      return;
+    }
+    setFloorPlanError(null);
+    const supabase = createClient();
+    const { error: clearErr } = await supabase
+      .from("drawings")
+      .update({ floor_plan_page_number: null })
+      .eq("project_id", projectId)
+      .neq("id", drawingId);
+    if (clearErr) {
+      setFloorPlanError(clearErr.message);
+      return;
+    }
+    const { error: setErr } = await supabase
+      .from("drawings")
+      .update({ floor_plan_page_number: pageNumber })
+      .eq("id", drawingId);
+    if (setErr) {
+      setFloorPlanError(setErr.message);
+      return;
+    }
+    setDrawings((prev) =>
+      prev.map((d) => ({ ...d, floor_plan_page_number: d.id === drawingId ? pageNumber : null })),
+    );
+  }
+
+  async function handleClearFloorPlan(drawingId: string) {
+    const supabase = createClient();
+    const { error } = await supabase
+      .from("drawings")
+      .update({ floor_plan_page_number: null })
+      .eq("id", drawingId);
+    if (error) {
+      setFloorPlanError(error.message);
+      return;
+    }
+    setDrawings((prev) =>
+      prev.map((d) => (d.id === drawingId ? { ...d, floor_plan_page_number: null } : d)),
+    );
   }
 
   const reviewingDrawing = drawings.find((d) => d.id === reviewingId) ?? null;
@@ -348,6 +401,11 @@ export function DrawingsSection({
           {uploadError}
         </p>
       )}
+      {floorPlanError && (
+        <p className="mt-3 text-sm text-red-400" role="alert">
+          {floorPlanError}
+        </p>
+      )}
 
       {drawings.length > 0 && (
         <ul className="mt-4 space-y-2">
@@ -360,6 +418,42 @@ export function DrawingsSection({
                 <p className="text-sm font-medium text-brand-silver-highlight">{drawing.file_name}</p>
                 {drawing.applied_to_field_data && (
                   <p className="text-xs text-brand-success">Applied to form</p>
+                )}
+                {drawing.extraction_status === "completed" && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    {drawing.floor_plan_page_number != null ? (
+                      <>
+                        <span className="rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-gold-hover">
+                          Floor plan: page {drawing.floor_plan_page_number}
+                        </span>
+                        <button
+                          onClick={() => handleClearFloorPlan(drawing.id)}
+                          className="text-[10px] text-brand-grey-text underline decoration-dotted hover:text-brand-gold-hover"
+                        >
+                          Clear
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <input
+                          type="number"
+                          min={1}
+                          placeholder="Page #"
+                          value={floorPlanPageInputs[drawing.id] ?? ""}
+                          onChange={(e) =>
+                            setFloorPlanPageInputs((prev) => ({ ...prev, [drawing.id]: e.target.value }))
+                          }
+                          className="w-16 rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1 text-xs text-brand-silver-highlight outline-none focus:border-brand-gold"
+                        />
+                        <button
+                          onClick={() => handleSetFloorPlan(drawing.id)}
+                          className="text-[10px] text-brand-silver underline decoration-dotted hover:text-brand-gold-hover"
+                        >
+                          Use as report floor plan
+                        </button>
+                      </>
+                    )}
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-3">

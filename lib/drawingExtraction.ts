@@ -496,10 +496,16 @@ export type DrawingRow = {
   unresolved_items: string[] | null;
   applied_to_field_data: boolean;
   extraction_error: DrawingExtractionError | null;
+  // SUMMIT-REPORT-STANDARD.md Section 5.9 - which page of this drawing (if
+  // any) is the floor plan sheet to composite into the report. Null means
+  // "not the floor plan drawing" - at most one drawing per project should
+  // have this set (enforced in the app layer when setting it, not a DB
+  // constraint).
+  floor_plan_page_number: number | null;
 };
 
 export const DRAWING_COLUMNS =
-  "id, file_name, file_type, extraction_status, extracted_data, unresolved_items, applied_to_field_data, extraction_error";
+  "id, file_name, file_type, extraction_status, extracted_data, unresolved_items, applied_to_field_data, extraction_error, floor_plan_page_number";
 
 export const ACCEPTED_DRAWING_MIME_TYPES = [
   "application/pdf",

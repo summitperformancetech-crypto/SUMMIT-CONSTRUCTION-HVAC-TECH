@@ -8,6 +8,7 @@ import { getReportGenerationGateStatus } from "@/lib/reportGate";
 import { resolutionKey, type FieldResolution } from "@/lib/fieldResolutions";
 import type { DrawingExtraction } from "@/lib/drawingExtraction";
 import type { Compass8 } from "@/lib/constants/compass";
+import { renderPdfPageToPngDataUri } from "@/lib/floorPlanRender";
 
 type SnapshotRow = { version: number; snapshot_data: ReportData; reason: string | null; created_at: string };
 
@@ -188,9 +189,18 @@ export async function POST(request: Request) {
         .single<{ org_id: string; building_front_faces: Compass8 | null }>(),
       supabase
         .from("drawings")
-        .select("id, extraction_status, extracted_data")
+        .select("id, extraction_status, extracted_data, file_path, file_type, floor_plan_page_number")
         .eq("project_id", projectId)
-        .returns<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }[]>(),
+        .returns<
+          {
+            id: string;
+            extraction_status: string;
+            extracted_data: DrawingExtraction | null;
+            file_path: string;
+            file_type: "pdf" | "image";
+            floor_plan_page_number: number | null;
+          }[]
+        >(),
     ]);
     const { data: org } = project
       ? await supabase
@@ -200,7 +210,38 @@ export async function POST(request: Request) {
           .single<OrgBranding>()
       : { data: null };
     const orgBranding: OrgBranding = org ?? { name: "Summit", license_number: null, logo_data_uri: null };
-    html = renderSummitReportHtml(reportData, orgBranding, project?.building_front_faces ?? null, drawings ?? []);
+
+    // SUMMIT-REPORT-STANDARD.md Section 5.9 - the drawing a human marked as
+    // the floor plan (see drawings-section.tsx's "Use as report floor
+    // plan" control), if any. Rendering failures here (a corrupted upload,
+    // an out-of-range page number someone entered before the file was
+    // replaced) must not block the rest of the report - they surface as
+    // the existing "no floor plan" state rather than a 500.
+    const floorPlanDrawing = drawings?.find((d) => d.floor_plan_page_number != null) ?? null;
+    let floorPlanImageDataUri: string | null = null;
+    if (floorPlanDrawing) {
+      try {
+        const { data: fileBlob, error: downloadError } = await supabase.storage
+          .from("drawings")
+          .download(floorPlanDrawing.file_path);
+        if (downloadError || !fileBlob) throw new Error(downloadError?.message ?? "download failed");
+        const fileBuffer = Buffer.from(await fileBlob.arrayBuffer());
+        floorPlanImageDataUri =
+          floorPlanDrawing.file_type === "pdf"
+            ? await renderPdfPageToPngDataUri(fileBuffer, floorPlanDrawing.floor_plan_page_number!)
+            : `data:${fileBlob.type || "image/png"};base64,${fileBuffer.toString("base64")}`;
+      } catch (err) {
+        console.error("Floor plan render failed:", err instanceof Error ? err.message : err);
+      }
+    }
+
+    html = renderSummitReportHtml(
+      reportData,
+      orgBranding,
+      project?.building_front_faces ?? null,
+      drawings ?? [],
+      floorPlanImageDataUri,
+    );
   }
 
   let browser;

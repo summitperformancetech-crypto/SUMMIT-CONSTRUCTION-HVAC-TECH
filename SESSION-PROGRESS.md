@@ -1989,3 +1989,41 @@ further this session.
     field_resolutions inspection, a live re-verification test file)
     deleted after use, not committed — only `lib/dataCompleteness.ts`
     and its test file are new, real, committed code.
+
+- 2026-08-23 (seventh entry) — **Traced the window-area gap to its
+  exact code-level mechanism**, closing the loop the sixth entry left
+  open ("should the review UI change" was still a vague question at
+  that point). Read `applyExtractedData`
+  (`components/manual-j-workflow.tsx` ~line 620) directly: confirmed
+  it faithfully copies `window_*_area_sqft` from extraction into new
+  room rows verbatim — not the bug. Read `collectUnresolvedItems`
+  (`lib/drawingExtraction.ts` ~line 754) directly: confirmed the
+  codebase already has the right pattern for exactly this problem —
+  `duct_location` and `duct_insulation_r_value` are deliberately broken
+  out as their own individually-resolvable per-room unresolved items,
+  each getting its own `FieldResolutionBadge` — but window area, floor
+  area, and wall lengths were never given the same treatment, staying
+  bundled inside one freeform `room.reason` string resolved by a single
+  Accept/Override that never touches the real columns.
+  - **Concrete, scoped fix identified, not built**: add a structured
+    `windows: ExtractedField<...>` to `ExtractedRoom`, have the
+    extraction prompt state per-room window detection explicitly rather
+    than folding it into prose, break it out as its own
+    `room[N].windows` unresolved item, give it its own badge in
+    `drawings-section.tsx` (reuses the existing generic
+    `FieldResolutionBadge` component — no new UI primitive needed).
+  - **Deliberately not implemented this session**: unlike
+    `lib/dataCompleteness.ts` (a safe, additive, non-production-path
+    pure function), this fix touches the actual extraction prompt
+    (`buildExtractionPrompt`), which `lib/drawingExtraction.ts`'s own
+    code comments document as having a fragile, multi-round tuning
+    history — several past regressions, each diagnosed the hard way
+    against a real drawing after the fact. Every real test of a prompt
+    change costs a paid Claude API call and risks a silent regression
+    elsewhere in the extraction quality that's much harder to catch
+    than this particular bug was. Flagged to the user as the one item
+    from this session's findings that specifically warrants their
+    go-ahead before building, rather than folded into the general
+    "keep working" latitude the rest of this session used.
+  - Memory (`report_generation_requirements`) updated with the full
+    precise mechanism and fix scope.

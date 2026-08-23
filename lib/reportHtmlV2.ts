@@ -18,11 +18,6 @@
 //   marked (like the Vivian Street fixture, seeded directly from a Manual
 //   J assessment PDF) shows an explicit "no floor plan on file" state,
 //   never a fabricated or approximated drawing.
-// - Fonts: IBM Plex Sans/Mono are declared by name with system-font
-//   fallbacks, not embedded as base64 - embedding real font files was out
-//   of scope for this pass. The report stays fully self-contained/
-//   portable either way (no network fetch required); it just may render
-//   in a fallback font on a system without IBM Plex installed.
 import type { ReportData } from "./reportData";
 import { resolvedFieldResolutionsAudit } from "./reportData";
 import { validateReportTotals, computeRequiredTonnage, type ReportValidationResult } from "./reportValidation";
@@ -32,6 +27,7 @@ import { buildHeatingSegments, buildCoolingSegments, renderDonutSvg, type ChartS
 import { computeRequiredCfmForRooms } from "./manualD";
 import type { Compass8 } from "./constants/compass";
 import type { DrawingExtraction } from "./drawingExtraction";
+import { EMBEDDED_FONT_FACES } from "./reportFonts";
 
 export type OrgBranding = {
   name: string;
@@ -613,7 +609,7 @@ export function renderSummitReportHtml(
 <head>
 <meta charset="utf-8" />
 <title>${esc(data.project.name)} — Load Calculation Report</title>
-<style>${STYLES}</style>
+<style>${EMBEDDED_FONT_FACES}${STYLES}</style>
 </head>
 <body>
 ${pages}

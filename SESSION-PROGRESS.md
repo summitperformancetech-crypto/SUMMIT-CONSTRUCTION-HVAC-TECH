@@ -1873,3 +1873,51 @@ further this session.
     scripts.
   - Memory (`report_generation_requirements`) updated with the full
     real result, superseding the prior entry's "not attempted" framing.
+
+- 2026-08-23 (fifth entry) — **User said "continue to work" — surveyed
+  every live project** rather than staying narrowly focused on Vivian
+  Street, to see whether its data gaps were fixture-specific or
+  systemic. Found 3 other projects with real, already-applied (not
+  hand-seeded) extraction data: Kinsela (`ce7619fe-3095-4496-88c8-90c034fbc36c`,
+  25 rooms — the same project `lib/drawingExtraction.ts`'s own code
+  comments cite as a real development diagnosis case), Crossway
+  (`eee7b06a-b570-481e-bc94-ec93b157d684`, 25 rooms), and "Jose
+  Dominguez" (`402d66ff-09fe-4180-8bb1-ad2c70733ada`, 23 rooms). A
+  fourth, "KHAWAJA MAMOON PROJECT" (`574d4dd0-7455-41d7-a10c-463b57976d00`),
+  has a completed extraction never applied (0 rooms) — a real,
+  presumably in-progress client project, deliberately not touched this
+  session.
+  - Ran `computeManualJ` read-only (via `getReportData`, no writes)
+    against Kinsela specifically. **Found the same class of gap as
+    Vivian Street, but this time on real, already-applied production
+    data**: whole-house glazing load computes to exactly zero because
+    all 25 real rooms still have every `window_*_area_sqft` field
+    `null`, even post-apply. Whole-house infiltration also computes to
+    exactly zero — traced directly to the project's `ach50` field being
+    `null` (confirmed by reading the project row). Several individual
+    rooms (Bath 4 (Bonus), Master Closet, Hidden Gun Closet, Guest Hall,
+    and partial gaps on a few others) have entirely null geometry and
+    silently contribute a zero-Btuh line to the whole-house rollup
+    rather than being excluded or flagged as incomplete —
+    `computeManualJ` itself has no visible completeness guard; that
+    check currently only exists at the report-generation gate
+    (`app/api/reports/route.ts`), a layer higher up.
+  - **This reframes the priority of what was learned this session**:
+    the window-area capture gap and the "incomplete room silently zeros
+    out" gap aren't specific to Vivian Street's manual shortcut — they
+    show up on real, already-applied production data too. Root cause
+    of the window gap specifically (extraction not finding window data
+    at all vs. finding it but leaving it unresolved vs. reviewers
+    skipping those items during apply) wasn't determined this session —
+    would need to read this drawing's own `extracted_data` JSON to tell
+    apart, not done.
+  - No writes made to Kinsela or any other real project this session —
+    read-only investigation throughout. Scratch scripts (a project/
+    drawings survey script and a Kinsela sanity-check Vitest file) were
+    deleted after use, not committed.
+  - Memory (`report_generation_requirements`) updated with this
+    cross-project finding, including two product-quality follow-ups
+    flagged for the user (not yet actioned): root-causing the window-
+    area gap, and deciding whether `computeManualJ` should itself guard
+    against silently-incomplete rooms rather than relying entirely on
+    the report-generation-layer gate.

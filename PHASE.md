@@ -11,7 +11,7 @@ Phase name: Testing & Deployment Readiness
 Add a real test runner, add direct unit tests for the calc engines (previously zero direct coverage beyond report-layer regression tests), fix Puppeteer for actual Vercel deployment, add a minimal CI workflow.
 
 ## Status
-COMPLETE — all 4 phase items done, verified, and on `origin/main`.
+COMPLETE — all 4 phase items done, verified, and on `origin/main`. **This session (2026-08-23, second entry)**: resolved the open questions carried over from Phase 5 closeout — see "Open Questions Resolved This Session" below — before starting Phase 6 scoping.
 
 ## Overall V1 Completion
 Estimated percentage: ~75%
@@ -29,6 +29,16 @@ Confidence: Medium-High — calc engines (Manual J/D/S/N/Industrial) and drawing
 
 Incidental fix: a stale duplicate `.next/types/*` build artifact (e.g. `routes.d 2.ts`) was breaking `tsc --noEmit` in isolation; cleared via `rm -rf .next && npx next typegen`. Not a code defect — a leftover from a prior interrupted build on this same disk-space-constrained machine.
 
+## Open Questions Resolved This Session (2026-08-23)
+
+The user made four calls on Phase 5's carried-over open questions before Phase 6 scoping began:
+
+1. **Vivian Street OEM data sourcing → authorized autonomous web sourcing.** Turned out not to need fresh sourcing: the real, cited Carrier 26TPA824W003 extended-performance data (30 points, citation to Carrier's official Performance 18 Product Data PDF) was already sourced and committed in `supabase/migrations/20260811031915_replace_discontinued_equipment.sql` back in Phase 3-era work. Live-DB inspection (via a scratch `@supabase/supabase-js` script, run and deleted this session — not committed) found the **live database had been corrupted on 2026-08-17**: 16 synthetic placeholder performance points had been inserted alongside the real 30 (some overlapping the same outdoor-temp/wetbulb coordinates with different, made-up capacity values — an interpolation-integrity bug, not just a labeling issue), and `equipment_catalog.source_document` for that row had been overwritten to placeholder text. **Fixed live**: deleted the 16 placeholder rows (matched by their exact shared `updated_at` batch timestamp), restored the real citation string to `source_document`. Verified after: exactly 30 performance points remain, all from the 2026-08-12 real-data insert; catalog row's `source_document` now matches the migration file again.
+   - Separately confirmed the FIXTURE-PLACEHOLDER / VIVIAN-ST-WHOLE-HOUSE-TEST-UNIT catalog entry described in the 2026-08-17 `SESSION-PROGRESS.md` entry **no longer exists live** — consistent with the per-zone equipment-selection migration (`20260822210000_per_zone_equipment_selection.sql`) having since resolved the whole-house-vs-per-system sizing gap that necessitated it. Vivian Street is confirmed live as a genuine 2-zone project (AHU-1, AHU-2 per `zones` table), both currently unselected (`selected_equipment_id: null`) — selecting real equipment per zone is follow-up report-generation work, not done this session.
+2. **AED solar-position approach → source real solar irradiance data** (NOAA/NREL) instead of a from-scratch astronomical engine, when AED is picked back up. Decision recorded only — AED itself is still deferred, no implementation this session.
+3. **PWA/offline field capture → confirmed still wanted**, scheduled as a future phase (after Phase 6, exact slot TBD — see Deferred Work).
+4. **`summit-platform-vision-AEC-master.md` → written for real** at `REFERENCE-DOCS/summit-platform-vision-AEC-master.md`, reconstructed from the export-mining findings (business model, competitive positioning, draft pricing, the AEC discipline list, and explicit scope boundaries). Marked as a directional vision doc, not a committed roadmap — current build scope is unchanged (HVAC only).
+
 ## Files Created
 - `vitest.config.mts`
 - `lib/__tests__/manualD.test.mts`, `lib/__tests__/manualS.test.mts`
@@ -36,7 +46,9 @@ Incidental fix: a stale duplicate `.next/types/*` build artifact (e.g. `routes.d
 - `.github/workflows/ci.yml`
 
 ## Files Modified
-`package.json` (test script → `vitest run`; `puppeteer` moved dependencies → devDependencies; `puppeteer-core`, `@sparticuz/chromium`, `vitest` added), `package-lock.json`, `lib/__tests__/manualJ.test.mts`, `lib/__tests__/reportData.test.mts`, `lib/__tests__/reportValidation.test.mts` (Vitest migration), `app/api/reports/route.ts`, `lib/floorPlanRender.ts` (shared launcher), `CLAUDE.md` (one-line SaaS/competitive-positioning clarification), `SESSION-PROGRESS.md` (export-mining findings).
+`package.json` (test script → `vitest run`; `puppeteer` moved dependencies → devDependencies; `puppeteer-core`, `@sparticuz/chromium`, `vitest` added), `package-lock.json`, `lib/__tests__/manualJ.test.mts`, `lib/__tests__/reportData.test.mts`, `lib/__tests__/reportValidation.test.mts` (Vitest migration), `app/api/reports/route.ts`, `lib/floorPlanRender.ts` (shared launcher), `CLAUDE.md` (one-line SaaS/competitive-positioning clarification), `SESSION-PROGRESS.md` (export-mining findings; this session's open-questions-resolved entry).
+
+**This session (2026-08-23, second entry) additionally created:** `REFERENCE-DOCS/summit-platform-vision-AEC-master.md` (new file, see Open Questions Resolved above). **No code files changed** — the OEM data fix was a live-database write (Supabase `equipment_catalog`/`equipment_performance_points` tables), not a migration file change, because it was correcting live data back to what the already-committed migration specifies; no schema or migration changed.
 
 ## Files Removed
 None.
@@ -81,20 +93,17 @@ npm run build          PASS (production build succeeds, Turbopack, 58s compile)
 - **This session's git credential (VS Code-issued OAuth App token) cannot push any change to `.github/workflows/*` — create or edit — no matter how many times VS Code's built-in GitHub sign-in is re-run.** GitHub rejects such pushes without the `workflow` scope, and that provider's OAuth app registration does not appear to request it at all. Worked around this session by adding/editing `.github/workflows/ci.yml` directly through github.com's web UI (not subject to this restriction), then `git reset --hard origin/main` locally to sync. **If this comes up again**, skip retrying VS Code sign-in and go straight to the web UI, or generate a classic Personal Access Token with `repo` + `workflow` scopes (github.com → Settings → Developer settings → Personal access tokens) and use it as the git credential instead.
 
 ## Deferred Work
-- AED Assessment (needs solar-position engine + latitude) — from Phase 4, still deferred.
+- AED Assessment (needs solar-position engine + latitude) — from Phase 4, still deferred. Approach decided this session (real solar irradiance data, not from-scratch), implementation not started.
 - Floor-plan title-block cropping — from Phase 4, still deferred.
-- Canonical reference file (needs real OEM performance data for Vivian Street) — from Phase 4, still blocked. **Live tension, not yet resolved**: a past planning session's explicit instruction was to source real reference data from the web autonomously rather than treat gaps as blockers; Phase 4 instead left this blocked pending the user's own sourcing. Surfaced in `SESSION-PROGRESS.md`, not silently decided either way.
+- Canonical reference file (needs real OEM performance data for Vivian Street) — **live-data corruption fixed this session** (see Open Questions Resolved above); the real, cited Carrier data is restored. Still not done: selecting real equipment per zone for Vivian Street (2 zones, both unselected) and the full end-to-end visual review of the canonical `summit_standard` report — those remain open, but the "no real OEM data" blocker itself is closed.
 - Deprecating `internal`/`client` report types (waits on AED).
-- PWA/offline field data capture — confirmed via this session's export-mining as originally planned, never built. Not scheduled; flagged for a future product-priority call.
-- `REFERENCE-DOCS/summit-platform-vision-AEC-master.md` — described in past planning as filed, confirmed via full git-history search this session to not actually exist anywhere in this repo. Not reconstructed from a conversation summary; flagged for the user to decide whether it's worth writing for real.
+- PWA/offline field data capture — confirmed this session as still wanted; scheduled as a future phase (exact slot TBD, likely after Phase 6).
 - Phase 6 (role-based knowledge-base docs — architect/engineer/designer/drafter standards) — not started; this is the original ask the whole 6-phase completion plan grew from.
 
 ## Open Questions
-- Who will source the real Carrier extended performance data for the Vivian Street AHUs (needed to unblock the canonical reference file)? — carried over from Phase 4.
-- When AED is picked back up: is a from-scratch solar-position engine still the right call, or should real solar irradiance data be sourced instead? — carried over from Phase 4.
-- Does the OEM-data-sourcing conflict above get resolved by (a) the user manually sourcing Vivian Street's real Carrier data, or (b) a future session being authorized to source it autonomously from the web as originally instructed?
-- Is PWA/offline field capture still wanted, and if so, at what phase?
-- Is `summit-platform-vision-AEC-master.md` worth reconstructing (from the conversation-summary description) as a real document, or was it always aspirational and fine to leave unwritten?
+- Vivian Street: who/when selects real per-zone equipment (AHU-1, AHU-2) now that the catalog data is clean and per-zone selection exists? Not blocking — just not done yet.
+- When AED is actually picked up: which real solar irradiance dataset/API (NOAA vs. NREL) is the right specific source? Decided in principle this session (real data over from-scratch), specific source TBD at implementation time.
+- Where exactly does PWA/offline capture land in the phase sequence — before or after Phase 6?
 
 ## Claude Browser Input Needed
 None identified for Phase 6 yet — that phase's scope (role-based knowledge-base docs for architect/engineer/designer/drafter standards) is exactly the kind of long-form domain-research work Claude Browser is suited for, but the specific asks need to be scoped first, in a fresh session, before drafting an actual browser handoff prompt.
@@ -108,9 +117,10 @@ Start a fresh chat (see recommendation below) and scope Phase 6: what specific s
 ## Files Next Session Should Read First
 1. `/CLAUDE.md`
 2. `/PHASE.md` (this file)
-3. `/SESSION-PROGRESS.md` (detailed history — read the 2026-08-23 export-mining entry specifically for business/product context not summarized elsewhere)
+3. `/SESSION-PROGRESS.md` (detailed history — read both 2026-08-23 entries: export-mining, and this session's open-questions-resolution/OEM-data-fix)
 4. `/REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`
 5. `/lib/manualJ.ts`, `/lib/manualD.ts`, `/lib/manualS.ts` (the engines Phase 6's knowledge-base docs will need to stay consistent with)
+6. `/REFERENCE-DOCS/summit-platform-vision-AEC-master.md` (new this session — long-term direction context, not required for Phase 6 itself but useful for judging what's in/out of scope)
 
 ## Git Status
 Branch: `main`
@@ -124,4 +134,4 @@ Remote: `origin` → `https://github.com/summitperformancetech-crypto/SUMMIT-CON
 All of this phase's substantive work is on `origin/main`. The CI workflow file specifically was added/fixed via github.com's web UI, not `git push` (see Known Issues for why), and local was synced to match via `git reset --hard origin/main` after — verified byte-identical, no work lost. This file's own closeout commit follows immediately.
 
 ## Updated
-Date/time: 2026-08-23
+Date/time: 2026-08-23 (second entry — open-questions resolution + Vivian Street live-data fix)

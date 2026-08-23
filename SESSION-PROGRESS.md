@@ -1712,3 +1712,53 @@ further this session.
     file blocked, waiting on the user to manually source real Carrier
     OEM performance data for Vivian Street. These two are in tension —
     surfaced to the user, not silently picked.
+
+- 2026-08-23 (second entry) — **Resolved Phase 5's five carried-over open
+  questions** at the user's direction, then wrote the missing vision doc.
+  - **Vivian Street OEM data**: user authorized autonomous web sourcing.
+    Investigation (a scratch `@supabase/supabase-js` inspection script,
+    run and deleted, not committed) found this didn't need fresh
+    sourcing — real, cited Carrier 26TPA824W003 performance data (30
+    points, citation to Carrier's official Performance 18 Product Data
+    PDF) was already committed in
+    `supabase/migrations/20260811031915_replace_discontinued_equipment.sql`.
+    The **live database itself was corrupted**: a 2026-08-17 write had
+    inserted 16 synthetic placeholder performance points alongside the
+    real 30 (several sharing the same outdoor-temp/wetbulb coordinate as
+    a real point but with different, made-up capacity values — a genuine
+    interpolation-integrity bug, not just mislabeled data), and had
+    overwritten `equipment_catalog.source_document` for that row to
+    placeholder text. **Fixed live**: deleted the 16 placeholder rows
+    (matched by their shared insert-batch `updated_at` timestamp),
+    restored the real citation string. Verified after: exactly 30 points
+    remain (all from the real 2026-08-12 insert), `source_document`
+    matches the migration file again.
+  - Also confirmed, while investigating: the FIXTURE-PLACEHOLDER /
+    VIVIAN-ST-WHOLE-HOUSE-TEST-UNIT catalog entry (created in the
+    2026-08-17 session referenced above, to work around a per-project
+    equipment-sizing gap) **no longer exists live**. The later
+    `20260822210000_per_zone_equipment_selection.sql` migration moved
+    equipment selection from `projects` to `zones` (one selection per
+    AHU/system), which resolves the exact sizing gap that entry existed
+    to paper over. Vivian Street is confirmed live as a genuine 2-zone
+    project (AHU-1, AHU-2), both currently `selected_equipment_id: null`
+    — real per-zone equipment selection is unfinished follow-up work, not
+    done this session, but the schema-level blocker is gone.
+  - **AED solar-position approach**: user chose sourcing real solar
+    irradiance data (NOAA/NREL) over a from-scratch astronomical engine,
+    for whenever AED work resumes. Decision recorded only; AED itself
+    (`lib/manualJ.ts` etc. still lack it) is untouched this session.
+  - **PWA/offline field capture**: user confirmed still wanted, to be
+    scheduled as a future phase (exact slot not yet decided).
+  - **`summit-platform-vision-AEC-master.md`**: user chose to write it
+    for real. Created at
+    `REFERENCE-DOCS/summit-platform-vision-AEC-master.md` — covers the
+    SaaS business model and draft pricing tiers, competitive positioning,
+    and the long-term AEC-discipline-expansion idea (structural,
+    electrical, plumbing, fire safety, civil, accessibility) alongside
+    HVAC, explicitly scoped as directional/not-committed and explicitly
+    **not** expanding current build scope (still HVAC-only). See that
+    file for the full content rather than duplicating it here.
+  - No calc-engine, schema, or migration files changed this session —
+    the OEM-data fix was a live-data correction back to what the
+    already-committed migration specifies, not a schema change.

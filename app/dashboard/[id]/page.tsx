@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
+import { DeleteProjectButton } from "@/components/delete-project-button";
 import { GenerateReportsButton, type SnapshotStatus } from "@/components/generate-reports-button";
 import { StalenessBanner } from "@/components/staleness-banner";
 import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
@@ -36,6 +37,7 @@ type Project = {
   state: string;
   zip: string;
   climate_confirmed: boolean;
+  created_by: string;
   // Data Integrity Addendum, Section 2 - the "project's start" marker the
   // staleness banner compares reference-table updated_at values against.
   created_at: string;
@@ -223,11 +225,15 @@ export default async function ProjectDetailPage({
   // (20260822190000_restrict_field_tech_equipment_and_reports.sql) are
   // the real enforcement boundary; this is UI-layer mirroring only.
   const userRole = profile?.role ?? "field_tech";
+  // Mirrors the "Delete projects based on role" RLS policy exactly
+  // (admin/estimator can delete any project in the org; a field tech
+  // can only delete a project they created themselves) - UI-layer
+  // mirroring only, same as userRole above; RLS is the real boundary.
 
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -235,6 +241,9 @@ export default async function ProjectDetailPage({
   if (error || !project) {
     notFound();
   }
+
+  const canDelete =
+    userRole === "admin" || userRole === "estimator" || project.created_by === user.id;
 
   const resolvedCounty = await resolveCounty({
     addressLine1: project.address_line1,
@@ -437,9 +446,12 @@ export default async function ProjectDetailPage({
         <div className="mb-6 rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
           <div className="mb-4 flex items-start justify-between">
             <h1 className="text-xl font-semibold text-brand-gold">{project.name}</h1>
-            <span className="rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-3 py-1 text-xs font-medium text-brand-gold-hover">
-              {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
-            </span>
+            <div className="flex flex-col items-end gap-2">
+              <span className="rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-3 py-1 text-xs font-medium text-brand-gold-hover">
+                {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
+              </span>
+              {canDelete && <DeleteProjectButton projectId={project.id} projectName={project.name} />}
+            </div>
           </div>
           <p className="text-sm text-brand-grey-text">
             {project.address_line1}, {project.city}, {project.state} {project.zip}
@@ -658,6 +670,7 @@ export default async function ProjectDetailPage({
             <span className="rounded-full border border-brand-gold-base bg-brand-gold-base/25 px-3 py-1 text-xs font-medium text-brand-gold-hover">
               {PROJECT_TYPE_LABEL[project.project_type] ?? project.project_type}
             </span>
+            {canDelete && <DeleteProjectButton projectId={project.id} projectName={project.name} />}
           </div>
         </div>
         <p className="text-sm text-brand-grey-text">

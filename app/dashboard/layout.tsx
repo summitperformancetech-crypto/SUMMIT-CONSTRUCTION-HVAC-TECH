@@ -35,10 +35,26 @@ export default async function DashboardLayout({
         <div className="flex items-center gap-4">
           {isAdmin && (
             <Link
+              href="/dashboard/settings/team"
+              className="text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
+            >
+              Team
+            </Link>
+          )}
+          {isAdmin && (
+            <Link
               href="/dashboard/settings/equipment"
               className="text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
             >
               Equipment Preferences
+            </Link>
+          )}
+          {isAdmin && (
+            <Link
+              href="/dashboard/settings/branding"
+              className="text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
+            >
+              Report Branding
             </Link>
           )}
           <SignOutButton />

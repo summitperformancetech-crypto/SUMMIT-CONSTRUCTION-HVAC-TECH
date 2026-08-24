@@ -35,6 +35,24 @@ describe("buildAecKnowledgeBaseBlock", () => {
   it("does not claim to override real drawing evidence", () => {
     expect(block).toMatch(/actual drawing always wins/i);
   });
+
+  it("covers construction-assembly/framing callouts relevant to ceiling height and duct routing", () => {
+    expect(block).toContain("CONSTRUCTION ASSEMBLY");
+    expect(block).toMatch(/KNEE WALL/);
+    expect(block).toMatch(/R-38 BLOWN INSULATION/);
+  });
+
+  it("covers schedule-table reading conventions", () => {
+    expect(block).toContain("SCHEDULE TABLES");
+    expect(block).toMatch(/MARK column/);
+    expect(block).toMatch(/not a per-room count/);
+  });
+
+  it("covers mechanical-plan-specific conventions", () => {
+    expect(block).toContain("MECHANICAL (HVAC) PLAN CONVENTIONS");
+    expect(block).toMatch(/thermostat/i);
+    expect(block).toMatch(/single-line/);
+  });
 });
 
 describe("buildExtractionPrompt", () => {

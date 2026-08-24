@@ -21,6 +21,7 @@ import {
 } from "@/lib/drawingExtraction";
 import { resolveOrientation } from "@/lib/orientation";
 import { isCardinalCompass, type Compass8 } from "@/lib/constants/compass";
+import { extractPdfPageTexts, formatPdfTextForPrompt } from "@/lib/pdfTextExtraction";
 
 // Real, measured: a full extraction call against a dense 13-sheet set
 // took 222.5s (diagnosed 2026-08-14 verifying the switch to streaming
@@ -163,8 +164,20 @@ export async function POST(request: Request) {
     );
   }
 
-  const base64 = Buffer.from(await fileBlob.arrayBuffer()).toString("base64");
+  const fileBuffer = Buffer.from(await fileBlob.arrayBuffer());
+  const base64 = fileBuffer.toString("base64");
   const anthropic = new Anthropic({ apiKey });
+
+  // Deterministic ground truth alongside the visual document - see
+  // lib/pdfTextExtraction.ts for why this exists (a narrow vision
+  // re-ask, tried and diagnosed 2026-08-14, does not reliably recover a
+  // fact the model misread the first time; a real embedded text layer,
+  // when the PDF has one, can). Best-effort and non-fatal: image
+  // uploads have no text layer at all (isPdf false skips this
+  // entirely), and a parse failure or a scanned/textless PDF both
+  // resolve to null here, which just means proceeding vision-only -
+  // exactly the behavior that existed before this existed.
+  const pdfTextBlock = isPdf ? formatPdfTextForPrompt(await extractPdfPageTexts(fileBuffer)) : null;
 
   // Built once, reused for both the main extraction call and the
   // conditional follow-up call below - both need the same document/image
@@ -216,7 +229,11 @@ export async function POST(request: Request) {
       messages: [
         {
           role: "user",
-          content: [documentContentBlock, { type: "text", text: buildExtractionPrompt(knownOrientation) }],
+          content: [
+            documentContentBlock,
+            ...(pdfTextBlock ? [{ type: "text" as const, text: pdfTextBlock }] : []),
+            { type: "text", text: buildExtractionPrompt(knownOrientation) },
+          ],
         },
       ],
     });
@@ -333,6 +350,7 @@ export async function POST(request: Request) {
             role: "user",
             content: [
               documentContentBlock,
+              ...(pdfTextBlock ? [{ type: "text" as const, text: pdfTextBlock }] : []),
               { type: "text", text: buildFollowUpPrompt(roomFollowUpTargets, sheetFollowUpTargets) },
             ],
           },

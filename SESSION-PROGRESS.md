@@ -2277,3 +2277,189 @@ further this session.
     requirements.md`) updated with explicit correction blocks for both
     mistakes, plus the full fix detail, so neither is repeated in a
     future session.
+
+- **2026-08-23, twelfth entry, same day - a third correction, same
+  theme: "READ IT CORRECTLY."** After the eleventh entry left Kinsela's
+  window-detection/floor-area work with an implicit "the rest needs
+  field work or is a model-capability limit," the user pushed back
+  twice more: once insisting an architect could read every room's
+  info off the drawing "regardless of what page it's on," and again,
+  more sharply, after compass-direction wall assignment was left
+  undone to avoid guessing - "correctly mapping each room's individual
+  walls to true compass directions... is part of your job description
+  ... You don't guess. You do your job. READ IT CORRECTLY!" Both
+  corrections were right and both were achievable.
+  - Re-downloaded Kinsela's real uploaded PDF from Supabase storage
+    (the earlier session's local copy had been cleaned up) and
+    rendered its floor-plan pages as actual images with `pymupdf`/
+    `fitz`, not text extraction. Its pages carry a 270-degree PDF
+    rotation flag, which meant `page.search_for()`'s raw coordinates
+    didn't line up with the rendered image until `page.rotation_
+    matrix` was applied - traced that down rather than guessing crop
+    regions blind.
+  - Confirmed this drawing set has no north arrow anywhere (a stock
+    plan, "The Amaryllis" by MADDEN HOME DESIGN, with no site/plat
+    sheet in its own drawing index) - but that doesn't block a real
+    compass mapping: sheet A1.1 labels "FRONT PORCH" at the bottom
+    edge of the page and "REAR PORCH" at the top edge, directly on the
+    floor plan itself, and the project already has a confirmed
+    `building_front_faces: "W"`. Those two read facts, run through the
+    already-built `resolveOrientation` (`lib/orientation.ts`) /
+    `computeCompassWallLengthsFromPageAxes` (`lib/drawingExtraction.
+    ts`) logic (traced, not reinvented), fully determine the page-to-
+    compass transform for this sheet: wall_north_len_ft = wall_south_
+    len_ft = a room's page-VERTICAL extent; wall_east_len_ft = wall_
+    west_len_ft = its page-HORIZONTAL extent. Validated this derivation
+    against Bedroom 2 - a room the pipeline had already correctly
+    populated (DB: north/south=14, east/west=13, matching its printed
+    "13' X 14'" label read as horizontal-x-vertical) - before trusting
+    it and writing anything new with it.
+  - Visually read real printed dimensions for 6 rooms directly off
+    high-zoom page renders and wrote both `floor_area_sqft` and all
+    four `wall_*_len_ft` fields for each via a live UPDATE-only script
+    (no deletes, so it wasn't blocked): Master Bedroom (15'-8" x
+    17'-10" -> 279 sqft), Master Closet (15' x 14' -> 210 sqft), Hidden
+    Gun Closet (4'3" x 6'4" -> 27 sqft, floor area already correct),
+    Powder Room (6'-4" x 5'-9" -> 36 sqft, floor area already correct),
+    Laundry (9'-10" x 9'5" -> 93 sqft), and Master Bath (18'10" x
+    11'4" -> 213 sqft - the one irregular room of the 6, with a bay/
+    curved wall and jogged boundary, so its wall lengths are a flagged
+    bounding-box approximation, not exact per-segment lengths).
+  - **Caught two of its own earlier transcription errors while re-
+    reading more carefully this pass**: Master Bedroom's label is
+    "15'-8"", not the "15'-6"" an earlier pass in this same session
+    recorded (floor area corrected 276 -> 279); Master Closet's label
+    is "15' X 14'", not "15'-0" X 14'-8"" (corrected 220 -> 210). Also
+    found and overwrote clearly-stale wall-length data already sitting
+    in the database for 3 of these rooms (e.g. Master Bedroom had
+    wall_north=24, wall_east=34 on file - internally inconsistent with
+    its own 276 sqft floor area, i.e. not real measurements from any
+    actual pass).
+  - **Confirmed, not just suspected, that 3 of the 5 rooms the
+    eleventh entry's reconciliation fix recovered are duplicates of
+    existing rooms**, by actually seeing the drawing show only one of
+    each: Master Closet (Second Level) = Master Closet (same two-story
+    closet, viewed from the upper-floor sheet); Powder Bath = Powder
+    Room; Bath 4 (Bonus Room) = Bath 4 (Bonus). All 3 duplicate rows
+    are empty, so deleting them loses nothing - but adding `DELETE`
+    calls to the same script that ran the UPDATEs got the whole script
+    rejected by the Claude Code sandbox's own safety classifier. Per
+    that block's own instructions, this needs the user's direct sign-
+    off, not a workaround - flagged in PHASE.md's Open Questions,
+    not yet resolved.
+  - Genuinely irregular rooms (M. Hall, Kids Hall, Guest Hall, Mud
+    Room, Wet Bar, Open Storage, a small under-stairs closet)
+    correctly left unresolved rather than forced into a rectangle -
+    none of them carry a single clean bounding dimension label the way
+    the 6 rooms above did; they'd need multi-segment wall-run
+    reconstruction, a materially bigger task not attempted this pass.
+  - No source files changed - this was a live-database-only
+    correction (Kinsela's `rooms` table), via a scratch UPDATE-only
+    script deleted after use, not committed.
+  - `report_generation_requirements.md` memory updated with the full
+    before/after numbers table and the still-open duplicate-deletion
+    question, so this doesn't need re-deriving in a future session.
+
+- **2026-08-23, thirteenth entry, same day - the user escalated from
+  "fix Kinsela" to a standing product requirement**: "SUMMIT MUST BE
+  ABLE TO READ ALL PAGES AS A MASTER LEVEL ARCITECT ON EVER PROJECT
+  EVER CREATED IN SUMMIT AND BE ABLE TO CORRECTLY READ EVERY PAGE TO
+  GET THE INFO REQUIRED CORRECTLY." The twelfth entry's manual,
+  room-by-room drawing reading was a real, correct response to a
+  specific pushback about one project - but it does not scale to
+  "every project ever created," and this message made clear that was
+  the actual ask all along. Built a real fix to the production
+  extraction pipeline instead of hand-fixing more projects.
+  - Recognized this as the same class of problem the codebase had
+    already tried to solve once, and already knew didn't fully work:
+    `roomsNeedingCeilingHeightFollowUp`'s own 2026-08-14 diagnosis
+    comment in `lib/drawingExtraction.ts` documents that a narrow,
+    directly-targeted follow-up re-ask does NOT reliably recover a
+    fact the model misread visually the first time - on Kinsela,
+    asked point-blank whether a sheet has a ceiling-insulation
+    callout, the model still said no on a page independently confirmed
+    (via a deterministic parser, not AI) to contain "R-38 BLOWN
+    INSULATION" verbatim. That same comment names, but never builds,
+    the real fix: most real architectural PDFs (CAD-exported, not
+    scanned) carry a genuine embedded text layer a deterministic
+    parser can read character-accurately. Built that this turn.
+  - New file `lib/pdfTextExtraction.ts`: `extractPdfPageTexts(buffer)`
+    returns each PDF page's real embedded text; `formatPdfTextForPrompt`
+    turns that into a labeled block explaining its real limits (no
+    layout/position information, page order isn't sheet-number order)
+    so the model treats it as a cross-reference aid, not a blind
+    replacement for actually looking at the drawing. Returns/formats to
+    `null` cleanly for a scanned/textless PDF or a parse failure - the
+    pre-existing vision-only behavior, unchanged in that case.
+  - **Dependency choice verified directly, not assumed**: tried
+    `pdf-parse@1.1.4` first (pure JS, no native deps) - it threw "bad
+    XRef entry" on a spec-valid PDF freshly generated by `pdf-lib`
+    (already a project dependency), reproduced directly, not inferred
+    from a stack trace alone. Its bundled `pdfjs-dist` is old enough
+    that this is a genuine robustness risk for a fix meant to run on
+    every drawing on every project. Switched to the current major,
+    `pdf-parse@2.4.5` (bundles current `pdfjs-dist@5.4.296`): parsed
+    both that same fixture and Kinsela's real drawing cleanly. Checked
+    whether its added image/table features' native dependency
+    (`@napi-rs/canvas`) posed a new serverless risk - confirmed
+    directly that plain `getText()` (all this module calls) never
+    invokes it; the package's own README also lists Vercel/Netlify/
+    Lambda/Cloudflare Workers as supported targets.
+  - Wired into `app/api/drawings/extract/route.ts`: the PDF's text is
+    extracted once per upload and included as an extra content block
+    on both the main extraction call and the existing narrow follow-up
+    call, positioned after the visual document and before the main
+    prompt text. Best-effort and non-fatal - a parse failure or a
+    genuinely textless PDF both resolve to `null`, which is exactly
+    the behavior that existed before this fix, so nothing regresses
+    for image uploads or scanned drawings.
+  - Also added an explicit cross-sheet room-lookup paragraph to
+    `buildExtractionPrompt` (`lib/drawingExtraction.ts`) instructing
+    the model to check every sheet in a set for a room's real
+    dimensions before marking them unresolved, and to consolidate
+    (report once, not twice) a room found under two names on two
+    sheets - encoding, as a standing instruction, the exact reasoning
+    that resolved the twelfth entry's Master Closet / Master Closet
+    (Second Level) duplicate by hand.
+  - 8 new tests in `lib/__tests__/pdfTextExtraction.test.mts` - real
+    integration tests against `pdf-lib`-generated PDF fixtures, not
+    mocked. `npx tsc --noEmit` clean, full suite 79/79 passing (up
+    from 71), `npm run lint` clean.
+  - **Live-validated against Kinsela's real drawing, not just unit
+    tests**: ran `extractPdfPageTexts` directly against the actual
+    downloaded PDF and confirmed it correctly finds, verbatim, the
+    exact two facts this session's own memory documents as vision-
+    reading misses - "LAUNDRY 10' CEILING 9'-10" X 9'5"", "MASTER BATH
+    BARREL CEILING 18'10" X 11'4"", and "R-38 BLOWN INSULATION" (the
+    callout a direct, narrowly-targeted follow-up re-ask had
+    previously failed to recover). Honestly scoped what this does and
+    doesn't prove: it confirms the ground truth is now genuinely
+    present in the model's context on every future extraction call,
+    for every project - it does not yet prove the model will
+    correctly USE that text on a live re-run, since running one wasn't
+    justified this session (Kinsela's data is already hand-corrected
+    as of the twelfth entry, so re-extracting it specifically would
+    prove nothing new for a real, paid API call). Flagged as an open
+    question: the next project with genuine unresolved geometry is the
+    right candidate to validate this against live.
+  - PHASE.md and this file updated with the full detail; no separate
+    memory-file update needed for this one - it's a pipeline/code
+    change, not a project-specific finding the memory files exist to
+    track.
+
+- **2026-08-23, fourteenth entry, same day - "GREAT !! LETS GO!"**:
+  the user's approval to proceed, read in context as approving the one
+  concrete pending item from the prior turn - deleting the twelfth
+  entry's 3 confirmed-duplicate Kinsela rooms. Re-verified all 3 rows
+  were still empty (no data added since) immediately before deleting,
+  then ran the same delete script from the twelfth entry. Blocked
+  again by the sandbox's own safety classifier, same as before - asked
+  the user directly how to proceed (add a permission rule themselves /
+  do the deletes directly in Supabase / leave them for now) rather
+  than trying to route around the block, consistent with this
+  session's standard for that kind of block. User chose "add a
+  permission rule." The identical script succeeded on retry
+  immediately after. Verified the result by listing every room name in
+  Kinsela's `rooms` table post-delete: 27 rows (was 30), no duplicate
+  names remain. No scratch files left behind. PHASE.md updated to mark
+  this resolved.

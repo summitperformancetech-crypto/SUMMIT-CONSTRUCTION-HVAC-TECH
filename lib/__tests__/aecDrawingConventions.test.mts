@@ -53,6 +53,18 @@ describe("buildAecKnowledgeBaseBlock", () => {
     expect(block).toMatch(/thermostat/i);
     expect(block).toMatch(/single-line/);
   });
+
+  it("covers structural-sheet literacy for recognizing out-of-scope content", () => {
+    expect(block).toContain("STRUCTURAL SHEET LITERACY");
+    expect(block).toMatch(/out of scope/);
+    expect(block).toMatch(/JOISTS @ 16/);
+  });
+
+  it("covers electrical-sheet literacy, including the HVAC-relevant exception", () => {
+    expect(block).toContain("ELECTRICAL SHEET LITERACY");
+    expect(block).toMatch(/disconnect switch/);
+    expect(block).toMatch(/never the electrical circuit\/panel design itself/);
+  });
 });
 
 describe("buildExtractionPrompt", () => {

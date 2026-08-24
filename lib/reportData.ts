@@ -43,7 +43,9 @@ import {
   type ProcessLoad,
 } from "./manualIndustrial";
 import { latestResolutions, type FieldResolution } from "./fieldResolutions";
-import { resolveCounty } from "./countyLookup";
+import { resolveCounty, resolveLatLong } from "./countyLookup";
+import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessment";
+import type { CompassDirection } from "./solarIrradiance";
 
 export type ReportProject = {
   id: string;
@@ -108,6 +110,12 @@ export type ReportData = {
     // resolvable room/location (see checkDuctInsulationCompliance in
     // lib/manualD.ts for why trunk runs are never included).
     ductInsulationCompliance: DuctInsulationComplianceResult[];
+    // ACCA Manual J Adequate Exposure Diversification check (lib/aedAssessment.ts)
+    // - one entry per manualJ.zones entry (including the synthetic
+    // "Unassigned" bucket, same set computeManualJ already covers).
+    // result.assessed is false whenever this zone's rooms have no real
+    // per-direction window area yet - never a fabricated pass/fail.
+    aed: AedZoneResult[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -150,6 +158,18 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   // climate data on the project page (app/dashboard/[id]/page.tsx) so the
   // report and the on-screen UI can never disagree.
   const resolvedCounty = await resolveCounty({
+    addressLine1: project.address_line1,
+    city: project.city,
+    state: project.state,
+    zip: project.zip,
+  });
+
+  // For AED (Manual J's solar-diversification check, lib/aedAssessment.ts)
+  // - real geocoded coordinates for this specific address, not a
+  // climate-zone centroid. Best-effort: a failed geocode just means AED
+  // renders its existing "not assessed" state below, same honest
+  // fallback resolveCounty already has.
+  const resolvedLatLong = await resolveLatLong({
     addressLine1: project.address_line1,
     city: project.city,
     state: project.state,
@@ -242,6 +262,52 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       zones ?? [],
       codeMinimumsByLocation,
     );
+
+    // AED: aggregate each zone's real per-direction window area from its
+    // rooms (mirrors manualJ.zones' own grouping exactly, including the
+    // synthetic "Unassigned" zoneId=null bucket, so AED covers the same
+    // set of zones the rest of the report does), then run the real
+    // hourly solar assessment - only when a real address geocode
+    // succeeded above. No coordinates resolved means no fabricated
+    // result: every zone reports assessed:false via the same "no window
+    // data" path assessAedZone already uses for that.
+    const aedZoneInputs: AedZoneInput[] = manualJ.zones.map((zoneLoad) => {
+      const zoneRoomsWindowTotals = (rooms ?? [])
+        .filter((r) => (r.zone_id ?? null) === zoneLoad.zoneId)
+        .reduce<Record<CompassDirection, number>>(
+          (acc, r) => {
+            acc.north += r.window_north_area_sqft ?? 0;
+            acc.south += r.window_south_area_sqft ?? 0;
+            acc.east += r.window_east_area_sqft ?? 0;
+            acc.west += r.window_west_area_sqft ?? 0;
+            return acc;
+          },
+          { north: 0, south: 0, east: 0, west: 0 },
+        );
+      return {
+        zoneId: zoneLoad.zoneId ?? "unassigned",
+        zoneName: zoneLoad.zoneName,
+        windowAreaSqftByDirection: zoneRoomsWindowTotals,
+      };
+    });
+    // A missing window_shgc means the real assessAedZone("no window data")
+    // path never even runs - computeManualJ itself treats a null SHGC as
+    // "assume zero solar gain" (see n() in that file) rather than a
+    // guessed default, and AED follows the same convention rather than
+    // inventing a plausible-looking 0.3 that isn't this project's real
+    // glazing.
+    const aed: AedZoneResult[] =
+      resolvedLatLong && envelope.window_shgc != null
+        ? assessAed(aedZoneInputs, resolvedLatLong.latitude, envelope.window_shgc)
+        : aedZoneInputs.map((z) => ({
+            zoneId: z.zoneId,
+            zoneName: z.zoneName,
+            assessed: false,
+            passes: false,
+            peakExcessPercent: 0,
+            worstOrientation: null,
+            peaksByDirection: {},
+          }));
 
     let ductSchedule: DuctSizingResult[] = [];
     if (ductRuns && ductRuns.length > 0 && project.available_static_pressure_iwc != null) {
@@ -395,6 +461,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       envelope,
       manualJ,
       ductSchedule,
+      aed,
       ductRuns: ductRuns ?? [],
       rooms: rooms ?? [],
       zones: zones ?? [],

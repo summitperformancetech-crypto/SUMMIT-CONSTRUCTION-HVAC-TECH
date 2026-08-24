@@ -138,6 +138,7 @@ describe("validateReportTotals", () => {
       ductSchedule: [], ductRuns: [], rooms: [{ id: "r1", zone_id: "z1" } as RoomRow, { id: "r2", zone_id: "z1" } as RoomRow],
       zones: [], zoneEquipment: [],
       ductInsulationCompliance: [],
+      aed: [],
     });
 
     const result = validateReportTotals(data);
@@ -176,6 +177,7 @@ describe("validateReportTotals", () => {
       rooms: [{ id: "r1", zone_id: "ahu1" } as RoomRow, { id: "r2", zone_id: "ahu2" } as RoomRow],
       zones: [], zoneEquipment: [],
       ductInsulationCompliance: [],
+      aed: [],
     });
 
     const result = validateReportTotals(data);

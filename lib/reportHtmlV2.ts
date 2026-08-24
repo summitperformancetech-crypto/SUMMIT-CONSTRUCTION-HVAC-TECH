@@ -358,26 +358,51 @@ function renderLoadShortFormRoomsPage(data: ReportData, org: OrgBranding): strin
 // ---------------------------------------------------------------------------
 // Page 6: AED Assessment
 // ---------------------------------------------------------------------------
+const DIRECTION_LABEL: Record<string, string> = { north: "N", south: "S", east: "E", west: "W" };
+
 function renderAedPage(data: ReportData, org: OrgBranding): string {
+  const aedResults = data.residential!.aed;
+  const anyAssessed = aedResults.some((r) => r.assessed);
+
+  const explanation = anyAssessed
+    ? `
+    <div class="callout">
+      ACCA Manual J's AED check compares each compass orientation's peak solar sensible
+      contribution against the average across all orientations with real glazing - more than
+      30% above average means glazing is concentrated enough on one side to create a real,
+      unbalanced cooling peak. Computed from a real hourly solar-position simulation for this
+      project's actual geocoded address (lib/aedAssessment.ts), using the ASHRAE Clear Sky
+      atmospheric model rather than a live weather-data feed - see that module for the exact
+      precision boundary this implies.
+    </div>`
+    : `
+    <div class="callout warn">
+      <strong>Not assessed.</strong> AED needs a real geocoded address and real per-room,
+      per-orientation window area - at least one of those isn't available yet for this project
+      (address couldn't be geocoded, or window area hasn't been resolved for these rooms).
+      Reporting a pass/fail without that underlying data would be a fabricated number, not a
+      real assessment, so none is shown.
+    </div>`;
+
+  const rows = aedResults
+    .map((r) => {
+      if (!r.assessed) {
+        return `<tr><td>${esc(r.zoneName)}</td><td class="muted">30%</td><td class="muted">not assessed</td><td><span class="badge badge-neutral">Not Assessed</span></td></tr>`;
+      }
+      const resultBadge = r.passes
+        ? `<span class="badge badge-pass">Pass</span>`
+        : `<span class="badge badge-fail">Fail</span>`;
+      const worst = r.worstOrientation ? ` (${DIRECTION_LABEL[r.worstOrientation]})` : "";
+      return `<tr><td>${esc(r.zoneName)}</td><td class="num">30%</td><td class="num">${r.peakExcessPercent.toFixed(1)}%${esc(worst)}</td><td>${resultBadge}</td></tr>`;
+    })
+    .join("");
+
   const body = `
     <div class="section-title">AED (Adequate Exposure Diversification) Assessment</div>
-    <div class="callout warn">
-      <strong>Not yet computed by this calculation engine.</strong> ACCA Manual J's AED check
-      compares each orientation's (N/S/E/W) peak sensible contribution against a 30% excess
-      limit, which requires per-orientation, time-of-day solar load data - this app's
-      calculation engine (lib/manualJ.ts) computes a single static design-point load per room,
-      not an hourly or per-orientation breakdown. Reporting an AED pass/fail without that
-      underlying data would be a fabricated number, not a real assessment - so none is shown
-      here. Building this out is a real, separate calculation-engine capability, not a report
-      formatting task.
-    </div>
+    ${explanation}
     <table>
       <thead><tr><th>System</th><th>30% ACCA Limit</th><th>Peak Excess</th><th>Result</th></tr></thead>
-      <tbody>
-        ${data.residential!.manualJ.zones
-          .map((z) => `<tr><td>${esc(z.zoneName)}</td><td class="muted">30%</td><td class="muted">not computed</td><td><span class="badge badge-neutral">Not Assessed</span></td></tr>`)
-          .join("")}
-      </tbody>
+      <tbody>${rows}</tbody>
     </table>
   `;
   return pageShell("AED Assessment", org, body, projectAddress(data));

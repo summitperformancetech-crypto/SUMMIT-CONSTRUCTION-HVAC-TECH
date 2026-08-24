@@ -134,6 +134,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       envelope: {} as ManualJEnvelope,
       manualJ: { rooms: [emptyRoomLoad()], zones: [], wholeHouse: emptyWholeHouse() },
       ductSchedule: [],
+      aed: [],
       ductRuns: [],
       rooms,
       zones: [],

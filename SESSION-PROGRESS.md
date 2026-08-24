@@ -2568,3 +2568,97 @@ further this session.
     electrical-plan literacy just enough to recognize what to skip;
     a broader abbreviation glossary as new ones get encountered), or
     validate what exists so far with a live extraction run first.
+
+- **2026-08-24, seventeenth entry, same day - "CONTINUE TO
+  COMPLETION."** Finished the fifteenth entry's candidate list
+  (structural- and electrical-sheet literacy, for recognizing what's
+  out of scope per the existing rule, plus the real HVAC-relevant
+  exception on electrical sheets - disconnect switches, dedicated
+  equipment circuits, thermostat wiring can confirm equipment
+  location/existence). Then did the real proof this phase had been
+  missing since the fifteenth entry deliberately skipped it: a live,
+  paid extraction re-run against Kinsela's actual PDF - not the
+  already-corrected `rooms` table, since extraction reads the drawing
+  directly and doesn't care what's already in the database, making
+  this a genuinely clean test regardless of the twelfth entry's hand
+  corrections.
+  - **Found something better than expected on ceiling insulation**:
+    the "R-38 BLOWN INSULATION" callout the thirteenth entry's
+    diagnosis treated as simply missed by the model turned out, on a
+    real live run, to be a genuine conflict - the cover sheet's
+    general-materials note says "R30 MIN. INSULATION" while the
+    A1.3 cross section and both REF sheets say "R-38." The model
+    correctly surfaced this as a real, human-verification-needed
+    conflict instead of picking one - a MORE correct outcome than
+    blindly resolving to R-38 would have been, and exactly the kind
+    of thing this whole project's audit-trail philosophy exists to
+    catch.
+  - **Found something new and unprompted**: `floor_area_sqft` was
+    coming back `null` for most rectangular rooms across the whole
+    extraction - not just the two originally being checked - even
+    though the model's own `reason` text showed it had correctly
+    derived both of the room's page-axis dimensions
+    (`wall_page_horizontal_len_ft`/`wall_page_vertical_len_ft` were
+    both cleanly populated). A real, previously undiagnosed gap.
+  - Built `deriveFloorAreaFromPageDimensions`
+    (`lib/drawingExtraction.ts`): computes floor_area_sqft as the
+    product of those two page dimensions whenever floor area is null
+    and both are already known - pure arithmetic on values the model
+    already committed to, the same principle already used for the
+    compass wall-length transform, never overwriting a value already
+    present. Wired into `route.ts` unconditionally, since the page
+    dimensions are populated independent of whether orientation is
+    known. 5 new tests.
+  - `tsc --noEmit` clean. `npm test` first run hit a transient
+    Vitest/sourcemap `ETIMEDOUT` error reading a `pdf-lib` `.map` file
+    during error-stack formatting (88/88 individual assertions still
+    passed; only the file-level summary showed 1 failure) - an
+    immediate rerun came back clean, 96/96, confirming it was
+    infrastructure flakiness, not a real regression. `npm run lint`
+    clean.
+  - **A real process lesson, not just a code one**: hit the
+    "lint looks hung" pattern from the sixteenth entry twice more this
+    entry - a long-idle-looking `eslint` process with almost no
+    accrued CPU time in `ps`. Checked more carefully this time: both
+    times, the process's own captured output (read back after killing
+    it) showed it had already finished clean right around when it was
+    killed. Confirmed this is a real, repeatable false-hang pattern
+    specific to this machine's ESLint invocation (very slow, blocking
+    disk I/O during type-aware program loading that doesn't show up as
+    CPU time), not evidence of an actual deadlock. Third time, let it
+    run all the way to genuine completion without intervening - it
+    finished clean on its own. Documented this in PHASE.md's Known
+    Issues so a future session doesn't keep re-learning it the hard
+    way.
+  - **Live re-validated the derivation fix directly against real model
+    output**: applying it to the actual extraction response dropped
+    rooms with null floor area from 14 to 10 in one live sample.
+  - **Honest, load-bearing caveat - not swept under the rug**: a
+    second independent live call, run minutes after the first against
+    the identical document, showed real run-to-run model variance -
+    the same room (Laundry) got both page dimensions populated on the
+    first call and neither on the second, despite its own `reason`
+    text showing the correct arithmetic in prose both times.
+    Deliberately did NOT build a regex/prose-parsing fix to chase this
+    - pulling structured facts back out of free-form model text is
+    exactly the kind of fragile pattern this codebase has consistently
+    avoided elsewhere, and it parallels the already-documented 2026-
+    08-14 finding that a narrow follow-up re-ask doesn't reliably fix
+    a model misread either. This is now genuinely at the edge of
+    prompt/model reliability, not a missing pipeline stage - flagged
+    as a real, bounded, open question in PHASE.md rather than claimed
+    as fully solved.
+  - Committed and pushed to `origin/main`: `623e8e2` (structural/
+    electrical AEC content) and `ecbd7a8` (the derivation fix). Both
+    verified 0 ahead/0 behind after.
+  - **Session closeout**: per `CLAUDE.md`'s own Development Protocol,
+    verified objectives against real evidence throughout this entire
+    session rather than assuming, ran and re-ran lint/typecheck/tests
+    after every change, and committed + pushed all real work. Phase
+    6's originally-scoped content buildout is now complete and live-
+    proven. The 6-phase completion plan that has structured this whole
+    session is functionally done. PHASE.md now carries an explicit
+    recommendation to start a fresh chat for whatever comes next -
+    this session's history has grown very large across many distinct
+    workstreams, and nothing left open depends on this conversation's
+    own context to pick back up.

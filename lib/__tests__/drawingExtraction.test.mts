@@ -9,6 +9,7 @@
 import { describe, it, expect } from "vitest";
 import {
   collectUnresolvedItems,
+  deriveFloorAreaFromPageDimensions,
   type DrawingExtraction,
   type ExtractedEnvelope,
   type ExtractedRoom,
@@ -218,5 +219,74 @@ describe("collectUnresolvedItems - floor area and wall lengths", () => {
     ]);
     const items = collectUnresolvedItems(extraction);
     expect(items.some((i) => i.startsWith("room[0].walls"))).toBe(false);
+  });
+});
+
+// Diagnosed 2026-08-24 via a live extraction re-run against Kinsela's
+// real drawing: the model reliably finds both of a room's page-axis
+// dimensions but doesn't reliably also multiply them into
+// floor_area_sqft. See deriveFloorAreaFromPageDimensions's own comment
+// in drawingExtraction.ts for the full diagnosis.
+describe("deriveFloorAreaFromPageDimensions", () => {
+  it("computes floor_area_sqft from both page dimensions when it is null", () => {
+    const extraction = baseExtraction([
+      baseRoom({
+        name: "Laundry",
+        floor_area_sqft: null,
+        wall_page_horizontal_len_ft: 9.83,
+        wall_page_vertical_len_ft: 9.42,
+      }),
+    ]);
+    const result = deriveFloorAreaFromPageDimensions(extraction);
+    expect(result.rooms[0].floor_area_sqft).toBeCloseTo(92.6, 1);
+  });
+
+  it("does not overwrite an already-present floor_area_sqft even if the product would differ", () => {
+    const extraction = baseExtraction([
+      baseRoom({
+        name: "Bonus Room",
+        floor_area_sqft: 732,
+        wall_page_horizontal_len_ft: 38.33,
+        wall_page_vertical_len_ft: 31.42,
+      }),
+    ]);
+    const result = deriveFloorAreaFromPageDimensions(extraction);
+    expect(result.rooms[0].floor_area_sqft).toBe(732);
+  });
+
+  it("leaves floor_area_sqft null when only one page dimension is known", () => {
+    const extraction = baseExtraction([
+      baseRoom({
+        name: "Mud Room",
+        floor_area_sqft: null,
+        wall_page_horizontal_len_ft: 5.83,
+        wall_page_vertical_len_ft: null,
+      }),
+    ]);
+    const result = deriveFloorAreaFromPageDimensions(extraction);
+    expect(result.rooms[0].floor_area_sqft).toBeNull();
+  });
+
+  it("leaves floor_area_sqft null when neither page dimension is known", () => {
+    const extraction = baseExtraction([
+      baseRoom({ name: "Hidden Gun Closet", floor_area_sqft: null }),
+    ]);
+    const result = deriveFloorAreaFromPageDimensions(extraction);
+    expect(result.rooms[0].floor_area_sqft).toBeNull();
+  });
+
+  it("a room whose floor area it derives no longer triggers the room[N].floor_area unresolved item", () => {
+    const extraction = deriveFloorAreaFromPageDimensions(
+      baseExtraction([
+        baseRoom({
+          name: "Master Bath",
+          floor_area_sqft: null,
+          wall_page_horizontal_len_ft: 18.83,
+          wall_page_vertical_len_ft: 11.33,
+        }),
+      ]),
+    );
+    const items = collectUnresolvedItems(extraction);
+    expect(items.some((i) => i.startsWith("room[0].floor_area"))).toBe(false);
   });
 });

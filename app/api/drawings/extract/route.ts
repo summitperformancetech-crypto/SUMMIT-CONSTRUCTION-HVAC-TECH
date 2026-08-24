@@ -5,6 +5,7 @@ import {
   buildExtractionPrompt,
   collectUnresolvedItems,
   computeCompassWallLengthsFromPageAxes,
+  deriveFloorAreaFromPageDimensions,
   applyDuctFallbackDefaults,
   flagWaterHeaterLoadRisk,
   flagRoomCeilingHeightConflicts,
@@ -300,6 +301,16 @@ export async function POST(request: Request) {
   if (knownOrientation) {
     extraction = computeCompassWallLengthsFromPageAxes(extraction, knownOrientation);
   }
+
+  // Diagnosed 2026-08-24 via a live extraction re-run: the model
+  // reliably finds both of a rectangular room's page-axis dimensions
+  // but doesn't reliably also multiply them into floor_area_sqft - see
+  // deriveFloorAreaFromPageDimensions's own comment. Runs unconditionally
+  // (unlike the compass transform above), since wall_page_horizontal/
+  // vertical_len_ft are the model's raw page-relative reads, populated
+  // independently of whether building orientation is known for this
+  // project.
+  extraction = deriveFloorAreaFromPageDimensions(extraction);
 
   // Section 2: most drawings don't show ductwork, so this fills a
   // construction-based default for any room the model left blank - see

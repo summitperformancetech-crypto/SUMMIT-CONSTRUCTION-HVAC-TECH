@@ -988,6 +988,43 @@ export function computeCompassWallLengthsFromPageAxes(
   return { ...extraction, rooms };
 }
 
+// Diagnosed 2026-08-24 via a real, live extraction re-run against
+// Kinsela's actual drawing (run to validate the PDF-text-layer fix and
+// the AEC knowledge base, both landed earlier this same day): the
+// model now reliably populates wall_page_horizontal_len_ft AND
+// wall_page_vertical_len_ft for the large majority of rectangular
+// rooms whose dimension label is legible (a real, measured improvement
+// over the pre-fix baseline, where these were almost always null) -
+// but does NOT reliably also multiply them into floor_area_sqft even
+// when both are already known. Confirmed directly against the raw
+// response, not inferred: Master Bath, Laundry, Great Room, Dining,
+// Kitchen, Hidden Pantry, Storage/Mechanical, and several others all
+// came back with clean wall_page_h/v values and floor_area_sqft still
+// null in the same room object.
+//
+// Same principle already applied to compass wall lengths above: once
+// the model has committed to both of a room's page-axis dimensions
+// (by reading a printed "W x D" label), their product IS the room's
+// floor area - pure arithmetic, not a judgment call, so it belongs in
+// code, not left to the model to separately remember to also fill in.
+//
+// Deliberately conservative: only fills floor_area_sqft when it is
+// currently null AND both page dimensions are already present - never
+// overwrites a value the model (or a cover-sheet total it transcribed)
+// already committed to, even where that value might compute slightly
+// differently (e.g. a cover-sheet "living area" total that legitimately
+// excludes a closet by convention, or a room that isn't a clean
+// rectangle despite having two page-axis numbers).
+export function deriveFloorAreaFromPageDimensions(extraction: DrawingExtraction): DrawingExtraction {
+  const rooms = extraction.rooms.map((room) => {
+    if (room.floor_area_sqft != null) return room;
+    if (room.wall_page_horizontal_len_ft == null || room.wall_page_vertical_len_ft == null) return room;
+    const computed = room.wall_page_horizontal_len_ft * room.wall_page_vertical_len_ft;
+    return { ...room, floor_area_sqft: Math.round(computed * 100) / 100 };
+  });
+  return { ...extraction, rooms };
+}
+
 const DUCT_FALLBACK_LOCATION = "Attic-Unconditioned";
 const DUCT_FALLBACK_R_VALUE = 8;
 

@@ -1,4 +1,5 @@
 import { DUCT_LOCATION_VALUES, normalizeDuctLocation } from "./constants/ductLocations";
+import { buildAecKnowledgeBaseBlock } from "./aecDrawingConventions";
 
 // Phase 3, item 3 (uncertainty classification). Richer than the single
 // "unresolved" boolean this sits alongside - "unresolved" answers "does
@@ -624,6 +625,8 @@ ${buildOrientationPreamble(knownOrientation)}
 This document may have many pages of very different types. Review EVERY page before responding. Do not skip a page, or treat its content as irrelevant, because of what its sheet type usually contains - relevant facts have been found on pages a first guess would rule out (a cover sheet's general materials note, a wall-section detail between structural sheets, a mechanical plan's HVAC notes).
 
 Reading discipline: read this drawing set as a structured technical document, not as plain text to OCR top-to-bottom. Recognize and use the symbolic structure professionals use to navigate it: keynote tags (a circled or boxed number/letter that references a keynote legend printed elsewhere on the sheet or set - look up what the legend entry actually says rather than treating the bare tag itself as the fact); grid lines (lettered/numbered reference lines used to pinpoint a location precisely - use them to confirm you're looking at the same physical location when cross-referencing between sheets, e.g. matching a detail callout back to where it applies on the floor plan); and section/detail callout markers (a circle or hexagon containing a detail number and a sheet reference, e.g. "4/A3.0", meaning "see detail 4 on sheet A3.0 for a closer, more precise view of this"). When you follow such a marker to find a value, that value came from a more precise, more authoritative source than a general overview plan - prefer it over a same-fact value read from a general plan, and note in "reason" that it came from a detail/section reference (e.g. "per detail 4/A3.0") so a human reviewer can see why it was preferred.
+
+${buildAecKnowledgeBaseBlock()}
 
 Explicitly out of scope - do not extract, calculate, or reason about any of the following, even when they appear on a sheet you are otherwise reading for HVAC-relevant content (e.g. ignore a structural beam callout printed on the same sheet as a duct routing note): structural load calculations or member sizing; electrical service/panel sizing; plumbing fixture-unit sizing; fire-rating, egress, or life-safety analysis; civil/site/grading work; accessibility (ADA) compliance. These are separate licensure and liability domains, not part of this task. If a sheet's primary content is one of these domains (e.g. a structural framing plan), still review it for any HVAC-relevant facts it may incidentally carry (an insulation callout, a duct chase note) - just don't report on, compute, or flag anything about the excluded domain itself.
 

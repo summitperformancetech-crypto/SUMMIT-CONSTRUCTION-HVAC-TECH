@@ -2463,3 +2463,64 @@ further this session.
   Kinsela's `rooms` table post-delete: 27 rows (was 30), no duplicate
   names remain. No scratch files left behind. PHASE.md updated to mark
   this resolved.
+
+- **2026-08-23, fifteenth entry, same day - "WHERE ARE YOU ON
+  COMPLETING THE MASTER PROMPT" then "LETS GET IT DONE AND THEN
+  CONTINUE ON TO PHASE 6 AND THE REST"**: pulled the actual master
+  recovery prompt's full text back from this session's own transcript
+  (not a paraphrase) to answer precisely. Honest answer: its
+  discipline (verify before claiming, trace pipelines end to end, fix
+  real bugs, test rigorously) has been this whole session's mode of
+  operating - but its specific `docs/` tree (PROJECT_MEMORY.md,
+  PRODUCT_SPEC.md, GAP_ANALYSIS.md, ROADMAP.md, etc.) and Claude
+  Browser handoff workflow were never built, because the user had
+  already decided earlier this session to keep the leaner CLAUDE.md/
+  PHASE.md/SESSION-PROGRESS.md system instead - a real decision, not
+  an oversight. Also flagged, per the master prompt's own GitHub-
+  verification standard: today's real work (the PDF-text-extraction
+  fix) was sitting uncommitted at that moment.
+  - User said to commit and push, then move to Phase 6. Committed
+    (`c2a9a46`, "feat: ground drawing extraction in the PDF text
+    layer, not vision alone") and pushed to `origin/main` directly -
+    verified 0 ahead/0 behind after.
+  - Before building Phase 6, resolved a real ambiguity in its own
+    one-line description ("role-based knowledge-base docs (architect/
+    engineer/designer/drafter standards)") rather than guessing: does
+    "role-based" mean Summit's own 3 app roles or the external AEC
+    disciplines, and is the output user-facing or backend prompt
+    material? Asked directly. User chose external AEC disciplines +
+    backend prompt-grounding (both recommended options) - confirming
+    this phase extends the same drawing-literacy work the whole
+    session has been doing, not a new user-facing feature.
+  - Built the first real piece: `lib/aecDrawingConventions.ts`
+    (`buildAecKnowledgeBaseBlock()`), a static reference block always
+    included in `buildExtractionPrompt` (unlike the per-document PDF
+    text block, since this is general professional literacy, not
+    project-specific data). Covers sheet-numbering conventions
+    (discipline prefixes, the architectural A-series sub-sequence),
+    the clear/finished-vs-out-to-out dimension distinction (directly
+    informed by the twelfth entry's own Master Bedroom transcription
+    correction - a room legitimately showing two different "size"
+    numbers is exactly how that error happened), a glossary of
+    abbreviations actually seen reading real drawings this session
+    (WIC, RD/SHELF, DBL, V.I.F., O.C., etc.), and door/window/wall-
+    hatching/revision-mark symbol conventions. Explicit throughout
+    that real drawing evidence overrides these general conventions,
+    never the reverse.
+  - 7 new tests in `lib/__tests__/aecDrawingConventions.test.mts`.
+    `tsc --noEmit` clean, full suite 86/86 passing, lint clean.
+    Checked the resulting prompt's real size directly rather than
+    assuming it was fine - ~46.8k characters (~11.7k tokens),
+    comfortable headroom.
+  - Deliberately did NOT burn a live paid extraction call validating
+    this specific addition - unlike the PDF-text fix, which needed to
+    prove recovery of two specific already-documented misses, this is
+    general background literacy with no single clean before/after
+    test case, so a live run wouldn't prove much for the cost.
+  - PHASE.md updated: Phase 6 is now the tracked current phase (Phase
+    5's own record kept intact for history), with candidate next
+    content areas listed (construction-assembly callouts, schedule-
+    table conventions, mechanical-plan-specific symbols) so a future
+    pass doesn't start from zero, and an explicit next-action question
+    for the user (keep building content vs. validate what exists via
+    a live run first).

@@ -2524,3 +2524,47 @@ further this session.
     pass doesn't start from zero, and an explicit next-action question
     for the user (keep building content vs. validate what exists via
     a live run first).
+
+- **2026-08-24, sixteenth entry, same day - user chose "keep building
+  content" over validating first.** Built out all three candidate
+  areas the fifteenth entry had flagged, into the same
+  `lib/aecDrawingConventions.ts` file: construction-assembly/framing
+  callouts (insulation R-value note formats - "R-38 BLOWN INSULATION"
+  specifically, the exact callout the thirteenth entry's PDF-text fix
+  recovered from Kinsela - knee-wall/sloped-ceiling handling, beam
+  callouts relevant to duct_location reasoning); schedule-table
+  reading conventions (a schedule's MARK column only correlates to a
+  floor-plan tag and never states location by itself; QTY is a whole-
+  set total, not a per-room count - both real, common misreadings if
+  not stated explicitly); mechanical-plan-specific conventions
+  (register-vs-grille symbol distinction deferring to any sheet's own
+  legend, the single-line duct-drawing convention, equipment tags
+  needing their own schedule/spec lookup, thermostat symbols). 3 new
+  tests (10 total for this file).
+  - Hit the documented `.next/types` staleness issue mid-verification
+    (`tsc` failing on missing generated route-type files) - applied
+    the known fix (`rm -rf .next && npx next typegen`), confirmed
+    against PHASE.md's own Known Issues that this is the pre-existing
+    machine artifact, not a new regression.
+  - One lint run this pass looked hung - 31 minutes wall-clock with
+    only ~4 seconds of CPU time accrued on the process, verified
+    directly via `ps` before concluding it was actually stuck rather
+    than just this machine's usual slowness. Killed it and reran; the
+    rerun completed normally. Read back the original run's own output
+    afterward and found it had actually finished clean right around
+    when it was killed - the real issue was notification-delivery lag
+    on a heavily disk-contended machine, not a genuine hang. Worth
+    remembering: don't assume "no output yet" means "stuck" on this
+    machine without checking real CPU time first.
+  - Full verification: `tsc --noEmit` clean, 89/89 tests passing,
+    lint clean. Checked final prompt size directly again - ~50.8k
+    characters (~12.7k tokens), still comfortable alongside a real
+    document's own content.
+  - Committed (`d62d64f` for the fifteenth entry's work, `25d53b2` for
+    this entry's) and pushed both to `origin/main` - verified 0
+    ahead/0 behind after.
+  - PHASE.md updated with the full detail and a real open question
+    for the user: keep adding more Phase 6 content (structural/
+    electrical-plan literacy just enough to recognize what to skip;
+    a broader abbreviation glossary as new ones get encountered), or
+    validate what exists so far with a live extraction run first.

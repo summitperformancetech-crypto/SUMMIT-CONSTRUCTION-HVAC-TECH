@@ -6,6 +6,8 @@ import {
   computeManualD,
   computeRequiredCfmForRooms,
   checkDuctInsulationCompliance,
+  computeAvailableStaticPressure,
+  estimateCoolingSupplyAirTempF,
   type DuctRunInput,
   type DuctSizingTableRow,
 } from "@/lib/manualD";
@@ -102,6 +104,10 @@ export function DuctDesignSection({
   indoorCoolingDesignTempF,
   initialAvailableStaticPressureIwc,
   initialSupplyAirTempF,
+  initialBlowerTespIwc,
+  initialEvaporatorCoilLossIwc,
+  initialAirFilterLossIwc,
+  initialGrillesRegistersLossIwc,
   initialDuctRuns,
   ductSizingTable,
   ductInsulationCodeMinimums,
@@ -113,6 +119,10 @@ export function DuctDesignSection({
   indoorCoolingDesignTempF: number;
   initialAvailableStaticPressureIwc: number | null;
   initialSupplyAirTempF: number | null;
+  initialBlowerTespIwc: number | null;
+  initialEvaporatorCoilLossIwc: number | null;
+  initialAirFilterLossIwc: number | null;
+  initialGrillesRegistersLossIwc: number | null;
   initialDuctRuns: DuctRunRow[];
   ductSizingTable: DuctSizingTableRow[];
   // Data Integrity Addendum, Section 3 - duct_location -> current code
@@ -130,6 +140,45 @@ export function DuctDesignSection({
   );
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  // ACCA Manual D Available Static Pressure calculator - optional inputs
+  // that derive staticPressureForm instead of the tech typing that number
+  // in directly. See computeAvailableStaticPressure in lib/manualD.ts for
+  // why TESP and device losses are kept as separate, sourced inputs
+  // rather than one opaque number.
+  const [tespForm, setTespForm] = useState(initialBlowerTespIwc?.toString() ?? "");
+  const [evapCoilLossForm, setEvapCoilLossForm] = useState(
+    initialEvaporatorCoilLossIwc?.toString() ?? "",
+  );
+  const [airFilterLossForm, setAirFilterLossForm] = useState(
+    initialAirFilterLossIwc?.toString() ?? "",
+  );
+  const [grillesLossForm, setGrillesLossForm] = useState(
+    initialGrillesRegistersLossIwc?.toString() ?? "",
+  );
+
+  const tespIwc = toNullableNumber(tespForm);
+  const evapCoilLossIwc = toNullableNumber(evapCoilLossForm);
+  const airFilterLossIwc = toNullableNumber(airFilterLossForm);
+  const grillesLossIwc = toNullableNumber(grillesLossForm);
+
+  const aspCalculatorResult = useMemo(() => {
+    if (
+      tespIwc == null ||
+      evapCoilLossIwc == null ||
+      airFilterLossIwc == null ||
+      grillesLossIwc == null
+    ) {
+      return null;
+    }
+    return computeAvailableStaticPressure(tespIwc, {
+      evaporatorCoilIwc: evapCoilLossIwc,
+      airFilterIwc: airFilterLossIwc,
+      grillesRegistersIwc: grillesLossIwc,
+    });
+  }, [tespIwc, evapCoilLossIwc, airFilterLossIwc, grillesLossIwc]);
+
+  const estimatedCoolingSupplyAirTempF = estimateCoolingSupplyAirTempF(indoorCoolingDesignTempF);
 
   const [ductRuns, setDuctRuns] = useState<DuctRunRow[]>(initialDuctRuns);
   const [showAddForm, setShowAddForm] = useState(false);
@@ -223,6 +272,10 @@ export function DuctDesignSection({
         .update({
           available_static_pressure_iwc: availableStaticPressureIwc,
           supply_air_temp_f: supplyAirTempF,
+          blower_tesp_iwc: tespIwc,
+          evaporator_coil_loss_iwc: evapCoilLossIwc,
+          air_filter_loss_iwc: airFilterLossIwc,
+          grilles_registers_loss_iwc: grillesLossIwc,
         })
         .eq("id", projectId);
       if (error) {
@@ -341,6 +394,60 @@ export function DuctDesignSection({
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
       <h2 className="mb-4 text-lg font-semibold text-brand-gold">Duct Design (Manual D)</h2>
 
+      <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
+          Available Static Pressure calculator (optional)
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <NumberField label="Blower TESP (in.wc)" value={tespForm} onChange={setTespForm} />
+          <NumberField
+            label="Evaporator coil loss (in.wc)"
+            value={evapCoilLossForm}
+            onChange={setEvapCoilLossForm}
+          />
+          <NumberField
+            label="Air filter loss (in.wc)"
+            value={airFilterLossForm}
+            onChange={setAirFilterLossForm}
+          />
+          <NumberField
+            label="Grilles/registers loss (in.wc)"
+            value={grillesLossForm}
+            onChange={setGrillesLossForm}
+          />
+        </div>
+        {aspCalculatorResult && (
+          <div className="mt-3 flex items-center gap-3">
+            {aspCalculatorResult.error ? (
+              <span className="text-sm text-red-400" role="alert">
+                {aspCalculatorResult.error}
+              </span>
+            ) : (
+              <>
+                <span className="text-sm text-brand-silver-highlight">
+                  ASP = {aspCalculatorResult.availableStaticPressureIwc?.toFixed(3)}&quot; w.c.
+                </span>
+                <button
+                  onClick={() =>
+                    setStaticPressureForm(
+                      aspCalculatorResult.availableStaticPressureIwc?.toString() ?? "",
+                    )
+                  }
+                  className="rounded-md border border-brand-gold/50 px-3 py-1 text-xs font-semibold text-brand-gold transition hover:border-brand-gold"
+                >
+                  Apply to Available Static Pressure
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        <p className="mt-3 text-xs text-brand-grey-text">
+          TESP must come from the selected equipment&apos;s own OEM blower/installation
+          data at design CFM, and device losses are per-installation - none of these are
+          filled automatically.
+        </p>
+      </div>
+
       <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div>
           <label className="mb-1 block text-xs font-medium text-brand-grey-text">
@@ -365,6 +472,13 @@ export function DuctDesignSection({
             onChange={(e) => setSupplyAirTempForm(e.target.value)}
             className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
           />
+          <button
+            onClick={() => setSupplyAirTempForm(estimatedCoolingSupplyAirTempF.toString())}
+            className="mt-1 text-xs text-brand-gold underline decoration-dotted underline-offset-2 hover:text-brand-gold-hover"
+          >
+            Estimate ({estimatedCoolingSupplyAirTempF}°F, ACCA 20°F cooling split - supersede
+            with OEM leaving air temp once known)
+          </button>
         </div>
       </div>
       <div className="mb-6 flex items-center gap-3">

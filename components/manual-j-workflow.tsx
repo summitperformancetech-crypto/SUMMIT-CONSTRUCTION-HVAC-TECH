@@ -430,6 +430,10 @@ export const ManualJWorkflow = forwardRef<
     initialZones: ZoneRow[];
     initialAvailableStaticPressureIwc: number | null;
     initialSupplyAirTempF: number | null;
+    initialBlowerTespIwc: number | null;
+    initialEvaporatorCoilLossIwc: number | null;
+    initialAirFilterLossIwc: number | null;
+    initialGrillesRegistersLossIwc: number | null;
     initialDuctRuns: DuctRunRow[];
     ductSizingTable: DuctSizingTableRow[];
     summerCoincidentWetbulbF: number | null;
@@ -458,6 +462,10 @@ export const ManualJWorkflow = forwardRef<
     initialZones,
     initialAvailableStaticPressureIwc,
     initialSupplyAirTempF,
+    initialBlowerTespIwc,
+    initialEvaporatorCoilLossIwc,
+    initialAirFilterLossIwc,
+    initialGrillesRegistersLossIwc,
     initialDuctRuns,
     ductSizingTable,
     summerCoincidentWetbulbF,
@@ -1557,6 +1565,10 @@ export const ManualJWorkflow = forwardRef<
           indoorCoolingDesignTempF={envelope.indoor_design_temp_cooling_f}
           initialAvailableStaticPressureIwc={initialAvailableStaticPressureIwc}
           initialSupplyAirTempF={initialSupplyAirTempF}
+          initialBlowerTespIwc={initialBlowerTespIwc}
+          initialEvaporatorCoilLossIwc={initialEvaporatorCoilLossIwc}
+          initialAirFilterLossIwc={initialAirFilterLossIwc}
+          initialGrillesRegistersLossIwc={initialGrillesRegistersLossIwc}
           initialDuctRuns={initialDuctRuns}
           ductSizingTable={ductSizingTable}
           ductInsulationCodeMinimums={ductInsulationCodeMinimums}

@@ -91,6 +91,84 @@ export type DuctSizingResult = {
 export const TRUNK_MAX_VELOCITY_FPM = 1500;
 export const BRANCH_MAX_VELOCITY_FPM = 800;
 
+// ACCA Manual D - Available Static Pressure (ASP). Ported from a reference
+// acca_airflow_sizing.py the user supplied (2026-08-25) - same formula,
+// adapted to this file's null/error-return convention (this app never
+// throws on user-input validation, see settingsError in
+// duct-design-section.tsx) instead of raising exceptions.
+//
+// ASP = TESP - (evaporator coil + air filter + grilles/registers losses).
+// TESP is the selected equipment's blower-rated total external static
+// pressure at the design CFM, from its own OEM spec/installation data -
+// never a generic 0.5" assumption when real OEM data exists. Device
+// losses are per-installation, user-supplied values (they vary by model
+// and airflow), never hardcoded. ASP is the residual pressure budget left
+// for the ductwork itself - the figure computeZoneFrictionRates above
+// actually uses to derive friction rate.
+export type DevicePressureLosses = {
+  evaporatorCoilIwc: number;
+  airFilterIwc: number;
+  grillesRegistersIwc: number;
+};
+
+export type AvailableStaticPressureResult = {
+  availableStaticPressureIwc: number | null;
+  totalDeviceLossesIwc: number;
+  error: string | null;
+};
+
+export function computeAvailableStaticPressure(
+  totalExternalStaticPressureIwc: number,
+  deviceLosses: DevicePressureLosses,
+): AvailableStaticPressureResult {
+  const totalDeviceLossesIwc =
+    deviceLosses.evaporatorCoilIwc + deviceLosses.airFilterIwc + deviceLosses.grillesRegistersIwc;
+
+  if (totalExternalStaticPressureIwc <= 0) {
+    return {
+      availableStaticPressureIwc: null,
+      totalDeviceLossesIwc,
+      error: "Total external static pressure must be greater than zero.",
+    };
+  }
+  if (totalDeviceLossesIwc >= totalExternalStaticPressureIwc) {
+    return {
+      availableStaticPressureIwc: null,
+      totalDeviceLossesIwc,
+      error: `Device losses (${totalDeviceLossesIwc.toFixed(3)}" w.c.) meet or exceed total external static pressure (${totalExternalStaticPressureIwc.toFixed(3)}" w.c.) - this indicates a data error (wrong TESP for this unit, or losses pulled at the wrong CFM), not a valid design.`,
+    };
+  }
+  return {
+    availableStaticPressureIwc: Math.round((totalExternalStaticPressureIwc - totalDeviceLossesIwc) * 10000) / 10000,
+    totalDeviceLossesIwc,
+    error: null,
+  };
+}
+
+// ACCA Manual J/S - Supply Air Temperature (SAT) rule-of-thumb estimates
+// (20F cooling split, 30F heat pump / 50F furnace heating rise). These are
+// ACCA-standard defaults for CFM sizing used when the selected equipment's
+// OEM extended performance data doesn't publish an actual leaving air
+// temperature at design conditions - which is the case for every unit
+// currently in equipment_catalog (see PerformancePoint in lib/manualS.ts:
+// capacity and input power are tracked per condition, leaving air temp is
+// not). Real OEM LAT should supersede this estimate once that data is
+// sourced for a given unit, same "estimate until real data exists"
+// convention as ductRScaleFactor's code-minimum fallback in manualJ.ts.
+export type SatHeatingSystemType = "heat_pump" | "furnace";
+
+export function estimateCoolingSupplyAirTempF(indoorCoolingDesignTempF: number): number {
+  return Math.round((indoorCoolingDesignTempF - 20) * 100) / 100;
+}
+
+export function estimateHeatingSupplyAirTempF(
+  indoorHeatingDesignTempF: number,
+  heatingSystemType: SatHeatingSystemType,
+): number {
+  const rise = heatingSystemType === "heat_pump" ? 30 : 50;
+  return Math.round((indoorHeatingDesignTempF + rise) * 100) / 100;
+}
+
 // Room sensible cooling load -> required supply CFM, via the standard
 // sensible heat equation solved for airflow: Btuh = 1.08 * cfm * deltaT.
 // deltaT is supply air temp below the room's own indoor design cooling

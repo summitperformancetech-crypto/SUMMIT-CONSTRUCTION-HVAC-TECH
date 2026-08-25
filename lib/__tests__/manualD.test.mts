@@ -10,12 +10,64 @@ import {
   sizeDuctRun,
   computeManualD,
   checkDuctInsulationCompliance,
+  computeAvailableStaticPressure,
+  estimateCoolingSupplyAirTempF,
+  estimateHeatingSupplyAirTempF,
   TRUNK_MAX_VELOCITY_FPM,
   BRANCH_MAX_VELOCITY_FPM,
   type DuctSizingTableRow,
   type DuctRunInput,
 } from "../manualD";
 import type { RoomLoadResult } from "../manualJ";
+
+describe("computeAvailableStaticPressure", () => {
+  it("subtracts device losses from TESP", () => {
+    const result = computeAvailableStaticPressure(0.5, {
+      evaporatorCoilIwc: 0.18,
+      airFilterIwc: 0.1,
+      grillesRegistersIwc: 0.05,
+    });
+    expect(result.error).toBeNull();
+    expect(result.totalDeviceLossesIwc).toBeCloseTo(0.33, 5);
+    expect(result.availableStaticPressureIwc).toBeCloseTo(0.17, 5);
+  });
+
+  it("rejects a non-positive TESP", () => {
+    const result = computeAvailableStaticPressure(0, {
+      evaporatorCoilIwc: 0.1,
+      airFilterIwc: 0.05,
+      grillesRegistersIwc: 0.02,
+    });
+    expect(result.availableStaticPressureIwc).toBeNull();
+    expect(result.error).not.toBeNull();
+  });
+
+  it("rejects device losses that meet or exceed TESP", () => {
+    const result = computeAvailableStaticPressure(0.3, {
+      evaporatorCoilIwc: 0.2,
+      airFilterIwc: 0.1,
+      grillesRegistersIwc: 0.05,
+    });
+    expect(result.availableStaticPressureIwc).toBeNull();
+    expect(result.error).toMatch(/meet or exceed/);
+  });
+});
+
+describe("estimateCoolingSupplyAirTempF", () => {
+  it("applies the ACCA-standard 20F cooling split", () => {
+    expect(estimateCoolingSupplyAirTempF(75)).toBe(55);
+  });
+});
+
+describe("estimateHeatingSupplyAirTempF", () => {
+  it("applies a 30F rise for a heat pump", () => {
+    expect(estimateHeatingSupplyAirTempF(70, "heat_pump")).toBe(100);
+  });
+
+  it("applies a 50F rise for a furnace", () => {
+    expect(estimateHeatingSupplyAirTempF(70, "furnace")).toBe(120);
+  });
+});
 
 describe("computeRequiredCfm", () => {
   it("solves Btuh = 1.08 * cfm * deltaT for cfm", () => {

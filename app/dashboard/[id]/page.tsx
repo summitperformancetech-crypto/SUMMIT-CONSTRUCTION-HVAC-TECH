@@ -59,6 +59,10 @@ type Project = {
   window_count: number | null;
   available_static_pressure_iwc: number | null;
   supply_air_temp_f: number | null;
+  blower_tesp_iwc: number | null;
+  evaporator_coil_loss_iwc: number | null;
+  air_filter_loss_iwc: number | null;
+  grilles_registers_loss_iwc: number | null;
   building_front_faces: Compass8 | null;
   preferred_manufacturer: string | null;
   hvac_system_configuration: HvacSystemConfiguration;
@@ -236,7 +240,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces, preferred_manufacturer, hvac_system_configuration",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, blower_tesp_iwc, evaporator_coil_loss_iwc, air_filter_loss_iwc, grilles_registers_loss_iwc, building_front_faces, preferred_manufacturer, hvac_system_configuration",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -729,6 +733,10 @@ export default async function ProjectDetailPage({
         initialZones={zones ?? []}
         initialAvailableStaticPressureIwc={project.available_static_pressure_iwc}
         initialSupplyAirTempF={project.supply_air_temp_f}
+        initialBlowerTespIwc={project.blower_tesp_iwc}
+        initialEvaporatorCoilLossIwc={project.evaporator_coil_loss_iwc}
+        initialAirFilterLossIwc={project.air_filter_loss_iwc}
+        initialGrillesRegistersLossIwc={project.grilles_registers_loss_iwc}
         initialDuctRuns={ductRuns ?? []}
         ductSizingTable={ductSizingTable}
         summerCoincidentWetbulbF={climateZone?.summer_coincident_wetbulb_f ?? null}

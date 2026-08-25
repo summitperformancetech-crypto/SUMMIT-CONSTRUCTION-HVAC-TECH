@@ -36,6 +36,10 @@ export function ProjectWorkspace({
   initialZones,
   initialAvailableStaticPressureIwc,
   initialSupplyAirTempF,
+  initialBlowerTespIwc,
+  initialEvaporatorCoilLossIwc,
+  initialAirFilterLossIwc,
+  initialGrillesRegistersLossIwc,
   initialDuctRuns,
   ductSizingTable,
   summerCoincidentWetbulbF,
@@ -65,6 +69,10 @@ export function ProjectWorkspace({
   initialZones: ZoneRow[];
   initialAvailableStaticPressureIwc: number | null;
   initialSupplyAirTempF: number | null;
+  initialBlowerTespIwc: number | null;
+  initialEvaporatorCoilLossIwc: number | null;
+  initialAirFilterLossIwc: number | null;
+  initialGrillesRegistersLossIwc: number | null;
   initialDuctRuns: DuctRunRow[];
   ductSizingTable: DuctSizingTableRow[];
   summerCoincidentWetbulbF: number | null;
@@ -147,6 +155,10 @@ export function ProjectWorkspace({
         initialZones={initialZones}
         initialAvailableStaticPressureIwc={initialAvailableStaticPressureIwc}
         initialSupplyAirTempF={initialSupplyAirTempF}
+        initialBlowerTespIwc={initialBlowerTespIwc}
+        initialEvaporatorCoilLossIwc={initialEvaporatorCoilLossIwc}
+        initialAirFilterLossIwc={initialAirFilterLossIwc}
+        initialGrillesRegistersLossIwc={initialGrillesRegistersLossIwc}
         initialDuctRuns={initialDuctRuns}
         ductSizingTable={ductSizingTable}
         summerCoincidentWetbulbF={summerCoincidentWetbulbF}

@@ -168,6 +168,7 @@ export function ProjectWorkspace({
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         initialBuildingFrontFaces={buildingFrontFaces}
+        initialDrawings={initialDrawings}
         initialPreferredManufacturer={initialPreferredManufacturer}
         initialSystemConfiguration={initialSystemConfiguration}
         userRole={userRole}

@@ -246,6 +246,35 @@ export type ExtractedRoom = {
   // multiple floor-plan sheets (Kinsela has two: A1.1 main floor, A1.2
   // bonus room/second level) and a room name alone doesn't disambiguate.
   source_sheet: string | null;
+  // Duct-routing pin placement (auto Manual D run length feature, added
+  // 2026-08-25 per real, sourced ACCA Manual D Appendix 3 fitting data -
+  // see lib/ductRouting.ts). A best-effort visual bounding-box read of
+  // this room's position on its own source_sheet, normalized 0-1
+  // (resolution-independent - the same coordinates apply whether the
+  // sheet is later rendered small for the pin-placement canvas or
+  // full-size for the PDF report illustration). width_norm/height_norm
+  // (the room's bounding-box extent, not just a center point) exist
+  // specifically so a real per-sheet scale (feet per normalized unit)
+  // can be derived from any room whose real wall_page_horizontal_len_ft/
+  // wall_page_vertical_len_ft are ALSO known, rather than needing a
+  // separately-read scale bar most sheets don't legibly have - see
+  // lib/ductRouting.ts's derivePageScale. unresolved is true whenever
+  // this is populated (an AI position estimate always needs a human to
+  // confirm or drag-correct before it drives a real duct length - same
+  // "AI guess still needs a human" standard as duct_location) and also
+  // true whenever it's null (nothing to show yet, e.g. the room's
+  // boundary genuinely can't be located on the page). Optional at the
+  // type level (not present at all on extractions from before this
+  // field existed) - always read defensively (`room.room_position?.`),
+  // never assume it exists.
+  room_position?: {
+    x_norm: number | null;
+    y_norm: number | null;
+    width_norm: number | null;
+    height_norm: number | null;
+    unresolved: boolean;
+    reason: string | null;
+  } | null;
 };
 
 export type ExtractedOrientation = {
@@ -329,6 +358,20 @@ export type ExtractedSheet = {
   // frontAnchorPageEdge gets its compass wall fields left null too, by
   // computeCompassWallLengthsFromPageAxes below.
   frontAnchorPageEdge: "top" | "bottom" | "left" | "right" | null;
+  // Duct-routing pin placement (see ExtractedRoom.room_position above).
+  // Which page NUMBER within the uploaded PDF this named sheet actually
+  // is (1-indexed, matching lib/floorPlanRender.ts's renderPdfPageToPngDataUri
+  // page numbering) - a plain, mechanical fact (which page a title-block
+  // name appears on), same "structural transcription, not judgment"
+  // category as revisionDate/ceiling_insulation_callout_text above.
+  // Needed because room_position's x_norm/y_norm are only meaningful
+  // once matched to a real rendered image of the correct page - "sheet
+  // A1.1" alone doesn't say which PDF page that is. Null for an image
+  // upload (single page, page_number is always 1 there - filled in by
+  // code, not asked of the model) or when the model genuinely can't
+  // determine which page a sheet is on (should be rare - the page is
+  // right in front of it while reviewing that sheet).
+  page_number: number | null;
 };
 
 // Phase 2, item 6. Transcribed verbatim from the drawing's own window
@@ -640,7 +683,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
     "description": string | null
   },
   "sheets": [
-    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null, "revisionDate": string | null, "revisionNote": string | null, "frontAnchorPageEdge": "top" | "bottom" | "left" | "right" | null }
+    { "name": string, "sourceAuthority": "sealed_construction_document" | "reference_only" | "unknown", "ceiling_insulation_callout_text": string | null, "revisionDate": string | null, "revisionNote": string | null, "frontAnchorPageEdge": "top" | "bottom" | "left" | "right" | null, "page_number": number | null }
   ],
   "building_envelope": {
     "wall_insulation_r_value": { "value": number | null, "unresolved": boolean, "reason": string | null, "source_sheet": string | null, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
@@ -690,6 +733,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
       "source_sheet": string | null,
       "unresolved": boolean,
       "reason": string | null,
+      "room_position": { "x_norm": number | null, "y_norm": number | null, "width_norm": number | null, "height_norm": number | null, "unresolved": boolean, "reason": string | null },
       "duct_location": { "value": string | null, "unresolved": boolean, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
       "duct_insulation_r_value": { "value": number | null, "unresolved": boolean, "certainty": "documented" | "calculated" | "inferred" | "assumed" | "unverified" | "conflict" | null },
       "duct_confidence": number | null
@@ -716,7 +760,7 @@ Respond with STRICT JSON only — no markdown code fences, no commentary, nothin
   "revisionConcern": string | null
 }
 
-STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "sourceAuthority" - exactly one of "sealed_construction_document", "reference_only", "unknown", determined in this order: first, set "reference_only" if the sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent). Otherwise, set "sealed_construction_document" ONLY if the sheet shows an actual professional (engineer/architect) seal or stamp graphic, or explicit issuance language such as "ISSUED FOR CONSTRUCTION" or "APPROVED FOR CONSTRUCTION" - do not infer this from a sheet simply looking detailed, official, or complete; most sheets in a typical residential set will NOT qualify, and that's the expected, normal outcome, not a gap. Otherwise (the common case), set "unknown". This is a real authority hierarchy for resolving conflicts between sheets (sealed_construction_document > unknown > reference_only), not a cosmetic label - see "Other rules" below for exactly how it's used. Also set "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. Also set "revisionDate": the most recent revision date or revision number, copied verbatim, but ONLY from an actual revision-specific marking - a revision table/block (often literally labeled "REVISIONS", with rows like "REV | DATE | DESCRIPTION"), a numbered revision triangle or tag near a specific change, or equivalent - e.g. "REV 2 03/15/2026". Do NOT use the sheet's ordinary issue date, plot date, or "DATE:" field in the title block for this - that field exists on every sheet regardless of whether anything was ever revised, and is a different fact (when the set was first issued, not evidence of a later change). Leave "revisionDate" null whenever there is no distinct revision-specific marking, even though the sheet obviously still has an ordinary issue date - this is the normal, expected case for a set with no post-issuance changes, not a gap to explain. And "revisionNote": a short note if this sheet shows a revision cloud (a hand-drawn or printed cloud/bubble outlining a changed area), a "SUPERSEDED" or "VOID" stamp, or any other visible sign the content was changed after initial issuance - null if none. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
+STEP 1 — Sheet inventory. Before extracting any specific field, note every sheet you actually reviewed. For each, add one entry to "sheets": "name" exactly as printed in its title block (e.g. "A1.1", "REF-2", "C.S"); "sourceAuthority" - exactly one of "sealed_construction_document", "reference_only", "unknown", determined in this order: first, set "reference_only" if the sheet carries language stating its content is "for reference only" or "may not correspond with the other sheets in this set" (or equivalent). Otherwise, set "sealed_construction_document" ONLY if the sheet shows an actual professional (engineer/architect) seal or stamp graphic, or explicit issuance language such as "ISSUED FOR CONSTRUCTION" or "APPROVED FOR CONSTRUCTION" - do not infer this from a sheet simply looking detailed, official, or complete; most sheets in a typical residential set will NOT qualify, and that's the expected, normal outcome, not a gap. Otherwise (the common case), set "unknown". This is a real authority hierarchy for resolving conflicts between sheets (sealed_construction_document > unknown > reference_only), not a cosmetic label - see "Other rules" below for exactly how it's used. Also set "ceiling_insulation_callout_text": the verbatim text of any note printed ON THIS SPECIFIC SHEET stating a ceiling, attic, or roof insulation R-value (e.g. "R-30 MIN. INSULATION", "R-38 (MIN.) INSULATION AT CEILING/ROOF") - copied exactly as printed, or null if this sheet has no such callout. This is a plain per-sheet transcription, not a judgment about which sheet is correct - report what THIS sheet says even if you already know another sheet says something different; a downstream check compares every sheet's own callout independently, so withholding or reconciling them yourself here defeats the purpose. Also set "revisionDate": the most recent revision date or revision number, copied verbatim, but ONLY from an actual revision-specific marking - a revision table/block (often literally labeled "REVISIONS", with rows like "REV | DATE | DESCRIPTION"), a numbered revision triangle or tag near a specific change, or equivalent - e.g. "REV 2 03/15/2026". Do NOT use the sheet's ordinary issue date, plot date, or "DATE:" field in the title block for this - that field exists on every sheet regardless of whether anything was ever revised, and is a different fact (when the set was first issued, not evidence of a later change). Leave "revisionDate" null whenever there is no distinct revision-specific marking, even though the sheet obviously still has an ordinary issue date - this is the normal, expected case for a set with no post-issuance changes, not a gap to explain. And "revisionNote": a short note if this sheet shows a revision cloud (a hand-drawn or printed cloud/bubble outlining a changed area), a "SUPERSEDED" or "VOID" stamp, or any other visible sign the content was changed after initial issuance - null if none. Also set "page_number": which page number this sheet is within the uploaded document (1 = the first page you see, counting every page including cover/index sheets) - a plain mechanical count, not a judgment call; leave it null only for a single-image upload (not a multi-page PDF) or in the rare case you genuinely cannot tell which page you're looking at. This list isn't just a record: every "source_sheet" you fill in below must name one of these exact sheets.
 
 ${buildOrientationStep2(knownOrientation)}
 
@@ -725,6 +769,7 @@ ${buildOrientationStep3Branch(knownOrientation)}
 - door_count does not depend on orientation and should still be estimated from the drawing's geometry (openings on room walls) even when orientation is not detected.
 - For every room, set "source_sheet" to the floor-plan sheet (from your STEP 1 inventory) its geometry actually came from - useful when a project has more than one floor-plan sheet (e.g. a main floor and a second-level/bonus-room plan).
 - For every room, also set "room_label_text" to ALL text printed on or near that room on the floor plan, copied verbatim - concatenate every distinct piece you find with " / " between them: the room name, its printed dimensions (e.g. "24'-10\" X 37'-4\""), and any ceiling height callout for that room (e.g. "10' CEILING") if one appears anywhere near the room, even when it sits as its own separate label a short distance from the room name rather than directly overlapping it (e.g. "3-CAR GARAGE / 10' CEILING / 24'-10\" X 37'-4\""). Do NOT report just the room name alone when other text - dimensions, a ceiling height label - is also printed near that room; a bare room name here silently discards information a downstream check depends on to catch ceiling-height conflicts, so treat this as a completeness requirement, not a best-effort summary. This is a plain transcription task, not a judgment call: do not summarize, interpret, or decide part of it is unimportant to omit; leave it null only if the room genuinely has no printed text of its own at all.
+- For every room whose boundary is visible on its source_sheet's floor plan, also set "room_position": a plain visual read of that room's bounding box on the PAGE ITSELF, as a fraction of the full page - NOT real-world feet, NOT compass-relative, just "where on this printed sheet does this room's rectangle sit." "x_norm" = the horizontal position of the room's LEFT edge, as a fraction from 0 (left edge of the page) to 1 (right edge of the page). "y_norm" = the vertical position of the room's TOP edge, as a fraction from 0 (top of the page) to 1 (bottom of the page). "width_norm"/"height_norm" = that room's own horizontal/vertical extent, as a fraction of the full page's width/height. For an irregular (non-rectangular) room, estimate the bounding box that contains its whole visible footprint. This is the same category of task as wall_page_horizontal_len_ft/wall_page_vertical_len_ft above - a direct visual read of the page, not a computation - so estimate it with the same confidence you'd use for those fields. Always set this room's "room_position.unresolved" to true when you fill it (a position estimate always needs a human to confirm or correct it before it drives a real measurement), with "reason" left null unless something about the read is unusually uncertain (e.g. "room boundary partially obscured by a callout box"). Leave the whole "room_position" object's four numbers null (unresolved still true, reason explaining why) only when the room's boundary genuinely isn't visible on its own source_sheet at all - never guess a position for a room you can't actually see on the page.
 
 STEP 4 — Window area, per room, same north/south/east/west vs. front/rear/left/right split as STEP 3, governed by the SAME orientation-detected/not-detected branch (do not re-decide it here). This is a much harder read than wall length — most floor plans mark a window opening as a gap in the wall line with a width, but not a height, so only fill a side's window area when you can combine an actual opening on that room's wall (visible in the floor plan) with an actual height reference for that opening (a window schedule entry, a labeled window size like "3068" i.e. 3'-0" x 6'-8", or a spec note) - width times height. If a room clearly has a window on a given side but you have no way to size it, leave that side null rather than assume a typical size - this is the same "don't guess" standard as duct routing (STEP 8) and R-values, not an exception to it. It is expected and fine for most or all window area fields to come back null when a drawing doesn't include a window schedule or labeled sizes; a false area is worse than a missing one, since it would silently misstate solar gain rather than leave it visibly unresolved. When you do fill any window area for a room, set that room's "unresolved" to true with "reason" noting it's an AI-estimated window area pending confirmation (unless the room is already unresolved for another reason, in which case leave the existing reason as-is).
 
@@ -804,6 +849,10 @@ export function collectUnresolvedItems(extraction: DrawingExtraction): string[] 
     }
     if (room.duct_insulation_r_value?.unresolved) {
       items.push(`room[${index}].duct_insulation_r_value:${room.name || "unnamed"}`);
+    }
+    if (room.room_position?.unresolved) {
+      const label = `room[${index}].position:${room.name || "unnamed"}`;
+      items.push(room.room_position.reason ? `${label} - ${room.room_position.reason}` : label);
     }
     if (room.windows?.unresolved) {
       const label = `room[${index}].windows:${room.name || "unnamed"}`;

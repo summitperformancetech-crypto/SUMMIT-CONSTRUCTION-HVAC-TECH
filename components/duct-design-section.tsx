@@ -8,11 +8,21 @@ import {
   checkDuctInsulationCompliance,
   computeAvailableStaticPressure,
   estimateCoolingSupplyAirTempF,
+  computeZoneFrictionRates,
+  sizeDuctRun,
   type DuctRunInput,
+  type DuctSizingResult,
   type DuctSizingTableRow,
 } from "@/lib/manualD";
-import type { RoomLoadResult, ManualJZone } from "@/lib/manualJ";
-import type { RoomRow } from "@/components/manual-j-workflow";
+import {
+  derivePageScale,
+  computeRoutedBranchRun,
+  getDuctRoutingGateStatus,
+  type ScaleSampleRoom,
+} from "@/lib/ductRouting";
+import type { RoomLoadResult } from "@/lib/manualJ";
+import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
+import type { DrawingRow } from "@/lib/drawingExtraction";
 
 export type DuctRunRow = {
   id: string;
@@ -100,6 +110,7 @@ export function DuctDesignSection({
   projectId,
   rooms,
   zones,
+  drawings,
   roomResults,
   indoorCoolingDesignTempF,
   initialAvailableStaticPressureIwc,
@@ -114,7 +125,8 @@ export function DuctDesignSection({
 }: {
   projectId: string;
   rooms: RoomRow[];
-  zones: ManualJZone[];
+  zones: ZoneRow[];
+  drawings: DrawingRow[];
   roomResults: RoomLoadResult[];
   indoorCoolingDesignTempF: number;
   initialAvailableStaticPressureIwc: number | null;
@@ -228,6 +240,279 @@ export function DuctDesignSection({
     () => checkDuctInsulationCompliance(ductRunInputs, roomsById, codeMinimumsByLocation),
     [ductRunInputs, roomsById, codeMinimumsByLocation],
   );
+
+  // Plenum sizing - a plenum is a short transition box sized by velocity
+  // at the zone's total combined CFM, not by friction rate over a real
+  // physical length the way a trunk/branch run is - so it's deliberately
+  // NOT modeled as its own duct_runs row (which would need an arbitrary
+  // length/fitting value to size against). Reuses sizeDuctRun directly
+  // with a synthetic zero-length "trunk" input (lengthFt/
+  // fittingEquivalentLengthFt aren't read by sizeDuctRun itself - see its
+  // signature in lib/manualD.ts - only the already-resolved friction rate
+  // and cfm matter), at each zone's own already-computed friction rate.
+  const zoneFrictionRates = useMemo(
+    () => computeZoneFrictionRates(ductRunInputs, availableStaticPressureIwc),
+    [ductRunInputs, availableStaticPressureIwc],
+  );
+  const plenumByZone = useMemo(() => {
+    const map = new Map<string, DuctSizingResult | null>();
+    for (const zone of zones) {
+      const zoneCfm = rooms
+        .filter((r) => r.zone_id === zone.id)
+        .reduce((sum, r) => sum + (requiredCfmByRoom.get(r.id) ?? 0), 0);
+      const frictionRate = zoneFrictionRates.get(zone.id) ?? null;
+      if (zoneCfm <= 0 || frictionRate == null || ductSizingTable.length === 0) {
+        map.set(zone.id, null);
+        continue;
+      }
+      map.set(
+        zone.id,
+        sizeDuctRun(
+          {
+            id: `plenum-${zone.id}`,
+            zoneId: zone.id,
+            runType: "trunk",
+            roomId: null,
+            lengthFt: 0,
+            fittingEquivalentLengthFt: 0,
+            ductShape: "round",
+            targetHeightIn: null,
+          },
+          zoneCfm,
+          frictionRate,
+          ductSizingTable,
+        ),
+      );
+    }
+    return map;
+  }, [zones, rooms, requiredCfmByRoom, zoneFrictionRates, ductSizingTable]);
+
+  // Auto Manual D run-length feature (built 2026-08-25, real sourced ACCA
+  // Manual D Appendix 3 data - see the project memory file
+  // acca_manual_d_fitting_equivalent_lengths.md). Gate is separate from
+  // lib/reportGate.ts's report-generation gate on purpose - pin
+  // resolution only blocks THIS auto-length computation, never general
+  // report generation, so a project can keep using manual run entry
+  // regardless of whether this feature has been used.
+  const ductRoutingGate = useMemo(
+    () =>
+      getDuctRoutingGateStatus(
+        rooms.map((r) => ({
+          id: r.id,
+          name: r.name,
+          zone_id: r.zone_id,
+          floor_area_sqft: r.floor_area_sqft,
+          position_x_norm: r.position_x_norm,
+          position_y_norm: r.position_y_norm,
+        })),
+        zones.map((z) => ({
+          id: z.id,
+          name: z.name,
+          ahu_position_x_norm: z.ahu_position_x_norm,
+          ahu_position_y_norm: z.ahu_position_y_norm,
+        })),
+      ),
+    [rooms, zones],
+  );
+
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const [autoGenerateError, setAutoGenerateError] = useState<string | null>(null);
+  const [autoGenerateNotice, setAutoGenerateNotice] = useState<string | null>(null);
+
+  // For each zone with a resolved AHU pin, computes real Manhattan
+  // run lengths (from lib/ductRouting.ts, using the real per-sheet scale
+  // derived from rooms whose printed dimensions AND placed pins are both
+  // known) for every room pinned on the SAME sheet as that zone's AHU,
+  // and upserts one branch duct_runs row per room. Rooms pinned on a
+  // DIFFERENT sheet than their zone's AHU (a different level) are
+  // skipped, not guessed at - a 2D page distance across two different
+  // sheets isn't a real measurement.
+  //
+  // TRUNK SIMPLIFICATION, disclosed not hidden: one trunk run per zone is
+  // also created/updated, using the longest branch's routed length as a
+  // conservative (never-under-sized) stand-in for the trunk's own real
+  // backbone length, with fitting_equivalent_length_ft left at 0 - real
+  // ACCA Group 9 (Supply Trunk Junction Fittings) values were not
+  // sourced with the same visual-verification rigor as the branch
+  // takeoff/elbow values this feature uses elsewhere, so this
+  // deliberately does not invent one. A tech should review and, if
+  // needed, add real trunk fitting length manually via the form below.
+  async function handleAutoGenerateFromPins() {
+    if (!ductRoutingGate.ready) return;
+    setAutoGenerating(true);
+    setAutoGenerateError(null);
+    setAutoGenerateNotice(null);
+    try {
+      const supabase = createClient();
+      const pageDimsCache = new Map<string, { pageWidthPt: number; pageHeightPt: number }>();
+      let created = 0;
+      let updated = 0;
+      let skipped = 0;
+
+      for (const zone of zones) {
+        if (
+          zone.ahu_position_x_norm == null ||
+          zone.ahu_position_y_norm == null ||
+          !zone.ahu_position_source_drawing_id ||
+          zone.ahu_position_source_page_number == null
+        ) {
+          continue;
+        }
+        const ahuDrawingId = zone.ahu_position_source_drawing_id;
+        const ahuPageNumber = zone.ahu_position_source_page_number;
+
+        const zoneRooms = rooms.filter(
+          (r) =>
+            r.zone_id === zone.id &&
+            r.position_x_norm != null &&
+            r.position_y_norm != null &&
+            r.position_source_drawing_id === ahuDrawingId &&
+            r.position_source_page_number === ahuPageNumber,
+        );
+        const skippedInZone = rooms.filter(
+          (r) =>
+            r.zone_id === zone.id &&
+            r.position_x_norm != null &&
+            (r.position_source_drawing_id !== ahuDrawingId || r.position_source_page_number !== ahuPageNumber),
+        );
+        skipped += skippedInZone.length;
+        if (zoneRooms.length === 0) continue;
+
+        const pageKey = `${ahuDrawingId}:${ahuPageNumber}`;
+        let pageDims = pageDimsCache.get(pageKey);
+        if (!pageDims) {
+          const res = await fetch(`/api/drawings/${ahuDrawingId}/page-image?page=${ahuPageNumber}`);
+          const body = await res.json();
+          if (!res.ok) throw new Error(body.error ?? "Failed to load page dimensions");
+          if (body.pageWidthPt == null || body.pageHeightPt == null) {
+            throw new Error(
+              `Zone ${zone.name}: this drawing has no real page dimensions (not a PDF) - auto-length isn't available for image uploads.`,
+            );
+          }
+          pageDims = { pageWidthPt: body.pageWidthPt, pageHeightPt: body.pageHeightPt };
+          pageDimsCache.set(pageKey, pageDims);
+        }
+
+        const drawing = drawings.find((d) => d.id === ahuDrawingId);
+        const extractedRooms = drawing?.extracted_data?.rooms ?? [];
+        const sheets = drawing?.extracted_data?.sheets ?? [];
+        const scaleSampleRooms: ScaleSampleRoom[] = extractedRooms
+          .filter((er) => sheets.find((s) => s.name === er.source_sheet)?.page_number === ahuPageNumber)
+          .map((er) => ({
+            wallPageHorizontalLenFt: er.wall_page_horizontal_len_ft,
+            wallPageVerticalLenFt: er.wall_page_vertical_len_ft,
+            widthNorm: er.room_position?.width_norm ?? null,
+            heightNorm: er.room_position?.height_norm ?? null,
+          }));
+        const scale = derivePageScale(scaleSampleRooms, pageDims.pageWidthPt, pageDims.pageHeightPt);
+        if (scale.feetPerPagePoint == null) {
+          setAutoGenerateError(
+            (prev) =>
+              prev ??
+              `Zone ${zone.name}: couldn't derive a real-world scale for this sheet (no room has both a known printed dimension and a placed pin) - skipped.`,
+          );
+          continue;
+        }
+        const pageWidthFt = scale.feetPerPagePoint * pageDims.pageWidthPt;
+        const pageHeightFt = scale.feetPerPagePoint * pageDims.pageHeightPt;
+        const ahuPin = { xNorm: zone.ahu_position_x_norm, yNorm: zone.ahu_position_y_norm };
+        let maxLengthFt = 0;
+
+        for (const room of zoneRooms) {
+          const roomPin = { xNorm: room.position_x_norm!, yNorm: room.position_y_norm! };
+          const routed = computeRoutedBranchRun(ahuPin, roomPin, pageWidthFt, pageHeightFt);
+          maxLengthFt = Math.max(maxLengthFt, routed.lengthFt);
+
+          const existing = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
+          if (existing) {
+            const { error } = await supabase
+              .from("duct_runs")
+              .update({ length_ft: routed.lengthFt, fitting_equivalent_length_ft: routed.fittingEquivalentLengthFt })
+              .eq("id", existing.id);
+            if (error) throw new Error(error.message);
+            setDuctRuns((prev) =>
+              prev.map((r) =>
+                r.id === existing.id
+                  ? { ...r, length_ft: routed.lengthFt, fitting_equivalent_length_ft: routed.fittingEquivalentLengthFt }
+                  : r,
+              ),
+            );
+            updated += 1;
+          } else {
+            const { data, error } = await supabase
+              .from("duct_runs")
+              .insert({
+                project_id: projectId,
+                run_type: "branch",
+                room_id: room.id,
+                zone_id: zone.id,
+                length_ft: routed.lengthFt,
+                fitting_equivalent_length_ft: routed.fittingEquivalentLengthFt,
+                duct_shape: "round",
+                target_height_in: null,
+                material: "flex",
+                cfm: 0,
+                friction_rate: 0,
+                velocity_fpm: 0,
+                calculated_diameter_in: null,
+                calculated_width_in: null,
+                calculated_height_in: null,
+              })
+              .select(DUCT_RUN_COLUMNS)
+              .single<DuctRunRow>();
+            if (error || !data) throw new Error(error?.message ?? "Failed to create run");
+            setDuctRuns((prev) => [...prev, data]);
+            created += 1;
+          }
+        }
+
+        const existingTrunk = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
+        if (existingTrunk) {
+          const { error } = await supabase
+            .from("duct_runs")
+            .update({ length_ft: maxLengthFt })
+            .eq("id", existingTrunk.id);
+          if (error) throw new Error(error.message);
+          setDuctRuns((prev) => prev.map((r) => (r.id === existingTrunk.id ? { ...r, length_ft: maxLengthFt } : r)));
+        } else {
+          const { data, error } = await supabase
+            .from("duct_runs")
+            .insert({
+              project_id: projectId,
+              run_type: "trunk",
+              room_id: null,
+              zone_id: zone.id,
+              length_ft: maxLengthFt,
+              fitting_equivalent_length_ft: 0,
+              duct_shape: "round",
+              target_height_in: null,
+              material: "sheet_metal",
+              cfm: 0,
+              friction_rate: 0,
+              velocity_fpm: 0,
+              calculated_diameter_in: null,
+              calculated_width_in: null,
+              calculated_height_in: null,
+            })
+            .select(DUCT_RUN_COLUMNS)
+            .single<DuctRunRow>();
+          if (error || !data) throw new Error(error?.message ?? "Failed to create trunk run");
+          setDuctRuns((prev) => [...prev, data]);
+        }
+      }
+
+      setAutoGenerateNotice(
+        `Auto-generated ${created} new run(s), updated ${updated} existing run(s) from resolved pins.` +
+          (skipped > 0 ? ` ${skipped} room(s) pinned on a different sheet than their zone's AHU were skipped.` : ""),
+      );
+    } catch (err) {
+      setAutoGenerateError(
+        err instanceof Error ? err.message : "Failed to auto-generate runs - check your connection and try again.",
+      );
+    } finally {
+      setAutoGenerating(false);
+    }
+  }
 
   function roomName(roomId: string | null): string {
     if (!roomId) return "—";
@@ -393,6 +678,62 @@ export function DuctDesignSection({
   return (
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
       <h2 className="mb-4 text-lg font-semibold text-brand-gold">Duct Design (Manual D)</h2>
+
+      <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
+          Auto-generate from Duct Routing Pins
+        </p>
+        {ductRoutingGate.ready ? (
+          <button
+            onClick={handleAutoGenerateFromPins}
+            disabled={autoGenerating}
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+          >
+            {autoGenerating ? "Computing real run lengths…" : "Auto-generate branch/trunk runs from pins"}
+          </button>
+        ) : (
+          <p className="text-sm text-brand-grey-text">
+            {ductRoutingGate.unresolvedRoomIds.length + ductRoutingGate.unresolvedZoneIds.length > 0
+              ? `${ductRoutingGate.unresolvedRoomIds.length} room(s) and ${ductRoutingGate.unresolvedZoneIds.length} zone AHU(s) still need a resolved pin in the Duct Routing Pins section above before real run lengths can be computed.`
+              : "Place and resolve pins in the Duct Routing Pins section above to auto-generate real run lengths."}
+          </p>
+        )}
+        {autoGenerateNotice && <p className="mt-2 text-sm text-brand-success">{autoGenerateNotice}</p>}
+        {autoGenerateError && (
+          <p className="mt-2 text-sm text-red-400" role="alert">
+            {autoGenerateError}
+          </p>
+        )}
+        <p className="mt-3 text-xs text-brand-grey-text">
+          Lengths come from the real routed (Manhattan) distance between each room&apos;s pin and its zone&apos;s
+          AHU pin on the actual drawing, using that sheet&apos;s own real scale. Fitting lengths use ACCA Manual
+          D Appendix 3 reference values (a full-radius branch takeoff, plus one elbow per turn). Trunk length
+          uses the longest branch as a conservative stand-in for the trunk&apos;s own backbone length - review
+          and adjust below if you know the real distance.
+        </p>
+      </div>
+
+      {zones.some((z) => plenumByZone.get(z.id)) && (
+        <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+          <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
+            Plenum sizing (by zone total CFM, not a duct run)
+          </p>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {zones.map((zone) => {
+              const plenum = plenumByZone.get(zone.id);
+              if (!plenum) return null;
+              return (
+                <div key={zone.id} className="text-sm text-brand-silver-highlight">
+                  <span className="text-brand-grey-text">{zone.name}: </span>
+                  {plenum.diameterIn ? `${plenum.diameterIn}" round` : "—"} at {fmt(plenum.cfm)} CFM,{" "}
+                  {Math.round(plenum.velocityFpm)} fpm
+                  {plenum.velocityWarning && <span className="text-amber-400"> — {plenum.velocityWarning}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">

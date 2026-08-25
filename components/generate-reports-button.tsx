@@ -5,11 +5,15 @@ import { ReportGenerationGate } from "@/components/report-generation-gate";
 
 export type SnapshotStatus = { version: number; createdAt: string; reason: string | null };
 
-async function downloadReport(projectId: string, type: "internal" | "client" | "summit_standard") {
+async function downloadReport(
+  projectId: string,
+  type: "internal" | "client" | "summit_standard",
+  version?: number,
+) {
   const res = await fetch("/api/reports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId, type }),
+    body: JSON.stringify({ projectId, type, ...(version != null ? { version } : {}) }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: "Report generation failed" }));
@@ -18,7 +22,7 @@ async function downloadReport(projectId: string, type: "internal" | "client" | "
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") ?? "";
   const match = disposition.match(/filename="(.+)"/);
-  const fileName = match?.[1] ?? `${type}-report.pdf`;
+  const fileName = match?.[1] ?? `${type}${version != null ? `-v${version}` : ""}-report.pdf`;
 
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -64,6 +68,10 @@ export function GenerateReportsButton({
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [revising, setRevising] = useState(false);
   const [summitStandardReady, setSummitStandardReady] = useState(false);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState<SnapshotStatus[] | null>(null);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [downloadingVersion, setDownloadingVersion] = useState<number | null>(null);
   const canFinalizeOrRevise = userRole === "admin" || userRole === "estimator";
   const generateDisabled = generating !== null || (!snapshot && !canFinalizeOrRevise);
 
@@ -80,6 +88,36 @@ export function GenerateReportsButton({
       setError(err instanceof Error ? err.message : "Report generation failed");
     } finally {
       setGenerating(null);
+    }
+  }
+
+  async function handleToggleVersionHistory() {
+    const opening = !versionHistoryOpen;
+    setVersionHistoryOpen(opening);
+    if (opening && versions == null) {
+      setVersionsLoading(true);
+      try {
+        const res = await fetch(`/api/reports/versions?projectId=${projectId}`);
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.error ?? "Failed to load version history");
+        setVersions(body.versions);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load version history");
+      } finally {
+        setVersionsLoading(false);
+      }
+    }
+  }
+
+  async function handleDownloadVersion(version: number) {
+    setDownloadingVersion(version);
+    setError(null);
+    try {
+      await downloadReport(projectId, "summit_standard", version);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Report generation failed");
+    } finally {
+      setDownloadingVersion(null);
     }
   }
 
@@ -153,9 +191,9 @@ export function GenerateReportsButton({
           Summit Report Standard (SUMMIT-REPORT-STANDARD.md)
         </h3>
         <p className="mb-3 text-xs text-brand-grey-text">
-          The full 11-page branded client report - cover, per-system summaries, load short
-          forms, building analysis, orientation, floor plan, and the automated QA audit trail.
-          Cannot generate until every Section 3 gate condition below is met.
+          The full 12-page branded client report - cover, per-system summaries, load short
+          forms, building analysis, orientation, floor plan, duct routing, and the automated QA
+          audit trail. Cannot generate until every Section 3 gate condition below is met.
         </p>
         <ReportGenerationGate projectId={projectId} onReady={setSummitStandardReady} />
         <button
@@ -166,6 +204,48 @@ export function GenerateReportsButton({
         >
           {generating === "summit_standard" ? "Generating…" : "Generate Summit Standard Report"}
         </button>
+
+        {snapshot && (
+          <div className="mt-4">
+            <button
+              onClick={handleToggleVersionHistory}
+              className="text-xs text-brand-grey-text underline decoration-dotted transition hover:text-brand-gold-hover"
+            >
+              {versionHistoryOpen ? "Hide" : "View"} version history
+            </button>
+            {versionHistoryOpen && (
+              <div className="mt-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3">
+                {versionsLoading && <p className="text-xs text-brand-grey-text">Loading…</p>}
+                {versions && versions.length === 0 && (
+                  <p className="text-xs text-brand-grey-text">No versions found.</p>
+                )}
+                {versions && versions.length > 0 && (
+                  <ul className="space-y-1">
+                    {versions.map((v) => (
+                      <li key={v.version} className="flex items-center justify-between text-xs">
+                        <span className="text-brand-silver-highlight">
+                          v{v.version} — {new Date(v.createdAt).toLocaleString()}
+                          {v.reason ? ` — ${v.reason}` : ""}
+                        </span>
+                        <button
+                          onClick={() => handleDownloadVersion(v.version)}
+                          disabled={downloadingVersion === v.version}
+                          className="rounded-md border border-brand-gold/50 px-2 py-0.5 text-brand-gold hover:border-brand-gold disabled:opacity-50"
+                        >
+                          {downloadingVersion === v.version ? "Downloading…" : "Download this version"}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-2 text-[10px] text-brand-grey-text">
+                  Every version is the exact data frozen at the time it was generated - downloading an
+                  older version never reflects later edits or revisions.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </section>
   );

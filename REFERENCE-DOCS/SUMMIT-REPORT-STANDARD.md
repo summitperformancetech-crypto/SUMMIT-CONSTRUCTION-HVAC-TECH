@@ -61,8 +61,9 @@ In order:
 7. **Building Analysis — per system** — component breakdown (walls/glazing/doors/ceilings/floors/infiltration/ducts/ventilation/internal gains) as both a table and a donut chart, heating and cooling separately. Chart segments must be computed from actual component percentages — never illustrative/placeholder values.
 8. **Building Orientation** — compass diagram (Summit style, see §7) + front-door-faces value + orientation source + verification method + confirmation-gate badge.
 9. **Floor Plan — per level** — the actual extracted/uploaded drawing, cropped to remove any competitor title block, with the Summit compass overlaid (§7). Never a redrawn or approximated floor plan — always the source drawing.
-10. **Extraction status / field reference** — per-level room confirmation count (confirmed / total), plus any field-verified overrides with reason.
-11. **Audit Trail & QA Certification** — the automated cross-foot validation table (see §6) and a correction log for anything the engine adjusted, with before/after values and reason. This page is the core differentiator and must never be omitted.
+10. **Duct Routing** — added 2026-08-25 alongside the auto Manual D run-length feature. A real installation reference diagram: the actual source drawing page (never regenerated, same drawing-authority principle as §9) with the tech-confirmed AHU and room pins overlaid, and the routed (Manhattan) path between each labeled with its real length and diameter — the same figures shown in the Manual D schedule (§ load short form). Pin positions are always human-confirmed or human-placed (see §7a) — never rendered from an unconfirmed AI suggestion. Renders an explicit "no pins resolved yet" state, never a fabricated or approximated routing, when a project hasn't used this feature.
+11. **Extraction status / field reference** — per-level room confirmation count (confirmed / total), plus any field-verified overrides with reason.
+12. **Audit Trail & QA Certification** — the automated cross-foot validation table (see §6) and a correction log for anything the engine adjusted, with before/after values and reason. This page is the core differentiator and must never be omitted.
 
 ## 6. Mandatory validation before render
 
@@ -83,6 +84,14 @@ Implement this as a standalone `validateReportTotals(project)` function, unit-te
 - Floor plan images: use the actual uploaded/extracted drawing page, cropped to remove any third-party (e.g., Wrightsoft) title block or branding, with the compass rose replaced using the method above. Never regenerate the floor plan geometry from room dimension data — the source drawing is authoritative per the drawing-authority principle.
   - **Current implementation status (documented gap, not silently dropped):** the source page is rendered and the Summit compass is overlaid (`lib/floorPlanRender.ts`, `lib/reportHtmlV2.ts`), but title-block cropping is not yet built — the full page renders as uploaded. A human picks which drawing/page is the floor plan (`drawings-section.tsx`'s "Use as report floor plan" control); no automated page-identification or crop-region detection exists yet.
 
+## 7a. Duct routing pins (auto Manual D run-length feature, added 2026-08-25)
+
+- Real Manual D run lengths and fittings are computed from tech-confirmed pin positions on the actual source drawing, never guessed or defaulted to a plausible-looking placeholder. Extraction (`lib/drawingExtraction.ts`) proposes a first-draft room position (`ExtractedRoom.room_position`) as a plain visual bounding-box read, same "AI suggests, human confirms" standard as every other extracted field. AHU/mechanical-equipment position is **always** placed by a technician from scratch — never AI-suggested, since mechanical closets are rarely labeled as reliably as named rooms.
+- A pin only counts once resolved (confirmed as-is or moved with a reason) via `field_resolutions` (`table_name='rooms'|'zones'`, `field_name='position'|'ahu_position'`), the same generic accept/override audit mechanism every other extracted field already uses — no separate resolution mechanism exists for pins.
+- Real length comes from the Manhattan (not straight-line) distance between two resolved pins, scaled using that sheet's own real feet-per-page-point ratio (derived from rooms whose printed dimensions and placed bounding boxes are both known — see `lib/ductRouting.ts`'s `derivePageScale`). Fitting length uses real ACCA Manual D Appendix 3 reference-condition values (a full-radius branch takeoff, plus one elbow per routed turn) — see the project's own sourced fitting-length reference, not a value recalled from memory.
+- This gates the auto-length computation specifically (`lib/ductRouting.ts`'s `getDuctRoutingGateStatus`) — it does **not** gate general report generation via §3. A project may still complete Manual D via manual run entry without ever using this feature.
+- The Floor Plan and Duct Routing page images are rendered once, at snapshot-creation time (`lib/reportImages.ts`), and frozen into `calculation_snapshots.snapshot_data` alongside every other figure — never re-fetched live on each PDF render. This closes a real, disclosed gap: before this existed, the Floor Plan image was fetched live on every render regardless of which snapshot version was being viewed, meaning a drawing replaced or re-marked after a report was generated could silently change an already-"finalized" report's Floor Plan page. See §1 of the Data Integrity Addendum for the general principle this closes the last gap in.
+
 ## 8. Acceptance criteria (definition of done)
 
 A report generator implementation is complete when, for the Vivian Street project used as the test fixture:
@@ -92,6 +101,8 @@ A report generator implementation is complete when, for the Vivian Street projec
 - [ ] `validateReportTotals` catches the seeded latent-load discrepancy and renders the `QA CORRECTED` badge + Audit Trail log entry, matching the reference build's numbers exactly (7,843 corrected from 5,597).
 - [ ] Org branding (logo, name, license) pulls from the account profile, not hardcoded.
 - [ ] Floor plans show the Summit compass, not the source drawing's original compass.
+- [ ] The Duct Routing page renders real, tech-confirmed pins and routed lengths when resolved for a project, or an explicit "no pins resolved yet" state otherwise — never a fabricated or approximated diagram.
+- [ ] Floor Plan and Duct Routing images are read from the frozen snapshot, not re-fetched live — downloading an older version's report never picks up a drawing change made after that version was generated.
 - [ ] Output is a single self-contained HTML file, opens correctly with no external dependencies, and prints cleanly to PDF via browser print.
 - [ ] Report generation is available on demand from the project view for any project with a finalized calculation (i.e., first-generation triggers snapshotting per the existing snapshot principle).
 

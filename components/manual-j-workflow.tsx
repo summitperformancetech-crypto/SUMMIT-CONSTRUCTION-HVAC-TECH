@@ -17,7 +17,9 @@ import {
   type RoomTypeDefault,
   type WallExposureType,
 } from "@/lib/manualJ";
-import type { ExtractedRoom } from "@/lib/drawingExtraction";
+import type { ExtractedRoom, DrawingRow } from "@/lib/drawingExtraction";
+import { DuctRoutingCanvas } from "@/components/duct-routing-canvas";
+import { getDuctRoutingGateStatus } from "@/lib/ductRouting";
 import { normalizeDuctLocation, buildCodeMinimumsByLocation } from "@/lib/constants/ductLocations";
 import { normalizeRoomNameForMatch } from "@/lib/fieldResolutions";
 import {
@@ -69,6 +71,15 @@ export type RoomRow = ManualJRoom & {
   window_rear_area_sqft: number | null;
   window_left_area_sqft: number | null;
   window_right_area_sqft: number | null;
+  // Duct-routing pin placement (auto Manual D run length feature) - the
+  // tech-confirmed final position, distinct from the AI-suggested
+  // room_position living inside drawings.extracted_data. Only ever
+  // written once a human has confirmed or moved a pin - see
+  // components/duct-routing-canvas.tsx and lib/ductRouting.ts.
+  position_x_norm: number | null;
+  position_y_norm: number | null;
+  position_source_drawing_id: string | null;
+  position_source_page_number: number | null;
 };
 
 // SUMMIT-REPORT-STANDARD.md Section 5.3 - equipment selection is per
@@ -79,6 +90,13 @@ export type RoomRow = ManualJRoom & {
 export type ZoneRow = ManualJZone & {
   selected_equipment_id: string | null;
   equipment_selection_notes: string | null;
+  // AHU/mechanical-equipment position - always tech-placed from scratch
+  // (never AI-suggested, see lib/ductRouting.ts's module comment for why),
+  // confirmed via the same pin-placement canvas as room positions.
+  ahu_position_x_norm: number | null;
+  ahu_position_y_norm: number | null;
+  ahu_position_source_drawing_id: string | null;
+  ahu_position_source_page_number: number | null;
 };
 
 const ATTIC_CONSTRUCTION_OPTIONS = [
@@ -113,10 +131,10 @@ type EnvelopeFormValues = {
 };
 
 export const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, window_front_area_sqft, window_rear_area_sqft, window_left_area_sqft, window_right_area_sqft, door_count";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, window_front_area_sqft, window_rear_area_sqft, window_left_area_sqft, window_right_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 
 const ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes";
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number";
 
 // Diagnosed 2026-08-23 against real data (Kinsela): a room this drawing
 // genuinely shows (e.g. a wet bar, a second hallway) that doesn't match
@@ -443,6 +461,7 @@ export const ManualJWorkflow = forwardRef<
     exclusiveEquipmentIds: ReadonlySet<string>;
     ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
     initialBuildingFrontFaces: Compass8 | null;
+    initialDrawings: DrawingRow[];
     initialPreferredManufacturer: string | null;
     initialSystemConfiguration: HvacSystemConfiguration;
     userRole: string;
@@ -475,6 +494,7 @@ export const ManualJWorkflow = forwardRef<
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
     initialBuildingFrontFaces,
+    initialDrawings,
     initialPreferredManufacturer,
     initialSystemConfiguration,
     userRole,
@@ -1557,10 +1577,28 @@ export const ManualJWorkflow = forwardRef<
       )}
 
       {canCalculate && results && rooms.length > 0 && zones.length > 0 && (
+        <div className="mb-6">
+          <DuctRoutingCanvas
+            projectId={projectId}
+            rooms={rooms}
+            zones={zones}
+            drawings={initialDrawings}
+            onRoomPositionSaved={(roomId, update) =>
+              setRooms((prev) => prev.map((r) => (r.id === roomId ? { ...r, ...update } : r)))
+            }
+            onZonePositionSaved={(zoneId, update) =>
+              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)))
+            }
+          />
+        </div>
+      )}
+
+      {canCalculate && results && rooms.length > 0 && zones.length > 0 && (
         <DuctDesignSection
           projectId={projectId}
           rooms={rooms}
           zones={zones}
+          drawings={initialDrawings}
           roomResults={results.rooms}
           indoorCoolingDesignTempF={envelope.indoor_design_temp_cooling_f}
           initialAvailableStaticPressureIwc={initialAvailableStaticPressureIwc}

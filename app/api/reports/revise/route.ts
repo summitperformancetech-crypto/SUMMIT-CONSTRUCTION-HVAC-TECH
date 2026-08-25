@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getReportData } from "@/lib/reportData";
+import { attachFrozenImages } from "@/lib/reportImages";
 
 // Data Integrity Addendum, Section 1, point 5: legitimate corrections to an
 // already-finalized project must be an explicit user action that creates a
@@ -49,10 +50,16 @@ export async function POST(request: Request) {
     );
   }
 
-  const fresh = await getReportData(supabase, projectId);
-  if (!fresh) {
+  const freshData = await getReportData(supabase, projectId);
+  if (!freshData) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
+  // Re-render/re-freeze the Floor Plan and duct-routing images for this
+  // new version too - see lib/reportImages.ts's module comment. A
+  // revision might be happening specifically BECAUSE a pin moved or a
+  // drawing was replaced, so the new version's images must reflect
+  // current state, not carry the old version's frozen ones forward.
+  const fresh = await attachFrozenImages(supabase, projectId, freshData);
 
   const { data: inserted, error } = await supabase
     .from("calculation_snapshots")

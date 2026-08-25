@@ -8,7 +8,7 @@ import { getReportGenerationGateStatus } from "@/lib/reportGate";
 import { resolutionKey, type FieldResolution } from "@/lib/fieldResolutions";
 import type { DrawingExtraction } from "@/lib/drawingExtraction";
 import type { Compass8 } from "@/lib/constants/compass";
-import { renderPdfPageToPngDataUri } from "@/lib/floorPlanRender";
+import { attachFrozenImages } from "@/lib/reportImages";
 
 type SnapshotRow = { version: number; snapshot_data: ReportData; reason: string | null; created_at: string };
 
@@ -41,8 +41,12 @@ async function getOrCreateSnapshot(
     };
   }
 
-  const fresh = await getReportData(supabase, projectId);
-  if (!fresh) return null;
+  const freshData = await getReportData(supabase, projectId);
+  if (!freshData) return null;
+  // Renders and freezes the Floor Plan/duct-routing images into
+  // snapshot_data itself - see lib/reportImages.ts's module comment for
+  // why this can't happen inside getReportData.
+  const fresh = await attachFrozenImages(supabase, projectId, freshData);
 
   const { data: inserted, error } = await supabase
     .from("calculation_snapshots")
@@ -87,15 +91,39 @@ async function getOrCreateSnapshot(
   };
 }
 
+// "View previous version" (Data Integrity Addendum, Section 1) - loads
+// one specific already-existing snapshot version exactly as originally
+// frozen, never creates one. A version that doesn't exist for this
+// project (never generated, or a typo) returns null rather than falling
+// back to latest - viewing "whatever's closest" instead of the version
+// actually asked for would defeat the point of a version picker.
+async function getSnapshotVersion(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  projectId: string,
+  version: number,
+): Promise<{ reportData: ReportData; snapshot: { version: number; createdAt: string; reason: string | null } } | null> {
+  const { data } = await supabase
+    .from("calculation_snapshots")
+    .select("version, snapshot_data, reason, created_at")
+    .eq("project_id", projectId)
+    .eq("version", version)
+    .maybeSingle<SnapshotRow>();
+  if (!data) return null;
+  return {
+    reportData: data.snapshot_data,
+    snapshot: { version: data.version, createdAt: data.created_at, reason: data.reason },
+  };
+}
+
 export async function POST(request: Request) {
-  let body: { projectId?: string; type?: "internal" | "client" | "summit_standard" };
+  let body: { projectId?: string; type?: "internal" | "client" | "summit_standard"; version?: number };
   try {
     body = await request.json();
   } catch {
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
-  const { projectId, type } = body;
+  const { projectId, type, version } = body;
   if (!projectId || (type !== "internal" && type !== "client" && type !== "summit_standard")) {
     return NextResponse.json(
       { error: "projectId and type ('internal' | 'client' | 'summit_standard') are required" },
@@ -152,13 +180,16 @@ export async function POST(request: Request) {
   // user who can't see this project can't generate a report for it either.
   let result;
   try {
-    result = await getOrCreateSnapshot(supabase, projectId, user.id);
+    result = version != null ? await getSnapshotVersion(supabase, projectId, version) : await getOrCreateSnapshot(supabase, projectId, user.id);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to finalize calculation snapshot";
     return NextResponse.json({ error: message }, { status: 500 });
   }
   if (!result) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    return NextResponse.json(
+      { error: version != null ? `Version ${version} does not exist for this project` : "Project not found" },
+      { status: 404 },
+    );
   }
   // The PDF-generation timestamp is always "now" (this is a fresh render,
   // possibly of already-frozen data) - only the underlying figures are
@@ -203,36 +234,19 @@ export async function POST(request: Request) {
       : { data: null };
     const orgBranding: OrgBranding = org ?? { name: "Summit", license_number: null, logo_data_uri: null };
 
-    // SUMMIT-REPORT-STANDARD.md Section 5.9 - the drawing a human marked as
-    // the floor plan (see drawings-section.tsx's "Use as report floor
-    // plan" control), if any. Rendering failures here (a corrupted upload,
-    // an out-of-range page number someone entered before the file was
-    // replaced) must not block the rest of the report - they surface as
-    // the existing "no floor plan" state rather than a 500.
-    const floorPlanDrawing = drawings?.find((d) => d.floor_plan_page_number != null) ?? null;
-    let floorPlanImageDataUri: string | null = null;
-    if (floorPlanDrawing) {
-      try {
-        const { data: fileBlob, error: downloadError } = await supabase.storage
-          .from("drawings")
-          .download(floorPlanDrawing.file_path);
-        if (downloadError || !fileBlob) throw new Error(downloadError?.message ?? "download failed");
-        const fileBuffer = Buffer.from(await fileBlob.arrayBuffer());
-        floorPlanImageDataUri =
-          floorPlanDrawing.file_type === "pdf"
-            ? await renderPdfPageToPngDataUri(fileBuffer, floorPlanDrawing.floor_plan_page_number!)
-            : `data:${fileBlob.type || "image/png"};base64,${fileBuffer.toString("base64")}`;
-      } catch (err) {
-        console.error("Floor plan render failed:", err instanceof Error ? err.message : err);
-      }
-    }
-
+    // Floor Plan / duct-routing images are read straight off reportData
+    // now (frozen into snapshot_data at snapshot-creation time by
+    // lib/reportImages.ts's attachFrozenImages) rather than re-fetched
+    // live here on every render - see that module's comment for why: a
+    // live re-fetch meant re-rendering an OLD version's PDF could pick up
+    // a drawing that was replaced or re-marked after that version was
+    // generated, silently defeating the whole point of versioning.
     html = renderSummitReportHtml(
       reportData,
       orgBranding,
       project?.building_front_faces ?? null,
       drawings ?? [],
-      floorPlanImageDataUri,
+      reportData.floorPlanImageDataUri,
     );
   }
 

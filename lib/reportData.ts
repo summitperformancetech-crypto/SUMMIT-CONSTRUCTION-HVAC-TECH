@@ -69,7 +69,107 @@ export type ReportClimateZone = {
 type ZoneDbRow = ManualJZone & {
   selected_equipment_id: string | null;
   equipment_selection_notes: string | null;
+  ahu_position_x_norm: number | null;
+  ahu_position_y_norm: number | null;
+  ahu_position_source_drawing_id: string | null;
+  ahu_position_source_page_number: number | null;
 };
+
+// Duct-routing report illustration (auto Manual D run-length feature) -
+// built purely from already-resolved pin positions and already-computed
+// duct sizing, no new geometry computed here. imageDataUri is always
+// null out of getReportData itself (rendering the actual page image
+// needs Puppeteer - see lib/reportImages.ts's attachFrozenImages, called
+// only at snapshot-creation time, never from this cheap aggregation
+// function, which lib/reportGate.ts's status-check route also calls on
+// every page load).
+export type DuctRoutingIllustrationPin = {
+  kind: "room" | "ahu";
+  label: string;
+  xNorm: number;
+  yNorm: number;
+};
+export type DuctRoutingIllustrationRoute = {
+  roomName: string;
+  fromXNorm: number;
+  fromYNorm: number;
+  toXNorm: number;
+  toYNorm: number;
+  lengthFt: number | null;
+  diameterIn: number | null;
+};
+export type DuctRoutingSheetIllustration = {
+  drawingId: string;
+  pageNumber: number;
+  imageDataUri: string | null;
+  pins: DuctRoutingIllustrationPin[];
+  routes: DuctRoutingIllustrationRoute[];
+};
+
+export function buildDuctRoutingIllustrations(
+  rooms: RoomRow[],
+  zones: ZoneDbRow[],
+  ductRuns: DuctRunRow[],
+  ductSchedule: DuctSizingResult[],
+): DuctRoutingSheetIllustration[] {
+  const bySheet = new Map<string, DuctRoutingSheetIllustration>();
+  const sizedByRunId = new Map(ductSchedule.map((r) => [r.runId, r]));
+
+  for (const zone of zones) {
+    if (
+      zone.ahu_position_x_norm == null ||
+      zone.ahu_position_y_norm == null ||
+      !zone.ahu_position_source_drawing_id ||
+      zone.ahu_position_source_page_number == null
+    ) {
+      continue;
+    }
+    const zoneRooms = rooms.filter(
+      (r) =>
+        r.zone_id === zone.id &&
+        r.position_x_norm != null &&
+        r.position_y_norm != null &&
+        r.position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+        r.position_source_page_number === zone.ahu_position_source_page_number,
+    );
+    if (zoneRooms.length === 0) continue;
+
+    const sheetKey = `${zone.ahu_position_source_drawing_id}:${zone.ahu_position_source_page_number}`;
+    let sheet = bySheet.get(sheetKey);
+    if (!sheet) {
+      sheet = {
+        drawingId: zone.ahu_position_source_drawing_id,
+        pageNumber: zone.ahu_position_source_page_number,
+        imageDataUri: null,
+        pins: [],
+        routes: [],
+      };
+      bySheet.set(sheetKey, sheet);
+      sheet.pins.push({
+        kind: "ahu",
+        label: `${zone.name} (AHU)`,
+        xNorm: zone.ahu_position_x_norm,
+        yNorm: zone.ahu_position_y_norm,
+      });
+    }
+
+    for (const room of zoneRooms) {
+      sheet.pins.push({ kind: "room", label: room.name, xNorm: room.position_x_norm!, yNorm: room.position_y_norm! });
+      const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
+      const sized = run ? sizedByRunId.get(run.id) : undefined;
+      sheet.routes.push({
+        roomName: room.name,
+        fromXNorm: zone.ahu_position_x_norm,
+        fromYNorm: zone.ahu_position_y_norm,
+        toXNorm: room.position_x_norm!,
+        toYNorm: room.position_y_norm!,
+        lengthFt: run?.length_ft ?? null,
+        diameterIn: sized?.diameterIn ?? null,
+      });
+    }
+  }
+  return [...bySheet.values()];
+}
 
 export type ZoneEquipmentSelection = {
   zoneId: string;
@@ -92,6 +192,12 @@ export type ReportData = {
   // so the templates can show "data frozen as of <date>, v<n>" instead of
   // silently implying every PDF reflects live data.
   snapshot: { version: number; createdAt: string; reason: string | null } | null;
+  // Floor Plan report page (SUMMIT-REPORT-STANDARD.md Section 5.9) - the
+  // rendered source drawing page, always null out of getReportData
+  // itself (see DuctRoutingSheetIllustration's comment above for why
+  // image rendering is deferred to snapshot-creation time, not done by
+  // this cheap aggregation function).
+  floorPlanImageDataUri: string | null;
   residential: {
     envelope: ManualJEnvelope;
     manualJ: ManualJResult;
@@ -116,6 +222,11 @@ export type ReportData = {
     // result.assessed is false whenever this zone's rooms have no real
     // per-direction window area yet - never a fabricated pass/fail.
     aed: AedZoneResult[];
+    // Duct-routing pin illustration (auto Manual D run-length feature) -
+    // see DuctRoutingSheetIllustration above. Empty when no zone has a
+    // resolved AHU pin with at least one resolved room pin on the same
+    // sheet.
+    ductRoutingIllustration: DuctRoutingSheetIllustration[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -125,8 +236,9 @@ export type ReportData = {
 };
 
 const ROOM_COLUMNS =
-  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count";
-const ZONE_COLUMNS = "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes";
+  "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
+const ZONE_COLUMNS =
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 const COMMERCIAL_ZONE_COLUMNS =
@@ -512,6 +624,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       zones: zones ?? [],
       zoneEquipment,
       ductInsulationCompliance,
+      ductRoutingIllustration: buildDuctRoutingIllustrations(rooms ?? [], zones ?? [], ductRuns ?? [], ductSchedule),
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&
@@ -660,6 +773,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     climateZone,
     generatedAt: new Date().toISOString(),
     snapshot: null,
+    floorPlanImageDataUri: null,
     residential,
     commercial,
     fieldResolutions: fieldResolutions ?? [],

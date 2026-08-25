@@ -1,4 +1,4 @@
-// SUMMIT-REPORT-STANDARD.md - the 11-page single-file HTML report. Reuses
+// SUMMIT-REPORT-STANDARD.md - the 12-page single-file HTML report. Reuses
 // ReportData (lib/reportData.ts) - no new data-fetching here, matching
 // the existing renderInternalReportHtml/renderClientScopeOfWorkHtml
 // pattern this replaces the FORMAT of, not the data plumbing.
@@ -184,8 +184,9 @@ function renderCoverPage(data: ReportData, org: OrgBranding, buildingFrontFaces:
       <div class="toc-item"><span>7. Building Analysis — Per System</span><span class="muted">7</span></div>
       <div class="toc-item"><span>8. Building Orientation</span><span class="muted">8</span></div>
       <div class="toc-item"><span>9. Floor Plan</span><span class="muted">9</span></div>
-      <div class="toc-item"><span>10. Extraction Status / Field Reference</span><span class="muted">10</span></div>
-      <div class="toc-item"><span>11. Audit Trail &amp; QA Certification</span><span class="muted">11</span></div>
+      <div class="toc-item"><span>10. Duct Routing</span><span class="muted">10</span></div>
+      <div class="toc-item"><span>11. Extraction Status / Field Reference</span><span class="muted">11</span></div>
+      <div class="toc-item"><span>12. Audit Trail &amp; QA Certification</span><span class="muted">12</span></div>
     </div>
     <div class="page-footer">
       <div>${projectAddress(data)} — Cover</div>
@@ -505,7 +506,103 @@ function renderFloorPlanPage(
 }
 
 // ---------------------------------------------------------------------------
-// Page 10: Extraction status / field reference
+// Page 10: Duct Routing (auto Manual D run-length feature, added
+// 2026-08-25) - a real installation reference diagram, built from
+// tech-confirmed pin positions on the actual source drawing (never a
+// regenerated/approximated floor plan - same drawing-authority principle
+// Section 7 already requires for the Floor Plan page itself). Renders as
+// its own page, separate from Floor Plan, since overlaying a full
+// routing diagram AND the compass on the identical image would be too
+// dense to read.
+// ---------------------------------------------------------------------------
+function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
+  const sheets = data.residential?.ductRoutingIllustration ?? [];
+
+  if (sheets.length === 0) {
+    return pageShell(
+      "Duct Routing",
+      org,
+      `<div class="section-title">Duct Routing</div>
+       <div class="callout">
+         No duct-routing pins have been resolved for this project yet. Once a technician places and confirms
+         a pin for each room and each zone's AHU (see the Duct Routing Pins section in the project workspace),
+         a real, drawing-accurate installation reference diagram renders here.
+       </div>`,
+      projectAddress(data),
+    );
+  }
+
+  const body = sheets
+    .map((sheet, sheetIndex) => {
+      if (!sheet.imageDataUri) {
+        return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
+          <div class="callout">This sheet's source image could not be rendered for this report.</div>`;
+      }
+      const lines = sheet.routes
+        .map(
+          (route) =>
+            `<line x1="${(route.fromXNorm * 100).toFixed(3)}%" y1="${(route.fromYNorm * 100).toFixed(3)}%" x2="${(route.toXNorm * 100).toFixed(3)}%" y2="${(route.toYNorm * 100).toFixed(3)}%" stroke="${BRAND.amber}" stroke-width="2" stroke-dasharray="6 4" />`,
+        )
+        .join("");
+      const labels = sheet.routes
+        .map((route) => {
+          const midXPct = ((route.fromXNorm + route.toXNorm) / 2) * 100;
+          const midYPct = ((route.fromYNorm + route.toYNorm) / 2) * 100;
+          const label =
+            route.lengthFt != null
+              ? `${Math.round(route.lengthFt)}ft${route.diameterIn ? ` / ${route.diameterIn}"` : ""}`
+              : "";
+          return label
+            ? `<text x="${midXPct.toFixed(3)}%" y="${midYPct.toFixed(3)}%" font-size="11" fill="${BRAND.ink}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:3px;">${esc(label)}</text>`
+            : "";
+        })
+        .join("");
+      const pins = sheet.pins
+        .map((pin) => {
+          const cx = (pin.xNorm * 100).toFixed(3);
+          const cy = (pin.yNorm * 100).toFixed(3);
+          const fill = pin.kind === "ahu" ? BRAND.amber : "#2f6f4f";
+          return `<g>
+            <circle cx="${cx}%" cy="${cy}%" r="7" fill="${fill}" stroke="${BRAND.paper}" stroke-width="1.5" />
+            <text x="${cx}%" y="${cy}%" dy="-10" font-size="10" font-weight="600" text-anchor="middle" fill="${BRAND.ink}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:3px;">${esc(pin.label)}</text>
+          </g>`;
+        })
+        .join("");
+
+      return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
+        <div style="position:relative;display:inline-block;">
+          <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};" />
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
+            ${lines}
+          </svg>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;">
+            ${labels}
+          </svg>
+          <div style="position:absolute;inset:0;">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
+              ${pins}
+            </svg>
+          </div>
+        </div>`;
+    })
+    .join('<div style="page-break-before:always;"></div>');
+
+  return pageShell(
+    "Duct Routing",
+    org,
+    `${body}
+     <p class="muted" style="margin-top:8px;">
+       Amber pin = AHU/mechanical equipment. Green pins = supply registers. Dashed lines show the routed
+       (Manhattan) path between each; length and diameter are the same figures used in the Manual D schedule.
+       Pin positions were confirmed or placed by a technician against the actual source drawing - never
+       AI-inferred without confirmation (see the Audit Trail page for who resolved each one and when).
+     </p>`,
+    projectAddress(data),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Page 11: Extraction status / field reference
 // ---------------------------------------------------------------------------
 function renderExtractionStatusPage(
   data: ReportData,
@@ -626,6 +723,7 @@ export function renderSummitReportHtml(
     renderBuildingAnalysisPage(data, org),
     renderOrientationPage(data, org, buildingFrontFaces),
     renderFloorPlanPage(data, org, buildingFrontFaces, floorPlanImageDataUri),
+    renderDuctRoutingPage(data, org),
     renderExtractionStatusPage(data, org, drawings),
     renderAuditTrailPage(data, org, validation),
   ].join("\n");

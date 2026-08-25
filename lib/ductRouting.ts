@@ -457,3 +457,153 @@ export function buildLiveDuctRoutingIllustration(
   }
   return [...bySheet.values()];
 }
+
+// -----------------------------------------------------------------------
+// Label layout with real collision avoidance - shared by both the live
+// in-app diagram (components/duct-routing-diagram.tsx) and the PDF report
+// (lib/reportHtmlV2.ts's renderDuctRoutingPage), so a fix here fixes both
+// at once instead of drifting out of sync the way the two inline
+// label-positioning implementations previously did.
+//
+// Root cause of the "impossible to read" complaint (diagnosed 2026-08-25
+// against a real rendered screenshot of Schneider's own diagram, not
+// guessed): every run's size/CFM label was placed at a fixed 40%/65%
+// point along its own line, with NO check against any other label. Rooms
+// clustered close together on the real floor plan (a real, unavoidable
+// fact of the drawing - e.g. Kitchen/Bathroom 2/Hallway/Mud Room/Stairs
+// around one AHU) produced several routes whose 40%/65% points landed
+// within a couple of viewBox units of each other, printing multiple
+// numbers directly on top of each other. Widening the diagram's on-page
+// container (the prior fix) does nothing for this - the labels overlap
+// in the diagram's own coordinate space, at any render width.
+//
+// Fix: (1) move each run's label to sit at its own register (the room
+// end), directly answering the original "mark the CFM information at the
+// register" instruction and naturally spreading labels out spatially
+// since registers themselves are spread across the floor plan; (2) run a
+// real, bounded greedy vertical decluttering pass across every label on
+// a sheet (room names, run values, and the AHU trunk label together) so
+// any pair that still overlaps after (1) gets pushed apart instead of
+// silently drawn on top of each other.
+// -----------------------------------------------------------------------
+
+export type DuctRoutingLayoutPin = {
+  kind: "room" | "ahu";
+  label: string;
+  xNorm: number;
+  yNorm: number;
+  trunkDiameterIn?: number | null;
+  trunkCfm?: number | null;
+};
+export type DuctRoutingLayoutRoute = {
+  toXNorm: number;
+  toYNorm: number;
+  diameterIn: number | null;
+  cfm: number | null;
+};
+export type DuctRoutingLayoutSheet = {
+  pins: DuctRoutingLayoutPin[];
+  routes: DuctRoutingLayoutRoute[];
+};
+
+export type DuctRoutingLabel = {
+  kind: "room" | "run" | "trunk";
+  x: number;
+  y: number;
+  text: string;
+  textAnchor: "start" | "middle";
+};
+
+export function formatDuctSizeCfm(diameterIn: number | null | undefined, cfm: number | null | undefined): string {
+  const sizeText = diameterIn ? `${diameterIn}"⌀` : null;
+  const cfmText = cfm != null ? `${Math.round(cfm)} cfm` : null;
+  return [sizeText, cfmText].filter(Boolean).join(" / ");
+}
+
+// Coordinates are in the same 0-100 viewBox units the diagram's SVG
+// already renders in (xNorm/yNorm * 100).
+const LABEL_ROW_HEIGHT = 1.9;
+const LABEL_MAX_PUSH_ROWS = 15;
+const LABEL_PADDING = 0.3;
+// Rough per-character width at font-size 1 (viewBox units), for the bold
+// sans-serif this diagram uses - deliberately approximate (real glyph
+// widths vary by character), sized to be conservative enough to catch
+// real overlaps without needing full text-measurement, which isn't
+// available in either the server (string-built SVG) or client render path.
+const CHAR_WIDTH_FACTOR = 0.58;
+
+type LabelBox = { x0: number; x1: number; y0: number; y1: number };
+
+function estimateBox(x: number, y: number, text: string, fontSize: number, textAnchor: "start" | "middle"): LabelBox {
+  const width = text.length * fontSize * CHAR_WIDTH_FACTOR;
+  const height = fontSize * 1.15;
+  const x0 = textAnchor === "middle" ? x - width / 2 : x;
+  const x1 = x0 + width;
+  return { x0: x0 - LABEL_PADDING, x1: x1 + LABEL_PADDING, y0: y - height / 2 - LABEL_PADDING, y1: y + height / 2 + LABEL_PADDING };
+}
+
+function boxesOverlap(a: LabelBox, b: LabelBox): boolean {
+  return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+}
+
+export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRoutingLabel[] {
+  type Candidate = { kind: DuctRoutingLabel["kind"]; x: number; y: number; text: string; fontSize: number; textAnchor: "start" | "middle" };
+  const candidates: Candidate[] = [];
+
+  for (const pin of sheet.pins) {
+    if (pin.kind === "room") {
+      candidates.push({ kind: "room", x: pin.xNorm * 100 + 2.4, y: pin.yNorm * 100 - 2.2, text: pin.label, fontSize: 1.7, textAnchor: "start" });
+    } else {
+      const trunkText = formatDuctSizeCfm(pin.trunkDiameterIn, pin.trunkCfm);
+      if (trunkText) {
+        candidates.push({ kind: "trunk", x: pin.xNorm * 100 - 2.3, y: pin.yNorm * 100 - 0.9, text: trunkText, fontSize: 1.5, textAnchor: "middle" });
+      }
+    }
+  }
+
+  for (const route of sheet.routes) {
+    const text = formatDuctSizeCfm(route.diameterIn, route.cfm);
+    if (!text) continue;
+    // Anchored at the register end (not the line's midpoint) - this is
+    // what "mark the CFM information at the register" means literally,
+    // and it's what spreads these labels apart spatially in the first
+    // place, since registers are spread across the real floor plan.
+    // Offset below-right of the pin, mirroring the room-name label's
+    // above-right offset, so a register's own two lines of text (name,
+    // then size/CFM) stack rather than collide with each other before
+    // the cross-register pass even runs.
+    candidates.push({ kind: "run", x: route.toXNorm * 100 + 2.4, y: route.toYNorm * 100 + 2.6, text, fontSize: 1.6, textAnchor: "start" });
+  }
+
+  // Greedy vertical decluttering: process top-to-bottom, push each new
+  // label straight down (bounded) until it clears every label already
+  // placed. Deterministic, terminates in bounded steps, and keeps every
+  // label close to the register/pin it describes rather than letting it
+  // drift arbitrarily far away.
+  const sorted = [...candidates].sort((a, b) => a.y - b.y);
+  const placed: LabelBox[] = [];
+  const results: DuctRoutingLabel[] = [];
+
+  for (const candidate of sorted) {
+    let y = candidate.y;
+    for (let row = 0; row < LABEL_MAX_PUSH_ROWS; row++) {
+      const box = estimateBox(candidate.x, y, candidate.text, candidate.fontSize, candidate.textAnchor);
+      if (!placed.some((p) => boxesOverlap(box, p))) {
+        placed.push(box);
+        break;
+      }
+      if (row === LABEL_MAX_PUSH_ROWS - 1) {
+        // Genuinely can't clear every neighbor within the row budget (an
+        // extremely dense cluster) - place it anyway rather than push it
+        // off the sheet; a small residual overlap here beats either an
+        // infinite loop or a label flung far from its own register.
+        placed.push(box);
+        break;
+      }
+      y += LABEL_ROW_HEIGHT;
+    }
+    results.push({ kind: candidate.kind, x: candidate.x, y, text: candidate.text, textAnchor: candidate.textAnchor });
+  }
+
+  return results;
+}

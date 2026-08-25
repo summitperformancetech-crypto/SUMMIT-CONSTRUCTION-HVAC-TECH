@@ -28,6 +28,7 @@ import { computeRequiredCfmForRooms } from "./manualD";
 import type { Compass8 } from "./constants/compass";
 import type { DrawingExtraction } from "./drawingExtraction";
 import { getEmbeddedFontFaces } from "./reportFonts";
+import { layoutDuctRoutingLabels } from "./ductRouting";
 
 export type OrgBranding = {
   name: string;
@@ -582,34 +583,23 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         })
         .join("");
 
-      // Duct size + CFM printed directly along each run (matching the
-      // reference standard - both figures on the line itself, not just
-      // one at the register), offset 35%/65% along the route
-      // (alternating) rather than the exact midpoint so short runs
-      // converging near the AHU don't stack every label on top of each
-      // other. Still not full collision avoidance (disclosed).
-      const runLabels = sheet.routes
-        .map((route, routeIndex) => {
-          const sizeText = route.diameterIn ? `${route.diameterIn}"⌀` : null;
-          const cfmText = route.cfm != null ? `${Math.round(route.cfm)} cfm` : null;
-          const text = [sizeText, cfmText].filter(Boolean).join(" / ");
-          if (!text) return "";
-          const t = routeIndex % 2 === 0 ? 0.4 : 0.6;
-          const lx = (route.fromXNorm + (route.toXNorm - route.fromXNorm) * t) * 100;
-          const ly = (route.fromYNorm + (route.toYNorm - route.fromYNorm) * t) * 100;
-          return `<text x="${lx.toFixed(3)}" y="${ly.toFixed(3)}" dy="-0.6" font-size="1.6" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="middle" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(text)}</text>`;
-        })
-        .join("");
-
-      // Room name next to each register - real project room names, per
-      // direct instruction (this replaces the earlier "no callouts"
-      // version, which the reference standard doesn't follow either).
-      const roomLabels = sheet.pins
-        .filter((p) => p.kind === "room")
-        .map((pin) => {
-          const cx = pin.xNorm * 100;
-          const cy = pin.yNorm * 100;
-          return `<text x="${cx}" y="${cy}" dx="2.4" dy="-2.2" font-size="1.7" font-weight="600" fill="#1f3a5f" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(pin.label)}</text>`;
+      // Real collision-avoided label positions (see
+      // lib/ductRouting.ts's layoutDuctRoutingLabels) - shared with the
+      // live in-app diagram so both stay in sync. Replaces the old fixed
+      // 35%/65%-along-the-line placement, which had no check against any
+      // other label and stacked multiple CFM/size numbers directly on
+      // top of each other wherever rooms cluster tightly on the real
+      // floor plan (diagnosed 2026-08-25 against a real rendered
+      // screenshot). Run labels are now anchored at the register end,
+      // per the original "mark the CFM information at the register"
+      // instruction, which is also what spreads them apart spatially in
+      // the first place.
+      const labels = layoutDuctRoutingLabels(sheet)
+        .map((label) => {
+          const fontSize = label.kind === "room" ? 1.7 : label.kind === "trunk" ? 1.5 : 1.6;
+          const fontWeight = label.kind === "room" ? 600 : 700;
+          const fill = label.kind === "room" ? "#1f3a5f" : SUPPLY_COLOR;
+          return `<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
         })
         .join("");
 
@@ -624,12 +614,8 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           const cx = pin.xNorm * 100;
           const cy = pin.yNorm * 100;
           if (pin.kind === "ahu") {
-            const trunkText = [pin.trunkDiameterIn ? `${pin.trunkDiameterIn}"⌀` : null, pin.trunkCfm != null ? `${Math.round(pin.trunkCfm)} cfm` : null]
-              .filter(Boolean)
-              .join(" / ");
             return `<g transform="translate(${cx} ${cy})">
               <line x1="0" y1="0" x2="-4.5" y2="0" stroke="${SUPPLY_COLOR}" stroke-width="0.7" stroke-linecap="round" />
-              ${trunkText ? `<text x="-2.3" y="-0.9" font-size="1.5" font-weight="700" text-anchor="middle" fill="${SUPPLY_COLOR}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;">${esc(trunkText)}</text>` : ""}
               <rect x="2" y="2.6" width="2.6" height="2.6" fill="${RETURN_COLOR}" stroke="${BRAND.paper}" stroke-width="0.25" />
               <line x1="2" y1="2.6" x2="4.6" y2="5.2" stroke="${BRAND.paper}" stroke-width="0.2" />
               <line x1="4.6" y1="2.6" x2="2" y2="5.2" stroke="${BRAND.paper}" stroke-width="0.2" />
@@ -651,8 +637,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
             ${routeLines}
             ${pinIcons}
-            ${runLabels}
-            ${roomLabels}
+            ${labels}
           </svg>
         </div>`;
     })

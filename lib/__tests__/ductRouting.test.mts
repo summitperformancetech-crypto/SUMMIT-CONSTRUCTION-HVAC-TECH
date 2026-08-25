@@ -13,6 +13,8 @@ import {
   getDuctRoutingGateStatus,
   findAiSuggestedPosition,
   resolveRoomPositionSource,
+  layoutDuctRoutingLabels,
+  formatDuctSizeCfm,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -332,5 +334,96 @@ describe("resolveRoomPositionSource", () => {
   it("skips a drawing that hasn't completed extraction", () => {
     const pending = { ...drawing, extraction_status: "pending" as const };
     expect(resolveRoomPositionSource("Kitchen", [pending])).toBeNull();
+  });
+});
+
+describe("formatDuctSizeCfm", () => {
+  it("joins size and CFM when both are known", () => {
+    expect(formatDuctSizeCfm(7, 200)).toBe('7"⌀ / 200 cfm');
+  });
+  it("rounds CFM", () => {
+    expect(formatDuctSizeCfm(7, 199.6)).toBe('7"⌀ / 200 cfm');
+  });
+  it("falls back to just size when CFM is unknown", () => {
+    expect(formatDuctSizeCfm(7, null)).toBe('7"⌀');
+  });
+  it("falls back to just CFM when size is unknown", () => {
+    expect(formatDuctSizeCfm(null, 200)).toBe("200 cfm");
+  });
+  it("returns empty string when neither is known", () => {
+    expect(formatDuctSizeCfm(null, null)).toBe("");
+  });
+});
+
+describe("layoutDuctRoutingLabels", () => {
+  it("leaves well-separated labels at their natural anchor position", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [
+        { kind: "room", label: "Kitchen", xNorm: 0.1, yNorm: 0.1 },
+        { kind: "room", label: "Bedroom 5", xNorm: 0.9, yNorm: 0.9 },
+      ],
+      routes: [],
+    });
+    expect(labels).toHaveLength(2);
+    const kitchen = labels.find((l) => l.text === "Kitchen")!;
+    const bedroom = labels.find((l) => l.text === "Bedroom 5")!;
+    expect(kitchen.x).toBeCloseTo(0.1 * 100 + 2.4);
+    expect(kitchen.y).toBeCloseTo(0.1 * 100 - 2.2);
+    expect(bedroom.x).toBeCloseTo(0.9 * 100 + 2.4);
+    expect(bedroom.y).toBeCloseTo(0.9 * 100 - 2.2);
+  });
+
+  // Root cause of the real "impossible to read" complaint (diagnosed
+  // 2026-08-25 against Schneider's actual dense room cluster) - two
+  // labels landing on essentially the same point must not be drawn on
+  // top of each other.
+  it("pushes a colliding label away from an earlier one instead of stacking them", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [
+        { kind: "room", label: "Kitchen", xNorm: 0.5, yNorm: 0.5 },
+        { kind: "room", label: "Bathroom 2", xNorm: 0.5, yNorm: 0.5 },
+      ],
+      routes: [],
+    });
+    expect(labels).toHaveLength(2);
+    const [first, second] = labels;
+    const collided = Math.abs(first.x - second.x) < 0.01 && Math.abs(first.y - second.y) < 0.01;
+    expect(collided).toBe(false);
+  });
+
+  it("anchors a run's size/CFM label at the register end, not the line midpoint", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [
+        { kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 },
+        { kind: "room", label: "Dining Room", xNorm: 0.8, yNorm: 0.2 },
+      ],
+      routes: [{ toXNorm: 0.8, toYNorm: 0.2, diameterIn: 7, cfm: 200 }],
+    });
+    const runLabel = labels.find((l) => l.kind === "run")!;
+    expect(runLabel.text).toBe('7"⌀ / 200 cfm');
+    expect(runLabel.x).toBeCloseTo(0.8 * 100 + 2.4);
+    expect(runLabel.y).toBeCloseTo(0.2 * 100 + 2.6);
+  });
+
+  it("omits a run label entirely when neither size nor CFM is known yet", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
+      routes: [{ toXNorm: 0.8, toYNorm: 0.2, diameterIn: null, cfm: null }],
+    });
+    expect(labels.some((l) => l.kind === "run")).toBe(false);
+  });
+
+  it("includes a trunk label at the AHU only when trunk size/CFM is known", () => {
+    const withTrunk = layoutDuctRoutingLabels({
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2, trunkDiameterIn: 14, trunkCfm: 1149 }],
+      routes: [],
+    });
+    expect(withTrunk.some((l) => l.kind === "trunk" && l.text === '14"⌀ / 1149 cfm')).toBe(true);
+
+    const withoutTrunk = layoutDuctRoutingLabels({
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
+      routes: [],
+    });
+    expect(withoutTrunk.some((l) => l.kind === "trunk")).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { LiveDuctRoutingSheet } from "@/lib/ductRouting";
+import { layoutDuctRoutingLabels, type LiveDuctRoutingSheet } from "@/lib/ductRouting";
 
 // Live, in-app rendering of the exact same Manual D duct schematic the
 // PDF report produces (lib/reportHtmlV2.ts's renderDuctRoutingPage) -
@@ -95,64 +95,39 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
           return <polyline key={i} points={points} fill="none" stroke={SUPPLY_COLOR} strokeWidth={0.55} strokeLinecap="round" />;
         });
 
-        const runLabels = sheet.routes.map((route, i) => {
-          const sizeText = route.diameterIn ? `${route.diameterIn}"⌀` : null;
-          const cfmText = route.cfm != null ? `${Math.round(route.cfm)} cfm` : null;
-          const text = [sizeText, cfmText].filter(Boolean).join(" / ");
-          if (!text) return null;
-          const t = i % 2 === 0 ? 0.4 : 0.6;
-          const lx = route.fromXNorm + (route.toXNorm - route.fromXNorm) * t;
-          const ly = route.fromYNorm + (route.toYNorm - route.fromYNorm) * t;
+        // Real collision-avoided label positions (see
+        // lib/ductRouting.ts's layoutDuctRoutingLabels) - replaces the
+        // fixed-fraction-of-the-line placement that was stacking multiple
+        // CFM/size numbers directly on top of each other wherever rooms
+        // cluster tightly on the real floor plan.
+        const labels = layoutDuctRoutingLabels(sheet).map((label, i) => {
+          const style =
+            label.kind === "room"
+              ? { fontSize: 1.7, fontWeight: 600, fill: "#1f3a5f" }
+              : { fontSize: label.kind === "trunk" ? 1.5 : 1.6, fontWeight: 700, fill: SUPPLY_COLOR };
           return (
             <text
               key={i}
-              x={lx * 100}
-              y={ly * 100}
-              dy={-0.6}
-              fontSize={1.6}
-              fontWeight={700}
-              fill={SUPPLY_COLOR}
-              textAnchor="middle"
+              x={label.x}
+              y={label.y}
+              fontSize={style.fontSize}
+              fontWeight={style.fontWeight}
+              fill={style.fill}
+              textAnchor={label.textAnchor}
               style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
             >
-              {text}
+              {label.text}
             </text>
           );
         });
-
-        const roomLabels = sheet.pins
-          .filter((p) => p.kind === "room")
-          .map((pin, i) => (
-            <text
-              key={i}
-              x={pin.xNorm * 100}
-              y={pin.yNorm * 100}
-              dx={2.4}
-              dy={-2.2}
-              fontSize={1.7}
-              fontWeight={600}
-              fill="#1f3a5f"
-              style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
-            >
-              {pin.label}
-            </text>
-          ));
 
         const pinIcons = sheet.pins.map((pin, i) => {
           const cx = pin.xNorm * 100;
           const cy = pin.yNorm * 100;
           if (pin.kind === "ahu") {
-            const trunkText = [pin.trunkDiameterIn ? `${pin.trunkDiameterIn}"⌀` : null, pin.trunkCfm != null ? `${Math.round(pin.trunkCfm)} cfm` : null]
-              .filter(Boolean)
-              .join(" / ");
             return (
               <g key={i} transform={`translate(${cx} ${cy})`}>
                 <line x1={0} y1={0} x2={-4.5} y2={0} stroke={SUPPLY_COLOR} strokeWidth={0.7} strokeLinecap="round" />
-                {trunkText && (
-                  <text x={-2.3} y={-0.9} fontSize={1.5} fontWeight={700} textAnchor="middle" fill={SUPPLY_COLOR} style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6 }}>
-                    {trunkText}
-                  </text>
-                )}
                 <rect x={2} y={2.6} width={2.6} height={2.6} fill={RETURN_COLOR} stroke={PAPER} strokeWidth={0.25} />
                 <line x1={2} y1={2.6} x2={4.6} y2={5.2} stroke={PAPER} strokeWidth={0.2} />
                 <line x1={4.6} y1={2.6} x2={2} y2={5.2} stroke={PAPER} strokeWidth={0.2} />
@@ -188,8 +163,7 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
                 {routeLines}
                 {pinIcons}
-                {runLabels}
-                {roomLabels}
+                {labels}
               </svg>
             </div>
           </div>

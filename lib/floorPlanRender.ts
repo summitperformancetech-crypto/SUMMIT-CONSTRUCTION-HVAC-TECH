@@ -39,13 +39,35 @@ const PDF_VIEWER_DPI = 96;
 // producing a viewport Chromium may refuse or render unreliably.
 const MAX_VIEWPORT_DIMENSION = 4000;
 
+// Diagnosed 2026-08-25 against a real drawing (Schneider's construction
+// set, an E-size sheet exported with a /Rotate 270 page flag): pdf-lib's
+// own getSize() returns the RAW pre-rotation MediaBox dimensions, not
+// what a viewer actually displays - for this file getSize() reported
+// {width:1728, height:2592} (portrait) while Chromium's PDF viewer (and
+// every human who opens this file) renders it landscape at 2592x1728.
+// Same rotation-metadata gotcha already documented elsewhere in this
+// codebase for this exact PDF library class (see
+// lib/drawingExtraction.ts's Kinsela note on pre-rotation coordinates).
+// Getting this wrong here doesn't just crop the screenshot - it silently
+// feeds the WRONG page dimensions to anything computing a real-world
+// scale from this render (lib/ductRouting.ts's derivePageScale), so it's
+// corrected once, centrally, rather than trusted raw at each call site.
+export function getEffectivePageSize(page: { getSize: () => { width: number; height: number }; getRotation: () => { angle: number } }): {
+  width: number;
+  height: number;
+} {
+  const raw = page.getSize();
+  const angle = ((page.getRotation().angle % 360) + 360) % 360;
+  return angle === 90 || angle === 270 ? { width: raw.height, height: raw.width } : raw;
+}
+
 export async function renderPdfPageToPngDataUri(pdfBytes: Buffer, pageNumber: number): Promise<string> {
   const pdfDoc = await PDFDocument.load(pdfBytes);
   const pageIndex = pageNumber - 1;
   if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) {
     throw new Error(`Page ${pageNumber} does not exist in this PDF (it has ${pdfDoc.getPageCount()} pages).`);
   }
-  const { width, height } = pdfDoc.getPage(pageIndex).getSize();
+  const { width, height } = getEffectivePageSize(pdfDoc.getPage(pageIndex));
   const viewportWidth = Math.min(Math.round((width / 72) * PDF_VIEWER_DPI), MAX_VIEWPORT_DIMENSION);
   const viewportHeight = Math.min(Math.round((height / 72) * PDF_VIEWER_DPI), MAX_VIEWPORT_DIMENSION);
 

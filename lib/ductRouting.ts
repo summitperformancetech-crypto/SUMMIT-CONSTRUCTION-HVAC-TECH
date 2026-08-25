@@ -81,6 +81,28 @@ export type ScaleSampleRoom = {
   heightNorm: number | null;
 };
 
+// Diagnosed 2026-08-25 against real data (Schneider's construction set):
+// derivePageScale's room-bounding-box median produced a page ~1.4-1.5x
+// too large (125ft/83ft computed vs. the real 85ft/58'-10" printed on
+// the sheet's own overall dimension strings) - a real, measurable AI
+// bounding-box precision limit, not a code bug (the median/outlier logic
+// itself checked out correctly by hand). Almost every architectural
+// sheet prints its own scale directly in the title block (e.g. "1/4" =
+// 1'-0""), which is authoritative and unaffected by that imprecision -
+// prefer this whenever it's known. A PDF page's points are a real
+// physical unit (72pt = 1 printed inch) for any page that represents
+// its true plotted size (true of every architectural sheet this app
+// handles - Chromium's own PDF viewer, which lib/floorPlanRender.ts
+// renders through, does not rescale pages), so converting a stated
+// architectural scale straight to feet-per-page-point is exact, not
+// estimated.
+export function pageScaleFromArchitecturalScale(
+  numeratorInches: number,
+  denominatorFeet: number,
+): number {
+  return denominatorFeet / (numeratorInches * 72);
+}
+
 export type PageScaleResult = {
   feetPerPagePoint: number | null;
   sampleCount: number;

@@ -78,7 +78,7 @@ describe("buildDuctRoutingIllustrations", () => {
   it("returns empty when no zone has a resolved AHU pin", () => {
     const rooms = [makeRoom({})];
     const zones = [makeZone({})];
-    expect(buildDuctRoutingIllustrations(rooms, zones, [], [])).toEqual([]);
+    expect(buildDuctRoutingIllustrations(rooms, zones, [], [], new Map())).toEqual([]);
   });
 
   it("builds one sheet with an AHU pin and one room pin, matched by drawing+page", () => {
@@ -134,7 +134,7 @@ describe("buildDuctRoutingIllustrations", () => {
       },
     ];
 
-    const result = buildDuctRoutingIllustrations(rooms, zones, ductRuns, ductSchedule);
+    const result = buildDuctRoutingIllustrations(rooms, zones, ductRuns, ductSchedule, new Map());
     expect(result).toHaveLength(1);
     expect(result[0].drawingId).toBe("drawing-1");
     expect(result[0].pageNumber).toBe(2);
@@ -144,6 +144,7 @@ describe("buildDuctRoutingIllustrations", () => {
     expect(result[0].routes).toHaveLength(1);
     expect(result[0].routes[0].lengthFt).toBe(22);
     expect(result[0].routes[0].diameterIn).toBe(6);
+    expect(result[0].routes[0].cfm).toBe(100);
   });
 
   it("excludes a room pinned on a different sheet than its zone's AHU", () => {
@@ -164,10 +165,10 @@ describe("buildDuctRoutingIllustrations", () => {
         ahu_position_source_page_number: 2,
       }),
     ];
-    expect(buildDuctRoutingIllustrations(rooms, zones, [], [])).toEqual([]);
+    expect(buildDuctRoutingIllustrations(rooms, zones, [], [], new Map())).toEqual([]);
   });
 
-  it("leaves lengthFt/diameterIn null when no matching duct run exists yet", () => {
+  it("leaves lengthFt/diameterIn null when no matching duct run exists yet, but still shows CFM from the independent fallback map", () => {
     const rooms = [
       makeRoom({
         id: "room-1",
@@ -185,8 +186,9 @@ describe("buildDuctRoutingIllustrations", () => {
         ahu_position_source_page_number: 2,
       }),
     ];
-    const result = buildDuctRoutingIllustrations(rooms, zones, [], []);
+    const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map([["room-1", 145]]));
     expect(result[0].routes[0].lengthFt).toBeNull();
     expect(result[0].routes[0].diameterIn).toBeNull();
+    expect(result[0].routes[0].cfm).toBe(145);
   });
 });

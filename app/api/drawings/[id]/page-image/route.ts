@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { PDFDocument } from "pdf-lib";
 import { createClient } from "@/lib/supabase/server";
-import { renderPdfPageToPngDataUri } from "@/lib/floorPlanRender";
+import { renderPdfPageToPngDataUri, getEffectivePageSize } from "@/lib/floorPlanRender";
 
 // Renders a specific page of an uploaded drawing to a PNG data URI, for
 // the duct-routing pin-placement canvas (components/duct-routing-canvas.tsx)
@@ -60,7 +60,10 @@ export async function GET(
       // real feet distance. Read directly from the PDF itself, not
       // guessed from the rendered image's pixel size (which is capped by
       // MAX_VIEWPORT_DIMENSION for an oversized sheet and would silently
-      // misstate scale if used instead).
+      // misstate scale if used instead). getEffectivePageSize (not raw
+      // getSize()) - see its own comment in lib/floorPlanRender.ts for why:
+      // a rotated page's raw MediaBox dimensions don't match what's
+      // actually rendered/viewed.
       const pdfDoc = await PDFDocument.load(fileBuffer);
       const pageIndex = pageNumber - 1;
       if (pageIndex < 0 || pageIndex >= pdfDoc.getPageCount()) {
@@ -69,7 +72,7 @@ export async function GET(
           { status: 400 },
         );
       }
-      const { width: pageWidthPt, height: pageHeightPt } = pdfDoc.getPage(pageIndex).getSize();
+      const { width: pageWidthPt, height: pageHeightPt } = getEffectivePageSize(pdfDoc.getPage(pageIndex));
       const dataUri = await renderPdfPageToPngDataUri(fileBuffer, pageNumber);
       return NextResponse.json({ dataUri, pageWidthPt, pageHeightPt });
     }

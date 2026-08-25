@@ -538,33 +538,76 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
           <div class="callout">This sheet's source image could not be rendered for this report.</div>`;
       }
-      const lines = sheet.routes
-        .map(
-          (route) =>
-            `<line x1="${(route.fromXNorm * 100).toFixed(3)}%" y1="${(route.fromYNorm * 100).toFixed(3)}%" x2="${(route.toXNorm * 100).toFixed(3)}%" y2="${(route.toYNorm * 100).toFixed(3)}%" stroke="${BRAND.amber}" stroke-width="2" stroke-dasharray="6 4" />`,
-        )
-        .join("");
-      const labels = sheet.routes
+      // Manhattan (right-angle) polyline, not a diagonal line - matches
+      // how the run's own real length was computed (lib/ductRouting.ts's
+      // computeRoutedBranchRun) and how the duct is actually installed.
+      const routeLines = sheet.routes
         .map((route) => {
-          const midXPct = ((route.fromXNorm + route.toXNorm) / 2) * 100;
-          const midYPct = ((route.fromYNorm + route.toYNorm) / 2) * 100;
-          const label =
-            route.lengthFt != null
-              ? `${Math.round(route.lengthFt)}ft${route.diameterIn ? ` / ${route.diameterIn}"` : ""}`
-              : "";
-          return label
-            ? `<text x="${midXPct.toFixed(3)}%" y="${midYPct.toFixed(3)}%" font-size="11" fill="${BRAND.ink}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:3px;">${esc(label)}</text>`
-            : "";
+          const x1 = route.fromXNorm * 100;
+          const y1 = route.fromYNorm * 100;
+          const x2 = route.toXNorm * 100;
+          const y2 = route.toYNorm * 100;
+          const straight = Math.abs(x1 - x2) < 0.2 || Math.abs(y1 - y2) < 0.2;
+          const points = straight ? `${x1},${y1} ${x2},${y2}` : `${x1},${y1} ${x1},${y2} ${x2},${y2}`;
+          return `<polyline points="${points}" fill="none" stroke="${BRAND.amber}" stroke-width="0.35" stroke-dasharray="1.2 0.8" vector-effect="non-scaling-stroke" />`;
         })
         .join("");
-      const pins = sheet.pins
+
+      // Offset the label along the route (35%/65% split, alternating by
+      // index) rather than the exact midpoint - short runs converging on
+      // one AHU otherwise stack every label in the same small area with
+      // no way to tell them apart. Still not full collision avoidance
+      // (a real layout algorithm is out of scope here) but meaningfully
+      // reduces the worst overlaps on a dense floor plan.
+      const routeLabels = sheet.routes
+        .map((route, routeIndex) => {
+          if (route.lengthFt == null) return "";
+          const t = routeIndex % 2 === 0 ? 0.38 : 0.62;
+          const labelXPct = (route.fromXNorm + (route.toXNorm - route.fromXNorm) * t) * 100;
+          const labelYPct = (route.fromYNorm + (route.toYNorm - route.fromYNorm) * t) * 100;
+          const parts = [
+            `${Math.round(route.lengthFt)}ft`,
+            route.diameterIn ? `${route.diameterIn}"` : null,
+            route.cfm ? `${Math.round(route.cfm)}cfm` : null,
+          ].filter(Boolean);
+          const text = parts.join(" / ");
+          return `<g transform="translate(${labelXPct.toFixed(3)} ${labelYPct.toFixed(3)})">
+            <rect x="-0.6" y="-1.9" width="${1.2 + text.length * 0.95}" height="2.6" fill="${BRAND.paper}" fill-opacity="0.88" rx="0.4" />
+            <text data-route="${routeIndex}" x="0" y="0" font-size="1.6" fill="${BRAND.ink}">${esc(text)}</text>
+          </g>`;
+        })
+        .join("");
+
+      // Register (supply outlet) icon: a small square diffuser with
+      // crosshatch louvers - the conventional HVAC-install-drawing symbol
+      // for a supply register, not just an unlabeled dot. AHU icon: a
+      // labeled equipment rectangle. Both real, recognizable installer
+      // symbols, not decorative. Sized deliberately small (this is a
+      // dense residential floor plan, not a schematic) - a full
+      // label-collision-avoidance layout is out of scope, so size is kept
+      // small enough that most labels stay legible without one.
+      const pinIcons = sheet.pins
         .map((pin) => {
-          const cx = (pin.xNorm * 100).toFixed(3);
-          const cy = (pin.yNorm * 100).toFixed(3);
-          const fill = pin.kind === "ahu" ? BRAND.amber : "#2f6f4f";
-          return `<g>
-            <circle cx="${cx}%" cy="${cy}%" r="7" fill="${fill}" stroke="${BRAND.paper}" stroke-width="1.5" />
-            <text x="${cx}%" y="${cy}%" dy="-10" font-size="10" font-weight="600" text-anchor="middle" fill="${BRAND.ink}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:3px;">${esc(pin.label)}</text>
+          const cx = pin.xNorm * 100;
+          const cy = pin.yNorm * 100;
+          const labelDy = -2.6;
+          const shortLabel = pin.label.replace(/\s*\((1st|2nd) Floor\)\s*$/i, "");
+          if (pin.kind === "ahu") {
+            return `<g transform="translate(${cx} ${cy})">
+              <rect x="-2" y="-2" width="4" height="4" fill="${BRAND.amber}" stroke="${BRAND.paper}" stroke-width="0.3" />
+              <text x="0" y="0.6" font-size="1.5" font-weight="700" text-anchor="middle" fill="${BRAND.navy950}">AHU</text>
+              <rect x="${-1 - shortLabel.length * 0.52}" y="${labelDy - 1.3}" width="${2 + shortLabel.length * 1.04}" height="1.9" fill="${BRAND.paper}" fill-opacity="0.88" rx="0.35" />
+              <text x="0" y="${labelDy}" font-size="1.5" font-weight="600" text-anchor="middle" fill="${BRAND.ink}">${esc(shortLabel)}</text>
+            </g>`;
+          }
+          return `<g transform="translate(${cx} ${cy})">
+            <circle r="1.6" fill="#e8f2ec" stroke="#2f6f4f" stroke-width="0.35" />
+            <line x1="-1.3" y1="-1.3" x2="1.3" y2="1.3" stroke="#2f6f4f" stroke-width="0.25" />
+            <line x1="-1.3" y1="1.3" x2="1.3" y2="-1.3" stroke="#2f6f4f" stroke-width="0.25" />
+            <line x1="0" y1="-1.6" x2="0" y2="1.6" stroke="#2f6f4f" stroke-width="0.25" />
+            <line x1="-1.6" y1="0" x2="1.6" y2="0" stroke="#2f6f4f" stroke-width="0.25" />
+            <rect x="${-1 - shortLabel.length * 0.52}" y="${labelDy - 1.3}" width="${2 + shortLabel.length * 1.04}" height="1.9" fill="${BRAND.paper}" fill-opacity="0.88" rx="0.35" />
+            <text x="0" y="${labelDy}" font-size="1.5" font-weight="600" text-anchor="middle" fill="${BRAND.ink}">${esc(shortLabel)}</text>
           </g>`;
         })
         .join("");
@@ -573,16 +616,10 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         <div style="position:relative;display:inline-block;">
           <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};" />
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
-            ${lines}
+            ${routeLines}
+            ${routeLabels}
+            ${pinIcons}
           </svg>
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;">
-            ${labels}
-          </svg>
-          <div style="position:absolute;inset:0;">
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:100%;">
-              ${pins}
-            </svg>
-          </div>
         </div>`;
     })
     .join('<div style="page-break-before:always;"></div>');
@@ -591,11 +628,18 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     "Duct Routing",
     org,
     `${body}
+     <div style="margin-top:10px;display:flex;gap:24px;align-items:center;font-size:11px;color:${BRAND.inkSoft};">
+       <span><svg width="14" height="14" style="vertical-align:middle;"><rect x="1" y="1" width="12" height="12" fill="${BRAND.amber}" stroke="${BRAND.paper}" /></svg> AHU / mechanical equipment</span>
+       <span><svg width="14" height="14" style="vertical-align:middle;"><circle cx="7" cy="7" r="6" fill="#e8f2ec" stroke="#2f6f4f" /></svg> Supply register</span>
+       <span>‑ ‑ ‑ Routed duct path (length · size · CFM labeled at midpoint)</span>
+     </div>
      <p class="muted" style="margin-top:8px;">
-       Amber pin = AHU/mechanical equipment. Green pins = supply registers. Dashed lines show the routed
-       (Manhattan) path between each; length and diameter are the same figures used in the Manual D schedule.
-       Pin positions were confirmed or placed by a technician against the actual source drawing - never
-       AI-inferred without confirmation (see the Audit Trail page for who resolved each one and when).
+       Routed paths follow the same right-angle (Manhattan) geometry used to compute each run's real length in
+       the Manual D schedule - ductwork runs along framing, not diagonally through it. Return air uses a single
+       central return near the AHU per standard residential practice; this app does not currently model
+       per-room return grilles separately. Pin positions were confirmed or placed by a technician against the
+       actual source drawing - never AI-inferred without confirmation (see the Audit Trail page for who
+       resolved each one and when).
      </p>`,
     projectAddress(data),
   );

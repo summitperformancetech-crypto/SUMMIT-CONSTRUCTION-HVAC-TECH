@@ -97,6 +97,7 @@ export type DuctRoutingIllustrationRoute = {
   toYNorm: number;
   lengthFt: number | null;
   diameterIn: number | null;
+  cfm: number | null;
 };
 export type DuctRoutingSheetIllustration = {
   drawingId: string;
@@ -111,6 +112,14 @@ export function buildDuctRoutingIllustrations(
   zones: ZoneDbRow[],
   ductRuns: DuctRunRow[],
   ductSchedule: DuctSizingResult[],
+  // CFM only needs a room's real sensible cooling load + supply air temp
+  // (computeRequiredCfmForRooms) - it does NOT need available static
+  // pressure the way duct diameter/friction sizing does. Passed in
+  // separately so the illustration can still show a real CFM figure even
+  // on a project where static pressure (and therefore ductSchedule
+  // itself) isn't set yet - see the caller for why these two are computed
+  // independently.
+  requiredCfmByRoom: Map<string, number | null>,
 ): DuctRoutingSheetIllustration[] {
   const bySheet = new Map<string, DuctRoutingSheetIllustration>();
   const sizedByRunId = new Map(ductSchedule.map((r) => [r.runId, r]));
@@ -165,6 +174,7 @@ export function buildDuctRoutingIllustrations(
         toYNorm: room.position_y_norm!,
         lengthFt: run?.length_ft ?? null,
         diameterIn: sized?.diameterIn ?? null,
+        cfm: sized?.cfm ?? requiredCfmByRoom.get(room.id) ?? null,
       });
     }
   }
@@ -614,6 +624,17 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       ).values(),
     ];
 
+    // CFM for the illustration - computed unconditionally (only needs
+    // supply air temp, not available static pressure) so it can show a
+    // real figure even before a project has static pressure set. See
+    // buildDuctRoutingIllustrations' own comment for why this is kept
+    // independent of ductSchedule above.
+    const illustrationCfmByRoom = computeRequiredCfmForRooms(
+      manualJ.rooms,
+      project.supply_air_temp_f,
+      project.indoor_design_temp_cooling_f,
+    );
+
     residential = {
       envelope,
       manualJ,
@@ -624,7 +645,13 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       zones: zones ?? [],
       zoneEquipment,
       ductInsulationCompliance,
-      ductRoutingIllustration: buildDuctRoutingIllustrations(rooms ?? [], zones ?? [], ductRuns ?? [], ductSchedule),
+      ductRoutingIllustration: buildDuctRoutingIllustrations(
+        rooms ?? [],
+        zones ?? [],
+        ductRuns ?? [],
+        ductSchedule,
+        illustrationCfmByRoom,
+      ),
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&

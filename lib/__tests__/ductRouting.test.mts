@@ -5,6 +5,7 @@
 import { describe, it, expect } from "vitest";
 import {
   convertEquivalentLength,
+  pageScaleFromArchitecturalScale,
   derivePageScale,
   computeManhattanDistanceFt,
   countManhattanTurns,
@@ -36,6 +37,22 @@ describe("convertEquivalentLength", () => {
         EL_REFERENCE_FRICTION_RATE_IWC_PER_100FT,
       ),
     ).toBeCloseTo(ROUND_ELBOW_EL_REFERENCE_FT, 5);
+  });
+});
+
+describe("pageScaleFromArchitecturalScale", () => {
+  it("converts a real printed scale (1/4\" = 1'-0\") on a true-size sheet to feet-per-page-point", () => {
+    // A 36x24in (2592x1728pt) sheet at 1/4"=1' represents a real 144ft x
+    // 96ft area - verified this session against Schneider's actual
+    // construction set (both floor plan sheets print this exact scale).
+    const feetPerPt = pageScaleFromArchitecturalScale(0.25, 1);
+    expect(feetPerPt * 2592).toBeCloseTo(144, 5);
+    expect(feetPerPt * 1728).toBeCloseTo(96, 5);
+  });
+
+  it("converts 1/8\" = 1'-0\" (a common smaller scale) correctly", () => {
+    const feetPerPt = pageScaleFromArchitecturalScale(0.125, 1);
+    expect(feetPerPt * 72).toBeCloseTo(8, 5); // 1 printed inch = 8ft at 1/8"=1'
   });
 });
 

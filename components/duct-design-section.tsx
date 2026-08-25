@@ -206,112 +206,133 @@ export function DuctDesignSection({
       .eq("id", runId);
   }
 
+  // Wrapped in try/catch, not just an `error`-on-result check - a genuine
+  // network-level failure can reject the underlying fetch before
+  // postgrest-js has a response to wrap, which surfaces as a thrown
+  // exception rather than a resolved {error}. Uncaught inside an async
+  // onClick handler, that's a silent, console-only unhandled rejection
+  // with the saving flag stuck true - same failure shape already found
+  // and fixed on the Zones page's add/rename/delete handlers.
   async function handleSaveSettings() {
     setSettingsSaving(true);
     setSettingsError(null);
-    const supabase = createClient();
-    const { error } = await supabase
-      .from("projects")
-      .update({
-        available_static_pressure_iwc: availableStaticPressureIwc,
-        supply_air_temp_f: supplyAirTempF,
-      })
-      .eq("id", projectId);
-    if (error) {
-      setSettingsError(error.message);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from("projects")
+        .update({
+          available_static_pressure_iwc: availableStaticPressureIwc,
+          supply_air_temp_f: supplyAirTempF,
+        })
+        .eq("id", projectId);
+      if (error) {
+        setSettingsError(error.message);
+        return;
+      }
+      // Every run's cfm/friction depends on these two settings - refresh
+      // every stored snapshot, not just newly-added runs, so exported
+      // reports never lag behind a static-pressure or supply-temp change.
+      await Promise.all(ductRuns.map((run) => persistRunSnapshot(run.id, supabase)));
+    } catch (err) {
+      setSettingsError(
+        err instanceof Error ? err.message : "Failed to save duct settings - check your connection and try again.",
+      );
+    } finally {
       setSettingsSaving(false);
-      return;
     }
-    // Every run's cfm/friction depends on these two settings - refresh
-    // every stored snapshot, not just newly-added runs, so exported
-    // reports never lag behind a static-pressure or supply-temp change.
-    await Promise.all(ductRuns.map((run) => persistRunSnapshot(run.id, supabase)));
-    setSettingsSaving(false);
   }
 
   async function handleAddRun() {
     setRunSaving(true);
     setRunError(null);
-    const supabase = createClient();
+    try {
+      const supabase = createClient();
 
-    const payload = {
-      project_id: projectId,
-      run_type: runForm.run_type,
-      room_id: runForm.run_type === "branch" ? runForm.room_id || null : null,
-      zone_id: runForm.zone_id || null,
-      length_ft: toNullableNumber(runForm.length_ft) ?? 0,
-      fitting_equivalent_length_ft: toNullableNumber(runForm.fitting_equivalent_length_ft) ?? 0,
-      duct_shape: runForm.duct_shape,
-      target_height_in:
-        runForm.duct_shape === "rectangular" ? toNullableNumber(runForm.target_height_in) : null,
-      material: runForm.material,
-      // Placeholder - overwritten immediately below once the row (and
-      // therefore its id) exists and computeManualD can size it for real.
-      cfm: 0,
-      friction_rate: 0,
-      velocity_fpm: 0,
-      calculated_diameter_in: null,
-      calculated_width_in: null,
-      calculated_height_in: null,
-    };
+      const payload = {
+        project_id: projectId,
+        run_type: runForm.run_type,
+        room_id: runForm.run_type === "branch" ? runForm.room_id || null : null,
+        zone_id: runForm.zone_id || null,
+        length_ft: toNullableNumber(runForm.length_ft) ?? 0,
+        fitting_equivalent_length_ft: toNullableNumber(runForm.fitting_equivalent_length_ft) ?? 0,
+        duct_shape: runForm.duct_shape,
+        target_height_in:
+          runForm.duct_shape === "rectangular" ? toNullableNumber(runForm.target_height_in) : null,
+        material: runForm.material,
+        // Placeholder - overwritten immediately below once the row (and
+        // therefore its id) exists and computeManualD can size it for real.
+        cfm: 0,
+        friction_rate: 0,
+        velocity_fpm: 0,
+        calculated_diameter_in: null,
+        calculated_width_in: null,
+        calculated_height_in: null,
+      };
 
-    const { data, error } = await supabase
-      .from("duct_runs")
-      .insert(payload)
-      .select(DUCT_RUN_COLUMNS)
-      .single<DuctRunRow>();
-
-    if (error || !data) {
-      setRunError(error?.message ?? "Failed to create duct run.");
-      setRunSaving(false);
-      return;
-    }
-
-    // Compute and persist the real snapshot immediately rather than
-    // leaving the placeholder zeros in place until the next Settings
-    // save - inline (not via the ductRuns/results state, which won't
-    // include this row until the setDuctRuns below re-renders).
-    const inputs = [...ductRuns, data].map(toDuctRunInput);
-    const freshResults = computeManualD(
-      inputs,
-      requiredCfmByRoom,
-      availableStaticPressureIwc,
-      ductSizingTable,
-    );
-    const newResult = freshResults.find((r) => r.runId === data.id);
-    let savedRow = data;
-    if (newResult) {
-      const { data: updated } = await supabase
+      const { data, error } = await supabase
         .from("duct_runs")
-        .update({
-          cfm: newResult.cfm,
-          friction_rate: newResult.frictionRate,
-          velocity_fpm: newResult.velocityFpm,
-          calculated_diameter_in: newResult.diameterIn,
-          calculated_width_in: newResult.widthIn,
-          calculated_height_in: newResult.heightIn,
-        })
-        .eq("id", data.id)
+        .insert(payload)
         .select(DUCT_RUN_COLUMNS)
         .single<DuctRunRow>();
-      if (updated) savedRow = updated;
-    }
 
-    setDuctRuns((prev) => [...prev, savedRow]);
-    setShowAddForm(false);
-    setRunForm(EMPTY_RUN_FORM);
-    setRunSaving(false);
+      if (error || !data) {
+        setRunError(error?.message ?? "Failed to create duct run.");
+        return;
+      }
+
+      // Compute and persist the real snapshot immediately rather than
+      // leaving the placeholder zeros in place until the next Settings
+      // save - inline (not via the ductRuns/results state, which won't
+      // include this row until the setDuctRuns below re-renders).
+      const inputs = [...ductRuns, data].map(toDuctRunInput);
+      const freshResults = computeManualD(
+        inputs,
+        requiredCfmByRoom,
+        availableStaticPressureIwc,
+        ductSizingTable,
+      );
+      const newResult = freshResults.find((r) => r.runId === data.id);
+      let savedRow = data;
+      if (newResult) {
+        const { data: updated } = await supabase
+          .from("duct_runs")
+          .update({
+            cfm: newResult.cfm,
+            friction_rate: newResult.frictionRate,
+            velocity_fpm: newResult.velocityFpm,
+            calculated_diameter_in: newResult.diameterIn,
+            calculated_width_in: newResult.widthIn,
+            calculated_height_in: newResult.heightIn,
+          })
+          .eq("id", data.id)
+          .select(DUCT_RUN_COLUMNS)
+          .single<DuctRunRow>();
+        if (updated) savedRow = updated;
+      }
+
+      setDuctRuns((prev) => [...prev, savedRow]);
+      setShowAddForm(false);
+      setRunForm(EMPTY_RUN_FORM);
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Failed to create duct run - check your connection and try again.");
+    } finally {
+      setRunSaving(false);
+    }
   }
 
   async function handleDeleteRun(id: string) {
     if (!window.confirm("Delete this duct run?")) return;
-    const supabase = createClient();
-    const { error } = await supabase.from("duct_runs").delete().eq("id", id);
-    if (error) {
-      setRunError(error.message);
-      return;
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from("duct_runs").delete().eq("id", id);
+      if (error) {
+        setRunError(error.message);
+        return;
+      }
+      setDuctRuns((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Failed to delete duct run - check your connection and try again.");
     }
-    setDuctRuns((prev) => prev.filter((r) => r.id !== id));
   }
 
   const readyToSize = availableStaticPressureIwc != null && supplyAirTempF != null;

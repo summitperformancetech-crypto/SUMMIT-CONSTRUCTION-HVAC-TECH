@@ -242,6 +242,28 @@ function toNullableString(value: string): string | null {
   return trimmed === "" ? null : trimmed;
 }
 
+// Suggests, never forces, the next zone name - a real pre-filled value
+// (not just a placeholder hint) so the "Add Zone" form visibly changes
+// after a successful add rather than looking stuck on whatever was just
+// submitted. Reads the highest "Zone N" number actually in use, so a
+// zone renamed away from the default pattern doesn't confuse the count -
+// falls back to zones.length + 1 only when NO zone matches the pattern
+// at all (e.g. every zone has been custom-named), so the suggestion
+// still keeps counting up rather than colliding back at "Zone 1".
+function suggestNextZoneName(zones: { name: string }[]): string {
+  let maxN = 0;
+  let anyMatched = false;
+  for (const zone of zones) {
+    const match = zone.name.match(/^Zone (\d+)\b/);
+    if (match) {
+      anyMatched = true;
+      const n = parseInt(match[1], 10);
+      if (n > maxN) maxN = n;
+    }
+  }
+  return `Zone ${anyMatched ? maxN + 1 : zones.length + 1}`;
+}
+
 function envelopeToForm(
   envelope: ManualJEnvelope,
   atticInsulationType: string | null,
@@ -471,7 +493,7 @@ export const ManualJWorkflow = forwardRef<
   );
 
   const [zones, setZones] = useState<ZoneRow[]>(initialZones);
-  const [newZoneName, setNewZoneName] = useState("");
+  const [newZoneName, setNewZoneName] = useState(() => suggestNextZoneName(initialZones));
   const [newZoneAhuLabel, setNewZoneAhuLabel] = useState("");
   const [zoneError, setZoneError] = useState<string | null>(null);
   const [zoneSaving, setZoneSaving] = useState(false);
@@ -610,8 +632,14 @@ export const ManualJWorkflow = forwardRef<
         setZoneError(error.message);
         return;
       }
-      setZones((prev) => [...prev, data]);
-      setNewZoneName("");
+      const updatedZones = [...zones, data];
+      setZones(updatedZones);
+      // Suggest the NEXT name (not just clear to empty) - a real,
+      // different value in the field makes it obvious the form actually
+      // reset, rather than looking identical to what was just submitted
+      // (a static placeholder matching a just-typed value is exactly how
+      // this looked "stuck" before).
+      setNewZoneName(suggestNextZoneName(updatedZones));
       setNewZoneAhuLabel("");
     } catch (err) {
       setZoneError(err instanceof Error ? err.message : "Failed to add zone - check your connection and try again.");
@@ -1177,9 +1205,10 @@ export const ManualJWorkflow = forwardRef<
             <label className="mb-1 block text-xs font-medium text-brand-grey-text">Zone name</label>
             <input
               type="text"
-              placeholder="Zone 2 - Upstairs AHU"
+              placeholder="e.g. Zone 2 - Upstairs AHU"
               value={newZoneName}
               onChange={(e) => setNewZoneName(e.target.value)}
+              onFocus={(e) => e.target.select()}
               className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
             />
           </div>
@@ -1189,7 +1218,7 @@ export const ManualJWorkflow = forwardRef<
             </label>
             <input
               type="text"
-              placeholder="AHU-2"
+              placeholder="e.g. AHU-2"
               value={newZoneAhuLabel}
               onChange={(e) => setNewZoneAhuLabel(e.target.value)}
               className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"

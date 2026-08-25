@@ -145,6 +145,48 @@ describe("buildDuctRoutingIllustrations", () => {
     expect(result[0].routes[0].lengthFt).toBe(22);
     expect(result[0].routes[0].diameterIn).toBe(6);
     expect(result[0].routes[0].cfm).toBe(100);
+    // zoneId/zoneName on every pin and route - what the report's schematic
+    // page uses for per-zone color coding (lib/reportHtmlV2.ts).
+    expect(result[0].pins.every((p) => p.zoneId === "zone-1" && p.zoneName === "Zone 1")).toBe(true);
+    expect(result[0].routes[0].zoneId).toBe("zone-1");
+    expect(result[0].routes[0].zoneName).toBe("Zone 1");
+  });
+
+  it("excludes the room the AHU pin itself sits in - no overlapping register at the same spot", () => {
+    const rooms = [
+      makeRoom({
+        id: "utility-room",
+        name: "Utility Room",
+        position_x_norm: 0.655,
+        position_y_norm: 0.445,
+        position_source_drawing_id: "drawing-1",
+        position_source_page_number: 6,
+      }),
+      makeRoom({
+        id: "bedroom",
+        name: "Bedroom",
+        position_x_norm: 0.3,
+        position_y_norm: 0.4,
+        position_source_drawing_id: "drawing-1",
+        position_source_page_number: 6,
+      }),
+    ];
+    const zones = [
+      makeZone({
+        ahu_position_x_norm: 0.655,
+        ahu_position_y_norm: 0.445,
+        ahu_position_source_drawing_id: "drawing-1",
+        ahu_position_source_page_number: 6,
+      }),
+    ];
+    const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map());
+    // 1 AHU pin + 1 real register pin (Bedroom) - Utility Room, which
+    // shares the AHU's exact position, gets no pin/route of its own.
+    expect(result[0].pins).toHaveLength(2);
+    expect(result[0].pins.some((p) => p.kind === "room" && p.label === "Utility Room")).toBe(false);
+    expect(result[0].pins.some((p) => p.kind === "room" && p.label === "Bedroom")).toBe(true);
+    expect(result[0].routes).toHaveLength(1);
+    expect(result[0].routes[0].roomName).toBe("Bedroom");
   });
 
   it("excludes a room pinned on a different sheet than its zone's AHU", () => {

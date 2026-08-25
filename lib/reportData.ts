@@ -88,6 +88,8 @@ export type DuctRoutingIllustrationPin = {
   label: string;
   xNorm: number;
   yNorm: number;
+  zoneId: string;
+  zoneName: string;
 };
 export type DuctRoutingIllustrationRoute = {
   roomName: string;
@@ -98,6 +100,8 @@ export type DuctRoutingIllustrationRoute = {
   lengthFt: number | null;
   diameterIn: number | null;
   cfm: number | null;
+  zoneId: string;
+  zoneName: string;
 };
 export type DuctRoutingSheetIllustration = {
   drawingId: string;
@@ -159,11 +163,28 @@ export function buildDuctRoutingIllustrations(
         label: `${zone.name} (AHU)`,
         xNorm: zone.ahu_position_x_norm,
         yNorm: zone.ahu_position_y_norm,
+        zoneId: zone.id,
+        zoneName: zone.name,
       });
     }
 
     for (const room of zoneRooms) {
-      sheet.pins.push({ kind: "room", label: room.name, xNorm: room.position_x_norm!, yNorm: room.position_y_norm! });
+      // The room the AHU pin itself sits in (e.g. a utility closet or
+      // attic) doesn't get its own register pin/route - it would render
+      // exactly on top of the AHU icon (a real, confirmed rendering bug
+      // caught via an actual screenshot, not just reasoned about) and a
+      // zero-length "run" isn't a real branch to begin with.
+      if (room.position_x_norm === zone.ahu_position_x_norm && room.position_y_norm === zone.ahu_position_y_norm) {
+        continue;
+      }
+      sheet.pins.push({
+        kind: "room",
+        label: room.name,
+        xNorm: room.position_x_norm!,
+        yNorm: room.position_y_norm!,
+        zoneId: zone.id,
+        zoneName: zone.name,
+      });
       const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
       const sized = run ? sizedByRunId.get(run.id) : undefined;
       sheet.routes.push({
@@ -175,6 +196,8 @@ export function buildDuctRoutingIllustrations(
         lengthFt: run?.length_ft ?? null,
         diameterIn: sized?.diameterIn ?? null,
         cfm: sized?.cfm ?? requiredCfmByRoom.get(room.id) ?? null,
+        zoneId: zone.id,
+        zoneName: zone.name,
       });
     }
   }

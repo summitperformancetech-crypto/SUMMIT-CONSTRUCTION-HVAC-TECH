@@ -532,6 +532,36 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     );
   }
 
+  // Schematic, not an annotated photo - modeled on how an electrical
+  // riser diagram reads: symbols + one color per circuit (here, per
+  // zone), a legend explaining both, and nothing else printed on the
+  // drawing itself. No room names, no length/diameter callouts, no label
+  // boxes - only what a tech standing at the register with a flex run in
+  // hand actually needs: which zone it belongs to (color) and what it's
+  // supposed to deliver (CFM), read straight off the real floor plan
+  // page underneath (never a redrawn/approximated one).
+  const ZONE_COLORS = ["#2f6f4f", "#a9822f", "#2f5f8f", "#8a3b6f", "#b0532f", "#4f4f9e", "#2f8f8f", "#8f2f4f"];
+  const zoneColorById = new Map<string, string>();
+  for (const sheet of sheets) {
+    for (const pin of sheet.pins) {
+      if (!zoneColorById.has(pin.zoneId)) {
+        zoneColorById.set(pin.zoneId, ZONE_COLORS[zoneColorById.size % ZONE_COLORS.length]);
+      }
+    }
+  }
+  const zoneNameById = new Map<string, string>();
+  for (const sheet of sheets) for (const pin of sheet.pins) zoneNameById.set(pin.zoneId, pin.zoneName);
+
+  const legendRows = [...zoneColorById.entries()]
+    .map(
+      ([zoneId, color]) =>
+        `<div style="display:flex;align-items:center;gap:6px;">
+           <span style="display:inline-block;width:10px;height:10px;background:${color};border:1px solid ${BRAND.paper};flex-shrink:0;"></span>
+           <span>${esc(zoneNameById.get(zoneId) ?? "Zone")}</span>
+         </div>`,
+    )
+    .join("");
+
   const body = sheets
     .map((sheet, sheetIndex) => {
       if (!sheet.imageDataUri) {
@@ -549,65 +579,53 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           const y2 = route.toYNorm * 100;
           const straight = Math.abs(x1 - x2) < 0.2 || Math.abs(y1 - y2) < 0.2;
           const points = straight ? `${x1},${y1} ${x2},${y2}` : `${x1},${y1} ${x1},${y2} ${x2},${y2}`;
-          return `<polyline points="${points}" fill="none" stroke="${BRAND.amber}" stroke-width="0.35" stroke-dasharray="1.2 0.8" vector-effect="non-scaling-stroke" />`;
+          const color = zoneColorById.get(route.zoneId) ?? BRAND.amber;
+          // No vector-effect="non-scaling-stroke" here (diagnosed
+          // 2026-08-25 via a real rendered screenshot, not just code
+          // review) - it makes the stroke width immune to the SVG's own
+          // viewBox scale, which for a 0-100 viewBox stretched over a
+          // ~1700px image renders as a hairline under 1 real pixel wide -
+          // effectively invisible. Letting it scale normally (same as
+          // the pin icons below, which never had this attribute) is what
+          // actually makes the route visible.
+          return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="0.6" stroke-dasharray="1.6 1.1" stroke-linecap="round" />`;
         })
         .join("");
 
-      // Offset the label along the route (35%/65% split, alternating by
-      // index) rather than the exact midpoint - short runs converging on
-      // one AHU otherwise stack every label in the same small area with
-      // no way to tell them apart. Still not full collision avoidance
-      // (a real layout algorithm is out of scope here) but meaningfully
-      // reduces the worst overlaps on a dense floor plan.
-      const routeLabels = sheet.routes
-        .map((route, routeIndex) => {
-          if (route.lengthFt == null) return "";
-          const t = routeIndex % 2 === 0 ? 0.38 : 0.62;
-          const labelXPct = (route.fromXNorm + (route.toXNorm - route.fromXNorm) * t) * 100;
-          const labelYPct = (route.fromYNorm + (route.toYNorm - route.fromYNorm) * t) * 100;
-          const parts = [
-            `${Math.round(route.lengthFt)}ft`,
-            route.diameterIn ? `${route.diameterIn}"` : null,
-            route.cfm ? `${Math.round(route.cfm)}cfm` : null,
-          ].filter(Boolean);
-          const text = parts.join(" / ");
-          return `<g transform="translate(${labelXPct.toFixed(3)} ${labelYPct.toFixed(3)})">
-            <rect x="-0.6" y="-1.9" width="${1.2 + text.length * 0.95}" height="2.6" fill="${BRAND.paper}" fill-opacity="0.88" rx="0.4" />
-            <text data-route="${routeIndex}" x="0" y="0" font-size="1.6" fill="${BRAND.ink}">${esc(text)}</text>
-          </g>`;
+      // CFM printed directly beside the register symbol, plain text with
+      // a thin light halo for legibility over the drawing - not a filled
+      // label box. This is the one number the diagram exists to show.
+      const cfmLabels = sheet.routes
+        .map((route) => {
+          if (route.cfm == null) return "";
+          const cx = route.toXNorm * 100;
+          const cy = route.toYNorm * 100;
+          return `<text x="${cx}" y="${cy}" dx="2.1" dy="0.6" font-size="1.7" font-weight="700" fill="${BRAND.ink}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.5px;stroke-linejoin:round;">${Math.round(route.cfm)}</text>`;
         })
         .join("");
 
-      // Register (supply outlet) icon: a small square diffuser with
-      // crosshatch louvers - the conventional HVAC-install-drawing symbol
-      // for a supply register, not just an unlabeled dot. AHU icon: a
-      // labeled equipment rectangle. Both real, recognizable installer
-      // symbols, not decorative. Sized deliberately small (this is a
-      // dense residential floor plan, not a schematic) - a full
-      // label-collision-avoidance layout is out of scope, so size is kept
-      // small enough that most labels stay legible without one.
+      // Register: the standard schematic diffuser symbol (circle with
+      // crosshatch louvers), tinted per-zone. AHU: a filled square, same
+      // per-zone tint, "AHU" printed inside it - both real, recognizable
+      // installer symbols. No name/room labels on either - the legend
+      // carries zone identity, the color carries it on the drawing.
       const pinIcons = sheet.pins
         .map((pin) => {
           const cx = pin.xNorm * 100;
           const cy = pin.yNorm * 100;
-          const labelDy = -2.6;
-          const shortLabel = pin.label.replace(/\s*\((1st|2nd) Floor\)\s*$/i, "");
+          const color = zoneColorById.get(pin.zoneId) ?? BRAND.amber;
           if (pin.kind === "ahu") {
             return `<g transform="translate(${cx} ${cy})">
-              <rect x="-2" y="-2" width="4" height="4" fill="${BRAND.amber}" stroke="${BRAND.paper}" stroke-width="0.3" />
-              <text x="0" y="0.6" font-size="1.5" font-weight="700" text-anchor="middle" fill="${BRAND.navy950}">AHU</text>
-              <rect x="${-1 - shortLabel.length * 0.52}" y="${labelDy - 1.3}" width="${2 + shortLabel.length * 1.04}" height="1.9" fill="${BRAND.paper}" fill-opacity="0.88" rx="0.35" />
-              <text x="0" y="${labelDy}" font-size="1.5" font-weight="600" text-anchor="middle" fill="${BRAND.ink}">${esc(shortLabel)}</text>
+              <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${color}" stroke="${BRAND.paper}" stroke-width="0.3" />
+              <text x="0" y="0.7" font-size="1.6" font-weight="700" text-anchor="middle" fill="${BRAND.paper}">AHU</text>
             </g>`;
           }
           return `<g transform="translate(${cx} ${cy})">
-            <circle r="1.6" fill="#e8f2ec" stroke="#2f6f4f" stroke-width="0.35" />
-            <line x1="-1.3" y1="-1.3" x2="1.3" y2="1.3" stroke="#2f6f4f" stroke-width="0.25" />
-            <line x1="-1.3" y1="1.3" x2="1.3" y2="-1.3" stroke="#2f6f4f" stroke-width="0.25" />
-            <line x1="0" y1="-1.6" x2="0" y2="1.6" stroke="#2f6f4f" stroke-width="0.25" />
-            <line x1="-1.6" y1="0" x2="1.6" y2="0" stroke="#2f6f4f" stroke-width="0.25" />
-            <rect x="${-1 - shortLabel.length * 0.52}" y="${labelDy - 1.3}" width="${2 + shortLabel.length * 1.04}" height="1.9" fill="${BRAND.paper}" fill-opacity="0.88" rx="0.35" />
-            <text x="0" y="${labelDy}" font-size="1.5" font-weight="600" text-anchor="middle" fill="${BRAND.ink}">${esc(shortLabel)}</text>
+            <circle r="1.7" fill="${BRAND.paper}" stroke="${color}" stroke-width="0.45" />
+            <line x1="-1.4" y1="-1.4" x2="1.4" y2="1.4" stroke="${color}" stroke-width="0.3" />
+            <line x1="-1.4" y1="1.4" x2="1.4" y2="-1.4" stroke="${color}" stroke-width="0.3" />
+            <line x1="0" y1="-1.7" x2="0" y2="1.7" stroke="${color}" stroke-width="0.3" />
+            <line x1="-1.7" y1="0" x2="1.7" y2="0" stroke="${color}" stroke-width="0.3" />
           </g>`;
         })
         .join("");
@@ -617,8 +635,8 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};" />
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
             ${routeLines}
-            ${routeLabels}
             ${pinIcons}
+            ${cfmLabels}
           </svg>
         </div>`;
     })
@@ -628,10 +646,12 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     "Duct Routing",
     org,
     `${body}
-     <div style="margin-top:10px;display:flex;gap:24px;align-items:center;font-size:11px;color:${BRAND.inkSoft};">
-       <span><svg width="14" height="14" style="vertical-align:middle;"><rect x="1" y="1" width="12" height="12" fill="${BRAND.amber}" stroke="${BRAND.paper}" /></svg> AHU / mechanical equipment</span>
-       <span><svg width="14" height="14" style="vertical-align:middle;"><circle cx="7" cy="7" r="6" fill="#e8f2ec" stroke="#2f6f4f" /></svg> Supply register</span>
-       <span>‑ ‑ ‑ Routed duct path (length · size · CFM labeled at midpoint)</span>
+     <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:18px;align-items:center;border:1px solid ${BRAND.grid};border-radius:6px;padding:10px 14px;font-size:11px;color:${BRAND.inkSoft};">
+       <strong style="color:${BRAND.ink};">Legend</strong>
+       ${legendRows}
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.inkSoft}" /></svg> AHU / mechanical equipment</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="${BRAND.paper}" stroke="${BRAND.inkSoft}" stroke-width="1.4" /></svg> Supply register (CFM printed beside it)</span>
+       <span>‑ ‑ ‑ Routed duct path, colored by zone</span>
      </div>
      <p class="muted" style="margin-top:8px;">
        Routed paths follow the same right-angle (Manhattan) geometry used to compute each run's real length in

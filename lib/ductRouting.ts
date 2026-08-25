@@ -14,6 +14,9 @@
 // anyway - simpler and more honest to just never suggest one.
 
 import type { ExtractedRoom, DrawingRow } from "./drawingExtraction";
+import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
+import type { DuctRunRow } from "@/components/duct-design-section";
+import type { DuctSizingResult } from "./manualD";
 
 // -----------------------------------------------------------------------
 // ACCA Manual D, Third Edition v2.00 (2013), Appendix 3 "Fitting
@@ -328,4 +331,129 @@ export function resolveRoomPositionSource(
     };
   }
   return null;
+}
+
+// -----------------------------------------------------------------------
+// Live illustration data - the exact same shape/logic as
+// lib/reportData.ts's buildDuctRoutingIllustrations (server-only, reads
+// from Supabase), duplicated here rather than imported so this stays
+// usable from a "use client" component - same cross-boundary convention
+// this codebase already uses everywhere else (see e.g. duct-design-
+// section.tsx's own DUCT_RUN_COLUMNS comment). Lets the live project
+// workspace render the identical diagram the report PDF does, from data
+// already loaded on the page - no need to generate/download a PDF just
+// to see it.
+// -----------------------------------------------------------------------
+export type LiveDuctRoutingPin = {
+  kind: "room" | "ahu";
+  label: string;
+  xNorm: number;
+  yNorm: number;
+  zoneId: string;
+  zoneName: string;
+  trunkDiameterIn?: number | null;
+  trunkCfm?: number | null;
+};
+export type LiveDuctRoutingRoute = {
+  roomName: string;
+  fromXNorm: number;
+  fromYNorm: number;
+  toXNorm: number;
+  toYNorm: number;
+  lengthFt: number | null;
+  diameterIn: number | null;
+  cfm: number | null;
+  zoneId: string;
+  zoneName: string;
+};
+export type LiveDuctRoutingSheet = {
+  drawingId: string;
+  pageNumber: number;
+  pins: LiveDuctRoutingPin[];
+  routes: LiveDuctRoutingRoute[];
+};
+
+export function buildLiveDuctRoutingIllustration(
+  rooms: RoomRow[],
+  zones: ZoneRow[],
+  ductRuns: DuctRunRow[],
+  sizedByRunId: Map<string, Pick<DuctSizingResult, "diameterIn" | "cfm">>,
+  requiredCfmByRoom: Map<string, number | null>,
+): LiveDuctRoutingSheet[] {
+  const bySheet = new Map<string, LiveDuctRoutingSheet>();
+
+  for (const zone of zones) {
+    if (
+      zone.ahu_position_x_norm == null ||
+      zone.ahu_position_y_norm == null ||
+      !zone.ahu_position_source_drawing_id ||
+      zone.ahu_position_source_page_number == null
+    ) {
+      continue;
+    }
+    const zoneRooms = rooms.filter(
+      (r) =>
+        r.zone_id === zone.id &&
+        r.position_x_norm != null &&
+        r.position_y_norm != null &&
+        r.position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+        r.position_source_page_number === zone.ahu_position_source_page_number,
+    );
+    if (zoneRooms.length === 0) continue;
+
+    const sheetKey = `${zone.ahu_position_source_drawing_id}:${zone.ahu_position_source_page_number}`;
+    let sheet = bySheet.get(sheetKey);
+    if (!sheet) {
+      sheet = { drawingId: zone.ahu_position_source_drawing_id, pageNumber: zone.ahu_position_source_page_number, pins: [], routes: [] };
+      bySheet.set(sheetKey, sheet);
+      const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
+      const trunkSized = trunkRun ? sizedByRunId.get(trunkRun.id) : undefined;
+      const trunkCfmFallback = zoneRooms.reduce((sum, r) => sum + (requiredCfmByRoom.get(r.id) ?? 0), 0);
+      // duct_runs.cfm/friction_rate/etc. default to 0 (not null) at
+      // insert time, before real sizing has ever run against them - 0 is
+      // a placeholder here, not a real computed zero, so it's treated
+      // the same as "not yet sized" rather than trusted as a value.
+      const persistedTrunkCfm = trunkRun && trunkRun.cfm > 0 ? trunkRun.cfm : null;
+      sheet.pins.push({
+        kind: "ahu",
+        label: `${zone.name} (AHU)`,
+        xNorm: zone.ahu_position_x_norm,
+        yNorm: zone.ahu_position_y_norm,
+        trunkDiameterIn: trunkSized?.diameterIn ?? trunkRun?.calculated_diameter_in ?? null,
+        trunkCfm: trunkSized?.cfm ?? persistedTrunkCfm ?? (trunkCfmFallback > 0 ? trunkCfmFallback : null),
+        zoneId: zone.id,
+        zoneName: zone.name,
+      });
+    }
+
+    for (const room of zoneRooms) {
+      if (room.position_x_norm === zone.ahu_position_x_norm && room.position_y_norm === zone.ahu_position_y_norm) {
+        continue;
+      }
+      sheet.pins.push({
+        kind: "room",
+        label: room.name,
+        xNorm: room.position_x_norm!,
+        yNorm: room.position_y_norm!,
+        zoneId: zone.id,
+        zoneName: zone.name,
+      });
+      const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
+      const sized = run ? sizedByRunId.get(run.id) : undefined;
+      const persistedCfm = run && run.cfm > 0 ? run.cfm : null;
+      sheet.routes.push({
+        roomName: room.name,
+        fromXNorm: zone.ahu_position_x_norm,
+        fromYNorm: zone.ahu_position_y_norm,
+        toXNorm: room.position_x_norm!,
+        toYNorm: room.position_y_norm!,
+        lengthFt: run?.length_ft ?? null,
+        diameterIn: sized?.diameterIn ?? run?.calculated_diameter_in ?? null,
+        cfm: sized?.cfm ?? persistedCfm ?? requiredCfmByRoom.get(room.id) ?? null,
+        zoneId: zone.id,
+        zoneName: zone.name,
+      });
+    }
+  }
+  return [...bySheet.values()];
 }

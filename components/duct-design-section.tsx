@@ -18,8 +18,10 @@ import {
   derivePageScale,
   computeRoutedBranchRun,
   getDuctRoutingGateStatus,
+  buildLiveDuctRoutingIllustration,
   type ScaleSampleRoom,
 } from "@/lib/ductRouting";
+import { DuctRoutingDiagram } from "@/components/duct-routing-diagram";
 import type { RoomLoadResult } from "@/lib/manualJ";
 import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 import type { DrawingRow } from "@/lib/drawingExtraction";
@@ -675,9 +677,26 @@ export function DuctDesignSection({
 
   const readyToSize = availableStaticPressureIwc != null && supplyAirTempF != null;
 
+  // The live, in-app version of the exact same schematic the PDF report
+  // produces - built from the same resolved pin positions, the same
+  // requiredCfmByRoom CFM (independent of static pressure - see the CFM
+  // fallback comment on the table below), and resultByRunId when static-
+  // pressure sizing has run. No PDF generation required to see it.
+  const liveIllustrationSheets = useMemo(
+    () => buildLiveDuctRoutingIllustration(rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom),
+    [rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom],
+  );
+
   return (
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
       <h2 className="mb-4 text-lg font-semibold text-brand-gold">Duct Design (Manual D)</h2>
+
+      <div className="mb-6 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
+          Duct Routing Diagram
+        </p>
+        <DuctRoutingDiagram sheets={liveIllustrationSheets} />
+      </div>
 
       <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
         <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
@@ -839,14 +858,13 @@ export function DuctDesignSection({
 
       {!readyToSize && (
         <p className="mb-4 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3 text-sm text-brand-grey-text">
-          Enter and save available static pressure and supply air temperature above before
-          adding duct runs - both are required to compute required CFM and friction rate.
+          Supply air temperature is set, so required CFM is already shown below. Enter and save
+          available static pressure above too to also compute friction rate, duct size, and
+          velocity - those three columns need it, CFM does not.
         </p>
       )}
 
-      {readyToSize && (
-        <>
-          <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
             <h3 className="text-sm font-semibold text-brand-silver-highlight">Duct Runs</h3>
             {!showAddForm && (
               <button
@@ -992,6 +1010,27 @@ export function DuctDesignSection({
                 <tbody>
                   {ductRuns.map((run) => {
                     const result = resultByRunId.get(run.id);
+                    // CFM only needs the room's real sensible cooling load
+                    // + supply air temp (computeRequiredCfmForRooms) - it
+                    // does NOT need available static pressure the way
+                    // friction rate/size/velocity do. Falling back to the
+                    // already-computed requiredCfmByRoom here (same
+                    // decoupling already shipped for the report
+                    // illustration, lib/reportData.ts's
+                    // buildDuctRoutingIllustrations) means a project like
+                    // Schneider - real supply air temp set, TESP/static
+                    // pressure genuinely still unknown - shows real CFM
+                    // instead of a blank table.
+                    // Trunk runs have no single room_id - fall back to
+                    // that zone's summed room CFM (same real inputs,
+                    // just aggregated) instead of leaving it blank.
+                    const fallbackCfm =
+                      run.room_id != null
+                        ? requiredCfmByRoom.get(run.room_id)
+                        : rooms
+                            .filter((r) => r.zone_id === run.zone_id)
+                            .reduce((sum, r) => sum + (requiredCfmByRoom.get(r.id) ?? 0), 0) || null;
+                    const displayCfm = result?.cfm ?? fallbackCfm;
                     return (
                       <tr key={run.id} className="border-b border-zinc-900">
                         <td className="py-2 pr-4 text-brand-silver-highlight">
@@ -999,7 +1038,7 @@ export function DuctDesignSection({
                         </td>
                         <td className="py-2 pr-4 text-brand-silver">{zoneName(run.zone_id)}</td>
                         <td className="py-2 pr-4 text-right text-brand-silver">
-                          {result ? fmt(result.cfm) : "—"}
+                          {displayCfm != null ? fmt(displayCfm) : "—"}
                         </td>
                         <td className="py-2 pr-4 text-right text-brand-silver">
                           {result ? result.frictionRate.toFixed(2) : "—"}
@@ -1073,8 +1112,6 @@ export function DuctDesignSection({
               </table>
             </div>
           )}
-        </>
-      )}
     </section>
   );
 }

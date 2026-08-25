@@ -442,3 +442,37 @@ export function rankEquipment(
       return bScore - aScore;
     });
 }
+
+// Project-level "Preferred Manufacturer" (projects.preferred_manufacturer)
+// - a completely separate concern from the org-level preferredEquipmentIds
+// tie-break above. That one nudges display ORDER among near-equal scores
+// within the full compatible list; this one narrows WHICH manufacturer's
+// results get shown by default. Neither ever touches compatibilityScore -
+// `ranked` here is expected to already be rankEquipment's output (hard-
+// gate-filtered, score-sorted), this function only slices/filters it.
+export type ManufacturerSelectionResult = {
+  results: EquipmentEvaluation[];
+  // true when the preferred manufacturer had zero compatible matches and
+  // `results` fell back to the top matches across all manufacturers - the
+  // caller must surface this explicitly (never silently substitute), per
+  // the rule that a manufacturer preference can narrow results but must
+  // never hide the fact that it found nothing.
+  usedFallback: boolean;
+};
+
+export const PREFERRED_MANUFACTURER_RESULT_COUNT = 5;
+export const MANUFACTURER_FALLBACK_RESULT_COUNT = 3;
+
+export function selectTopEquipmentByManufacturer(
+  ranked: EquipmentEvaluation[],
+  preferredManufacturer: string | null,
+): ManufacturerSelectionResult {
+  if (!preferredManufacturer) {
+    return { results: ranked.slice(0, PREFERRED_MANUFACTURER_RESULT_COUNT), usedFallback: false };
+  }
+  const fromPreferred = ranked.filter((e) => e.equipment.manufacturer === preferredManufacturer);
+  if (fromPreferred.length > 0) {
+    return { results: fromPreferred.slice(0, PREFERRED_MANUFACTURER_RESULT_COUNT), usedFallback: false };
+  }
+  return { results: ranked.slice(0, MANUFACTURER_FALLBACK_RESULT_COUNT), usedFallback: true };
+}

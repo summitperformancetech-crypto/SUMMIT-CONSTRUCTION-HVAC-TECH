@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 export type EquipmentPreferenceRow = {
@@ -22,6 +22,17 @@ export function EquipmentPreferencesSettings({
   const [rows, setRows] = useState(initialRows);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Populated from the rows actually in the catalog - never hardcoded, so
+  // a new manufacturer (a new equipment_catalog migration) becomes
+  // filterable here automatically, no code change needed.
+  const [manufacturerFilter, setManufacturerFilter] = useState("");
+  const manufacturers = useMemo(
+    () => Array.from(new Set(initialRows.map((r) => r.manufacturer))).sort(),
+    [initialRows],
+  );
+  const visibleRows = manufacturerFilter
+    ? rows.filter((r) => r.manufacturer === manufacturerFilter)
+    : rows;
 
   async function toggle(equipmentId: string, field: "isPreferred" | "isExclusive") {
     const current = rows.find((r) => r.equipmentId === equipmentId);
@@ -54,6 +65,24 @@ export function EquipmentPreferencesSettings({
           {error}
         </p>
       )}
+      <div className="flex items-center gap-3 border-b border-brand-gold/50 px-4 py-3">
+        <label className="text-xs font-medium text-brand-grey-text" htmlFor="equipment-mfr-filter">
+          Manufacturer
+        </label>
+        <select
+          id="equipment-mfr-filter"
+          value={manufacturerFilter}
+          onChange={(e) => setManufacturerFilter(e.target.value)}
+          className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+        >
+          <option value="">All manufacturers ({rows.length})</option>
+          {manufacturers.map((m) => (
+            <option key={m} value={m}>
+              {m} ({rows.filter((r) => r.manufacturer === m).length})
+            </option>
+          ))}
+        </select>
+      </div>
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-brand-gold/50 text-left text-xs uppercase tracking-wide text-brand-grey-text">
@@ -64,7 +93,7 @@ export function EquipmentPreferencesSettings({
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <tr key={row.equipmentId} className="border-b border-zinc-900">
               <td className="px-4 py-3 text-brand-silver-highlight">
                 {row.manufacturer} {row.modelNumber}

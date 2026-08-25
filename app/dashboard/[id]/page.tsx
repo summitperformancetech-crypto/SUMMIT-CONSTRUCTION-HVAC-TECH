@@ -59,6 +59,7 @@ type Project = {
   available_static_pressure_iwc: number | null;
   supply_air_temp_f: number | null;
   building_front_faces: Compass8 | null;
+  preferred_manufacturer: string | null;
 };
 
 type DuctSizingTableDbRow = {
@@ -233,7 +234,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces, preferred_manufacturer",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -735,6 +736,7 @@ export default async function ProjectDetailPage({
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimumRows ?? []}
         initialBuildingFrontFaces={project.building_front_faces}
+        initialPreferredManufacturer={project.preferred_manufacturer}
         userRole={userRole}
       />
     </div>

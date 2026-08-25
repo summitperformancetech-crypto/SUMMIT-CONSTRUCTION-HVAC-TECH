@@ -12,6 +12,9 @@ import {
   computeCompatibilityScore,
   evaluateEquipment,
   rankEquipment,
+  selectTopEquipmentByManufacturer,
+  PREFERRED_MANUFACTURER_RESULT_COUNT,
+  MANUFACTURER_FALLBACK_RESULT_COUNT,
   AC_COOLING_MIN_FRACTION,
   AC_COOLING_MAX_FRACTION,
   type PerformancePoint,
@@ -264,6 +267,72 @@ describe("rankEquipment", () => {
     // "better" is far outside the tie-break threshold, so it still wins
     // outright; "preferred" only needs to beat "close" (within threshold).
     expect(ranked.map((r) => r.equipment.id)).toEqual(["better", "preferred", "close"]);
+  });
+});
+
+describe("selectTopEquipmentByManufacturer", () => {
+  function evalWith(overrides: Partial<EquipmentEvaluation>): EquipmentEvaluation {
+    return {
+      equipment: equipment({}),
+      coolingCapacityAtDesign: null,
+      coolingPercentOfLoad: 1,
+      withinCoolingWindow: true,
+      heatingCapacityAtDesign: null,
+      heatingPercentOfLoad: null,
+      withinHeatingWindow: false,
+      balancePointF: null,
+      supplementalHeatBtuh: null,
+      supplementalHeatKw: null,
+      compatibilityScore: 0.5,
+      ...overrides,
+    };
+  }
+
+  // A ranked list (already score-sorted, as rankEquipment's output would
+  // be) mixing two manufacturers, scores strictly descending overall.
+  const ranked: EquipmentEvaluation[] = [
+    evalWith({ equipment: equipment({ id: "carrier-1", manufacturer: "Carrier" }), compatibilityScore: 0.95 }),
+    evalWith({ equipment: equipment({ id: "amana-1", manufacturer: "Amana" }), compatibilityScore: 0.9 }),
+    evalWith({ equipment: equipment({ id: "carrier-2", manufacturer: "Carrier" }), compatibilityScore: 0.85 }),
+    evalWith({ equipment: equipment({ id: "amana-2", manufacturer: "Amana" }), compatibilityScore: 0.8 }),
+    evalWith({ equipment: equipment({ id: "goodman-1", manufacturer: "Goodman" }), compatibilityScore: 0.7 }),
+  ];
+
+  it("with no preferred manufacturer, returns the top N across all manufacturers unchanged", () => {
+    const result = selectTopEquipmentByManufacturer(ranked, null);
+    expect(result.usedFallback).toBe(false);
+    expect(result.results.map((r) => r.equipment.id)).toEqual(
+      ranked.slice(0, PREFERRED_MANUFACTURER_RESULT_COUNT).map((r) => r.equipment.id),
+    );
+  });
+
+  it("filters to the preferred manufacturer's top matches, still score-ordered, without touching compatibilityScore", () => {
+    const result = selectTopEquipmentByManufacturer(ranked, "Amana");
+    expect(result.usedFallback).toBe(false);
+    expect(result.results.map((r) => r.equipment.id)).toEqual(["amana-1", "amana-2"]);
+    expect(result.results.map((r) => r.compatibilityScore)).toEqual([0.9, 0.8]);
+  });
+
+  it("falls back to the top matches across all manufacturers, and says so, when the preferred manufacturer has zero compatible matches", () => {
+    const result = selectTopEquipmentByManufacturer(ranked, "Trane");
+    expect(result.usedFallback).toBe(true);
+    expect(result.results).toHaveLength(MANUFACTURER_FALLBACK_RESULT_COUNT);
+    expect(result.results.map((r) => r.equipment.id)).toEqual(
+      ranked.slice(0, MANUFACTURER_FALLBACK_RESULT_COUNT).map((r) => r.equipment.id),
+    );
+  });
+
+  it("caps a preferred manufacturer's results at the top-N count even when it has more matches than that", () => {
+    const manyCarrier: EquipmentEvaluation[] = Array.from({ length: 7 }, (_, i) =>
+      evalWith({
+        equipment: equipment({ id: `carrier-${i}`, manufacturer: "Carrier" }),
+        compatibilityScore: 1 - i * 0.05,
+      }),
+    );
+    const result = selectTopEquipmentByManufacturer(manyCarrier, "Carrier");
+    expect(result.usedFallback).toBe(false);
+    expect(result.results).toHaveLength(PREFERRED_MANUFACTURER_RESULT_COUNT);
+    expect(result.results[0].equipment.id).toBe("carrier-0");
   });
 });
 

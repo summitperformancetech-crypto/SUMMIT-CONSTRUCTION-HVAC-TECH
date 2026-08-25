@@ -32,6 +32,7 @@ import type { DuctSizingTableRow } from "@/lib/manualD";
 import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import { BuildingOrientationSection } from "@/components/building-orientation-section";
+import { PreferredManufacturerSection } from "@/components/preferred-manufacturer-section";
 import type { Compass8 } from "@/lib/constants/compass";
 import { mutateOrQueue } from "@/lib/offlineMutation";
 
@@ -412,6 +413,7 @@ export const ManualJWorkflow = forwardRef<
     exclusiveEquipmentIds: ReadonlySet<string>;
     ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
     initialBuildingFrontFaces: Compass8 | null;
+    initialPreferredManufacturer: string | null;
     userRole: string;
   }
 >(function ManualJWorkflow(
@@ -438,6 +440,7 @@ export const ManualJWorkflow = forwardRef<
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
     initialBuildingFrontFaces,
+    initialPreferredManufacturer,
     userRole,
   },
   ref,
@@ -460,6 +463,12 @@ export const ManualJWorkflow = forwardRef<
   const [editingRoomId, setEditingRoomId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const roomsSectionRef = useRef<HTMLDivElement>(null);
+
+  const [preferredManufacturer, setPreferredManufacturer] = useState(initialPreferredManufacturer);
+  const manufacturers = useMemo(
+    () => Array.from(new Set(equipmentCatalog.map((e) => e.manufacturer))).sort(),
+    [equipmentCatalog],
+  );
 
   const [zones, setZones] = useState<ZoneRow[]>(initialZones);
   const [newZoneName, setNewZoneName] = useState("");
@@ -1441,6 +1450,15 @@ export const ManualJWorkflow = forwardRef<
         />
       )}
 
+      {canCalculate && results && manufacturers.length > 0 && (
+        <PreferredManufacturerSection
+          projectId={projectId}
+          manufacturers={manufacturers}
+          initialPreferredManufacturer={preferredManufacturer}
+          onSaved={setPreferredManufacturer}
+        />
+      )}
+
       {canCalculate &&
         results &&
         winterDesignTempF != null &&
@@ -1471,6 +1489,7 @@ export const ManualJWorkflow = forwardRef<
               initialEquipmentSelectionNotes={zone.equipment_selection_notes}
               preferredEquipmentIds={preferredEquipmentIds}
               exclusiveEquipmentIds={exclusiveEquipmentIds}
+              preferredManufacturer={preferredManufacturer}
               userRole={userRole}
             />
           );

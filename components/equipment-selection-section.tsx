@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   evaluateEquipment,
   rankEquipment,
+  selectTopEquipmentByManufacturer,
   type EquipmentCatalogEntry,
   type EquipmentEvaluation,
   type PerformancePoint,
@@ -75,6 +76,7 @@ export function EquipmentSelectionSection({
   initialEquipmentSelectionNotes,
   preferredEquipmentIds,
   exclusiveEquipmentIds,
+  preferredManufacturer,
   userRole,
 }: {
   // SUMMIT-REPORT-STANDARD.md Section 5.3 - one panel per AHU/zone, so
@@ -92,6 +94,13 @@ export function EquipmentSelectionSection({
   initialEquipmentSelectionNotes: string | null;
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
+  // Project-level projects.preferred_manufacturer - a separate concern
+  // from preferredEquipmentIds/exclusiveEquipmentIds above (which only
+  // break display-order ties within the full compatible list). This
+  // narrows the DEFAULT visible set to one manufacturer's top matches
+  // (see selectTopEquipmentByManufacturer in lib/manualS.ts); "See all"
+  // below still reveals every compatible model across all manufacturers.
+  preferredManufacturer: string | null;
   // Field Tech = data entry only: equipment selection is Estimator/Admin
   // only. The real boundary is the zones.selected_equipment_id trigger
   // (see 20260822190000_restrict_field_tech_equipment_and_reports.sql,
@@ -149,7 +158,20 @@ export function EquipmentSelectionSection({
     exclusiveEquipmentIds,
   ]);
 
-  const visible = showAll ? ranked : ranked.slice(0, DEFAULT_VISIBLE_COUNT);
+  // Preferred-manufacturer narrowing is a pure display-layer slice on top
+  // of `ranked` (already hard-gate-filtered and score-sorted) - it never
+  // touches compatibilityScore. "See all" bypasses it entirely and shows
+  // every compatible model across all manufacturers, same as before this
+  // feature existed.
+  const manufacturerSelection = useMemo(
+    () => selectTopEquipmentByManufacturer(ranked, preferredManufacturer),
+    [ranked, preferredManufacturer],
+  );
+  const visible = showAll
+    ? ranked
+    : preferredManufacturer
+      ? manufacturerSelection.results
+      : ranked.slice(0, DEFAULT_VISIBLE_COUNT);
   const hiddenCount = ranked.length - visible.length;
 
   async function handleSelect(equipmentId: string) {
@@ -196,6 +218,15 @@ export function EquipmentSelectionSection({
         <p className="rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-6 text-center text-sm text-brand-grey-text">
           No catalog equipment falls within the ACCA Manual S sizing window for this
           project&apos;s Manual J load at its design conditions.
+        </p>
+      )}
+
+      {ranked.length > 0 && preferredManufacturer && !showAll && manufacturerSelection.usedFallback && (
+        <p className="mb-4 rounded-md border border-brand-gold bg-brand-gold-base/15 px-4 py-3 text-sm text-brand-silver-highlight">
+          <strong className="text-brand-gold">{preferredManufacturer}</strong> has no compatible
+          models for this zone&apos;s load at its design conditions - showing the top{" "}
+          {manufacturerSelection.results.length} match{manufacturerSelection.results.length === 1 ? "" : "es"}{" "}
+          across all manufacturers instead.
         </p>
       )}
 
@@ -344,12 +375,14 @@ export function EquipmentSelectionSection({
           See all {ranked.length} compatible models ({hiddenCount} more)
         </button>
       )}
-      {showAll && ranked.length > DEFAULT_VISIBLE_COUNT && (
+      {showAll && ranked.length > (preferredManufacturer ? manufacturerSelection.results.length : DEFAULT_VISIBLE_COUNT) && (
         <button
           onClick={() => setShowAll(false)}
           className="mt-3 text-sm text-brand-silver underline decoration-dotted hover:text-brand-gold-hover"
         >
-          Show top {DEFAULT_VISIBLE_COUNT} only
+          {preferredManufacturer
+            ? `Show top ${manufacturerSelection.results.length} from ${preferredManufacturer} only`
+            : `Show top ${DEFAULT_VISIBLE_COUNT} only`}
         </button>
       )}
 

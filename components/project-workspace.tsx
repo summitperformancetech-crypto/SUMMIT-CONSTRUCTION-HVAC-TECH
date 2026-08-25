@@ -44,6 +44,7 @@ export function ProjectWorkspace({
   exclusiveEquipmentIds,
   ductInsulationCodeMinimums,
   initialBuildingFrontFaces,
+  initialPreferredManufacturer,
   userRole,
 }: {
   projectId: string;
@@ -71,6 +72,7 @@ export function ProjectWorkspace({
   exclusiveEquipmentIds: ReadonlySet<string>;
   ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
   initialBuildingFrontFaces: Compass8 | null;
+  initialPreferredManufacturer: string | null;
   userRole: string;
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
@@ -151,6 +153,7 @@ export function ProjectWorkspace({
         exclusiveEquipmentIds={exclusiveEquipmentIds}
         ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         initialBuildingFrontFaces={buildingFrontFaces}
+        initialPreferredManufacturer={initialPreferredManufacturer}
         userRole={userRole}
       />
     </>

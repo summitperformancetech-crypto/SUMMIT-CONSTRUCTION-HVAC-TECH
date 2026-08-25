@@ -33,6 +33,7 @@ import { EquipmentSelectionSection } from "@/components/equipment-selection-sect
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import { BuildingOrientationSection } from "@/components/building-orientation-section";
 import type { Compass8 } from "@/lib/constants/compass";
+import { mutateOrQueue } from "@/lib/offlineMutation";
 
 export type RoomRow = ManualJRoom & {
   project_id: string;
@@ -647,11 +648,35 @@ export const ManualJWorkflow = forwardRef<
           }
         : undefined,
     );
+
+    // Real offline field-data-entry path: a field tech editing a room
+    // with no signal gets an optimistic local update immediately (rooms
+    // has no server-computed columns beyond what's in payload, so
+    // merging locally is a faithful preview of the real row) and the
+    // write itself queues in IndexedDB (lib/offlineQueue.ts) rather than
+    // being lost - synced automatically the next time the device is
+    // back online (lib/useOfflineSync.ts, mounted in the dashboard layout).
+    const result = await mutateOrQueue(supabase, {
+      table: "rooms",
+      operation: "update",
+      payload,
+      match: { column: "id", value: id },
+    });
+
+    if (result.error) throw new Error(result.error);
+
+    if (result.queued) {
+      setRooms((prev) =>
+        prev.map((room) => (room.id === id ? ({ ...room, ...payload } as RoomRow) : room)),
+      );
+      setEditingRoomId(null);
+      return;
+    }
+
     const { data, error } = await supabase
       .from("rooms")
-      .update(payload)
-      .eq("id", id)
       .select(ROOM_COLUMNS)
+      .eq("id", id)
       .single<RoomRow>();
     if (error) throw new Error(error.message);
     setRooms((prev) => prev.map((room) => (room.id === id ? data : room)));

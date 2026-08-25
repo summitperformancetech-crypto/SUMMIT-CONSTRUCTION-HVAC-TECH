@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SignOutButton } from "@/components/sign-out-button";
+import { OfflineStatusBanner } from "@/components/offline-status-banner";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardLayout({
@@ -60,6 +61,7 @@ export default async function DashboardLayout({
           <SignOutButton />
         </div>
       </header>
+      <OfflineStatusBanner />
       <main className="flex-1 px-6 py-8">{children}</main>
     </div>
   );

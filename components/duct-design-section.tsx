@@ -691,11 +691,19 @@ export function DuctDesignSection({
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
       <h2 className="mb-4 text-lg font-semibold text-brand-gold">Duct Design (Manual D)</h2>
 
-      <div className="mb-6 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
-          Duct Routing Diagram
-        </p>
-        <DuctRoutingDiagram sheets={liveIllustrationSheets} />
+      {/* Breaks out of the dashboard's max-w-3xl content column (the
+          actual floor plan sheet is a real architectural E-size drawing
+          full of fine dimension text - squeezed into a 768px column, the
+          duct-size/CFM overlay becomes genuinely illegible, which is
+          exactly what this fixes: a wider, still-centered box, not a
+          smaller/simplified image). */}
+      <div className="relative left-1/2 right-1/2 -mx-[50vw] mb-6 w-screen">
+        <div className="mx-auto max-w-6xl rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">
+          <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
+            Duct Routing Diagram
+          </p>
+          <DuctRoutingDiagram sheets={liveIllustrationSheets} />
+        </div>
       </div>
 
       <div className="mb-4 rounded-lg border border-zinc-700 bg-zinc-900/50 p-4">

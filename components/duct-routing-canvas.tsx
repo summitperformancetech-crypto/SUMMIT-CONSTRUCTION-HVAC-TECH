@@ -82,8 +82,17 @@ export function DuctRoutingCanvas({
     const options: SheetOption[] = [];
     for (const drawing of drawings) {
       const sheets = drawing.extracted_data?.sheets ?? [];
+      const extractedRooms = drawing.extracted_data?.rooms ?? [];
+      // Only sheets that actually have a room's real geometry on them -
+      // a floor plan, in other words. A 16-sheet construction set also
+      // has a cover sheet, foundation plan, elevations, roof framing,
+      // electrical plans, etc. - none of those are where a duct-routing
+      // pin belongs, and listing all 16 in this dropdown just makes the
+      // real floor-plan sheets harder to find.
+      const sheetNamesWithRooms = new Set(extractedRooms.map((r) => r.source_sheet).filter((s): s is string => s != null));
       for (const sheet of sheets) {
         if (sheet.page_number == null) continue;
+        if (!sheetNamesWithRooms.has(sheet.name)) continue;
         options.push({
           drawingId: drawing.id,
           pageNumber: sheet.page_number,
@@ -92,7 +101,9 @@ export function DuctRoutingCanvas({
       }
       // Single-page image upload with no extracted sheet inventory at all
       // (extraction predates this feature, or is still pending) still
-      // needs to be selectable so a tech can place pins on it manually.
+      // needs to be selectable so a tech can place pins on it manually -
+      // there's no sheet-name filter to apply since there's no sheet
+      // inventory to filter against.
       if (sheets.length === 0 && drawing.file_type === "image") {
         options.push({ drawingId: drawing.id, pageNumber: 1, label: `${drawing.file_name} (image)` });
       }

@@ -580,44 +580,64 @@ export const ManualJWorkflow = forwardRef<
     setRooms((prev) => prev.map((room) => (room.id === roomId ? data : room)));
   }
 
+  // All three zone handlers below wrap their Supabase call in try/catch -
+  // not just check `error` on the resolved result. A genuine network-level
+  // failure (DNS, connection refused, a blocked request) can reject the
+  // underlying fetch before postgrest-js has a response to wrap into
+  // {data, error}, which surfaces as a THROWN exception, not a resolved
+  // {error} value. Uncaught inside an async onClick handler, that's an
+  // unhandled promise rejection - invisible to the user (console-only),
+  // and since it happens on the line that would have called
+  // setZoneSaving(false), the button stays stuck on "Adding..." with no
+  // visible error at all. Exactly the silent-failure shape this was
+  // written to close off.
   async function handleAddZone() {
     if (newZoneName.trim() === "") return;
     setZoneSaving(true);
     setZoneError(null);
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("zones")
-      .insert({
-        project_id: projectId,
-        name: newZoneName.trim(),
-        ahu_label: toNullableString(newZoneAhuLabel),
-      })
-      .select(ZONE_COLUMNS)
-      .single<ZoneRow>();
-    setZoneSaving(false);
-    if (error) {
-      setZoneError(error.message);
-      return;
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("zones")
+        .insert({
+          project_id: projectId,
+          name: newZoneName.trim(),
+          ahu_label: toNullableString(newZoneAhuLabel),
+        })
+        .select(ZONE_COLUMNS)
+        .single<ZoneRow>();
+      if (error) {
+        setZoneError(error.message);
+        return;
+      }
+      setZones((prev) => [...prev, data]);
+      setNewZoneName("");
+      setNewZoneAhuLabel("");
+    } catch (err) {
+      setZoneError(err instanceof Error ? err.message : "Failed to add zone - check your connection and try again.");
+    } finally {
+      setZoneSaving(false);
     }
-    setZones((prev) => [...prev, data]);
-    setNewZoneName("");
-    setNewZoneAhuLabel("");
   }
 
   async function handleRenameZone(zoneId: string, name: string, ahuLabel: string) {
     setZoneError(null);
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from("zones")
-      .update({ name, ahu_label: toNullableString(ahuLabel) })
-      .eq("id", zoneId)
-      .select(ZONE_COLUMNS)
-      .single<ZoneRow>();
-    if (error) {
-      setZoneError(error.message);
-      return;
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("zones")
+        .update({ name, ahu_label: toNullableString(ahuLabel) })
+        .eq("id", zoneId)
+        .select(ZONE_COLUMNS)
+        .single<ZoneRow>();
+      if (error) {
+        setZoneError(error.message);
+        return;
+      }
+      setZones((prev) => prev.map((zone) => (zone.id === zoneId ? data : zone)));
+    } catch (err) {
+      setZoneError(err instanceof Error ? err.message : "Failed to rename zone - check your connection and try again.");
     }
-    setZones((prev) => prev.map((zone) => (zone.id === zoneId ? data : zone)));
   }
 
   async function handleDeleteZone(zoneId: string) {
@@ -628,17 +648,23 @@ export const ManualJWorkflow = forwardRef<
         : "Delete this zone?";
     if (!window.confirm(confirmMsg)) return;
     setZoneError(null);
-    const supabase = createClient();
-    const { error } = await supabase.from("zones").delete().eq("id", zoneId);
-    if (error) {
-      setZoneError(error.message);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from("zones").delete().eq("id", zoneId);
+      if (error) {
+        setZoneError(error.message);
+        return;
+      }
+      setZones((prev) => prev.filter((zone) => zone.id !== zoneId));
+    } catch (err) {
+      setZoneError(err instanceof Error ? err.message : "Failed to delete zone - check your connection and try again.");
       return;
     }
-    setZones((prev) => prev.filter((zone) => zone.id !== zoneId));
     // zone_id on rooms is `on delete set null` at the DB level, but the
     // client-side rooms state won't know that happened without a refetch -
     // update it locally so the UI (and the next calc) reflects it
-    // immediately rather than showing a stale zone assignment.
+    // immediately rather than showing a stale zone assignment. Only
+    // reached on a genuine success (the catch above returns early).
     setRooms((prev) =>
       prev.map((room) => (room.zone_id === zoneId ? { ...room, zone_id: null } : room)),
     );

@@ -317,38 +317,49 @@ export function CommercialWorkflow({
   async function handleSaveZone() {
     setSaving(true);
     setError(null);
-    const supabase = createClient();
-    const payload = formToPayload(form);
+    // Wrapped in try/catch, not just an `error`-on-result check - a
+    // genuine network-level failure can reject the underlying fetch
+    // before postgrest-js has a response to wrap, which surfaces as a
+    // thrown exception. Uncaught inside an async onClick handler, that's
+    // a silent, console-only unhandled rejection with no visible
+    // feedback - the same failure shape fixed in manual-j-workflow.tsx's
+    // handleAddZone.
+    try {
+      const supabase = createClient();
+      const payload = formToPayload(form);
 
-    if (editingZoneId) {
-      const { data, error: saveError } = await supabase
-        .from("zones")
-        .update(payload)
-        .eq("id", editingZoneId)
-        .select(COMMERCIAL_ZONE_COLUMNS)
-        .single();
-      setSaving(false);
-      if (saveError) {
-        setError(saveError.message);
-        return;
+      if (editingZoneId) {
+        const { data, error: saveError } = await supabase
+          .from("zones")
+          .update(payload)
+          .eq("id", editingZoneId)
+          .select(COMMERCIAL_ZONE_COLUMNS)
+          .single();
+        if (saveError) {
+          setError(saveError.message);
+          return;
+        }
+        setZones((prev) => prev.map((z) => (z.id === editingZoneId ? mapDbRow(data) : z)));
+        setEditingZoneId(null);
+      } else {
+        const { data, error: saveError } = await supabase
+          .from("zones")
+          .insert({ ...payload, project_id: projectId })
+          .select(COMMERCIAL_ZONE_COLUMNS)
+          .single();
+        if (saveError) {
+          setError(saveError.message);
+          return;
+        }
+        setZones((prev) => [...prev, mapDbRow(data)]);
+        setShowAddForm(false);
       }
-      setZones((prev) => prev.map((z) => (z.id === editingZoneId ? mapDbRow(data) : z)));
-      setEditingZoneId(null);
-    } else {
-      const { data, error: saveError } = await supabase
-        .from("zones")
-        .insert({ ...payload, project_id: projectId })
-        .select(COMMERCIAL_ZONE_COLUMNS)
-        .single();
+      setForm(EMPTY_ZONE_FORM);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save zone - check your connection and try again.");
+    } finally {
       setSaving(false);
-      if (saveError) {
-        setError(saveError.message);
-        return;
-      }
-      setZones((prev) => [...prev, mapDbRow(data)]);
-      setShowAddForm(false);
     }
-    setForm(EMPTY_ZONE_FORM);
   }
 
   function mapDbRow(row: Record<string, unknown>): CommercialZoneRow {
@@ -399,13 +410,17 @@ export function CommercialWorkflow({
 
   async function handleDeleteZone(id: string) {
     if (!window.confirm("Delete this zone?")) return;
-    const supabase = createClient();
-    const { error: deleteError } = await supabase.from("zones").delete().eq("id", id);
-    if (deleteError) {
-      setError(deleteError.message);
-      return;
+    try {
+      const supabase = createClient();
+      const { error: deleteError } = await supabase.from("zones").delete().eq("id", id);
+      if (deleteError) {
+        setError(deleteError.message);
+        return;
+      }
+      setZones((prev) => prev.filter((z) => z.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete zone - check your connection and try again.");
     }
-    setZones((prev) => prev.filter((z) => z.id !== id));
   }
 
   return (

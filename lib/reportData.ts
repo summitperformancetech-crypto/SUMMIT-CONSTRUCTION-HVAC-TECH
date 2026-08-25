@@ -145,7 +145,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, available_static_pressure_iwc, supply_air_temp_f",
+      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -407,30 +407,75 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         if (!pointsByEquipment.has(p.equipmentId)) pointsByEquipment.set(p.equipmentId, []);
         pointsByEquipment.get(p.equipmentId)!.push(p);
       }
-      for (const zoneRow of zones ?? []) {
-        // Only real zones with rooms actually assigned get an equipment
-        // panel - an empty zone has no load to size against (matches
-        // computeManualJ's own "empty zone contributes nothing" guard).
-        const zoneLoad = manualJ.zones.find((z) => z.zoneId === zoneRow.id);
-        if (!zoneLoad) continue;
-        const evals = catalog.map((equipment) =>
-          evaluateEquipment(
-            equipment,
-            pointsByEquipment.get(equipment.id) ?? [],
-            zoneLoad.coolingTotalBtuh,
-            zoneLoad.heatingBtuh,
-            climateZone.summer_design_temp_f,
-            climateZone.summer_coincident_wetbulb_f!,
-            climateZone.winter_design_temp_f,
-          ),
-        );
-        const evaluations = rankEquipment(evals);
-        zoneEquipment.push({
-          zoneId: zoneRow.id,
-          equipmentEvaluations: evaluations,
-          selectedEquipment: evaluations.find((e) => e.equipment.id === zoneRow.selected_equipment_id) ?? null,
-          equipmentSelectionNotes: zoneRow.equipment_selection_notes,
+      if (project.hvac_system_configuration === "single_system_zoned") {
+        // One shared system serves every real zone through dampers -
+        // evaluate ONCE against their summed load (matches
+        // ManualJWorkflow's equipmentPanels on the live UI - see that
+        // useMemo's comment for the full reasoning) and give every zone
+        // in the group the SAME evaluations/selected-equipment entry, so
+        // each zone's report panel stays meaningful instead of showing a
+        // false "doesn't fit" verdict for a zone that's undersized only
+        // when judged alone.
+        const realZoneRows = (zones ?? []).filter((zoneRow) => {
+          const zoneLoad = manualJ.zones.find((z) => z.zoneId === zoneRow.id);
+          return zoneLoad != null && zoneLoad.coolingTotalBtuh > 0;
         });
+        if (realZoneRows.length > 0) {
+          const combinedCoolingBtuh = realZoneRows.reduce(
+            (sum, zoneRow) => sum + (manualJ.zones.find((z) => z.zoneId === zoneRow.id)?.coolingTotalBtuh ?? 0),
+            0,
+          );
+          const combinedHeatingBtuh = realZoneRows.reduce(
+            (sum, zoneRow) => sum + (manualJ.zones.find((z) => z.zoneId === zoneRow.id)?.heatingBtuh ?? 0),
+            0,
+          );
+          const evals = catalog.map((equipment) =>
+            evaluateEquipment(
+              equipment,
+              pointsByEquipment.get(equipment.id) ?? [],
+              combinedCoolingBtuh,
+              combinedHeatingBtuh,
+              climateZone.summer_design_temp_f,
+              climateZone.summer_coincident_wetbulb_f!,
+              climateZone.winter_design_temp_f,
+            ),
+          );
+          const evaluations = rankEquipment(evals);
+          for (const zoneRow of realZoneRows) {
+            zoneEquipment.push({
+              zoneId: zoneRow.id,
+              equipmentEvaluations: evaluations,
+              selectedEquipment: evaluations.find((e) => e.equipment.id === zoneRow.selected_equipment_id) ?? null,
+              equipmentSelectionNotes: zoneRow.equipment_selection_notes,
+            });
+          }
+        }
+      } else {
+        for (const zoneRow of zones ?? []) {
+          // Only real zones with rooms actually assigned get an equipment
+          // panel - an empty zone has no load to size against (matches
+          // computeManualJ's own "empty zone contributes nothing" guard).
+          const zoneLoad = manualJ.zones.find((z) => z.zoneId === zoneRow.id);
+          if (!zoneLoad) continue;
+          const evals = catalog.map((equipment) =>
+            evaluateEquipment(
+              equipment,
+              pointsByEquipment.get(equipment.id) ?? [],
+              zoneLoad.coolingTotalBtuh,
+              zoneLoad.heatingBtuh,
+              climateZone.summer_design_temp_f,
+              climateZone.summer_coincident_wetbulb_f!,
+              climateZone.winter_design_temp_f,
+            ),
+          );
+          const evaluations = rankEquipment(evals);
+          zoneEquipment.push({
+            zoneId: zoneRow.id,
+            equipmentEvaluations: evaluations,
+            selectedEquipment: evaluations.find((e) => e.equipment.id === zoneRow.selected_equipment_id) ?? null,
+            equipmentSelectionNotes: zoneRow.equipment_selection_notes,
+          });
+        }
       }
     }
 

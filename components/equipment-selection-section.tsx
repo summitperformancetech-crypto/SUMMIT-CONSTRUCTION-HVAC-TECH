@@ -63,7 +63,7 @@ function pct(value: number): string {
 }
 
 export function EquipmentSelectionSection({
-  zoneId,
+  zoneIds,
   zoneName,
   catalog,
   performancePoints,
@@ -80,8 +80,14 @@ export function EquipmentSelectionSection({
   userRole,
 }: {
   // SUMMIT-REPORT-STANDARD.md Section 5.3 - one panel per AHU/zone, so
-  // this writes to zones.selected_equipment_id, not projects.
-  zoneId: string;
+  // this writes to zones.selected_equipment_id, not projects. Normally a
+  // single-element array (one zone = one system, the original/default
+  // "independent_per_zone" configuration); a "single_system_zoned"
+  // project passes every zone sharing that one system here, so selecting
+  // equipment once writes the same selected_equipment_id/notes to all of
+  // them - they're all genuinely served by the same physical unit, so
+  // their stored selection should never be able to disagree.
+  zoneIds: string[];
   zoneName: string;
   catalog: EquipmentCatalogEntry[];
   performancePoints: PerformancePoint[];
@@ -177,17 +183,22 @@ export function EquipmentSelectionSection({
   async function handleSelect(equipmentId: string) {
     setError(null);
     setSaving(true);
-    const supabase = createClient();
-    const { error: saveError } = await supabase
-      .from("zones")
-      .update({ selected_equipment_id: equipmentId, equipment_selection_notes: notes || null })
-      .eq("id", zoneId);
-    setSaving(false);
-    if (saveError) {
-      setError(saveError.message);
-      return;
+    try {
+      const supabase = createClient();
+      const { error: saveError } = await supabase
+        .from("zones")
+        .update({ selected_equipment_id: equipmentId, equipment_selection_notes: notes || null })
+        .in("id", zoneIds);
+      if (saveError) {
+        setError(saveError.message);
+        return;
+      }
+      setSelectedEquipmentId(equipmentId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save equipment selection - check your connection and try again.");
+    } finally {
+      setSaving(false);
     }
-    setSelectedEquipmentId(equipmentId);
   }
 
   return (

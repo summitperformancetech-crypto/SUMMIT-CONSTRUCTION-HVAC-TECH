@@ -17,6 +17,7 @@ import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import type { DrawingRow } from "@/lib/drawingExtraction";
 import type { FieldResolution } from "@/lib/fieldResolutions";
 import type { Compass8 } from "@/lib/constants/compass";
+import type { HvacSystemConfiguration } from "@/components/system-configuration-section";
 
 export function ProjectWorkspace({
   projectId,
@@ -45,6 +46,7 @@ export function ProjectWorkspace({
   ductInsulationCodeMinimums,
   initialBuildingFrontFaces,
   initialPreferredManufacturer,
+  initialSystemConfiguration,
   userRole,
 }: {
   projectId: string;
@@ -73,6 +75,7 @@ export function ProjectWorkspace({
   ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
   initialBuildingFrontFaces: Compass8 | null;
   initialPreferredManufacturer: string | null;
+  initialSystemConfiguration: HvacSystemConfiguration;
   userRole: string;
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
@@ -154,6 +157,7 @@ export function ProjectWorkspace({
         ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         initialBuildingFrontFaces={buildingFrontFaces}
         initialPreferredManufacturer={initialPreferredManufacturer}
+        initialSystemConfiguration={initialSystemConfiguration}
         userRole={userRole}
       />
     </>

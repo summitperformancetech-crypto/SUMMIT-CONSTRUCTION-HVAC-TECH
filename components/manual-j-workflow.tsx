@@ -33,6 +33,10 @@ import { EquipmentSelectionSection } from "@/components/equipment-selection-sect
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import { BuildingOrientationSection } from "@/components/building-orientation-section";
 import { PreferredManufacturerSection } from "@/components/preferred-manufacturer-section";
+import {
+  SystemConfigurationSection,
+  type HvacSystemConfiguration,
+} from "@/components/system-configuration-section";
 import type { Compass8 } from "@/lib/constants/compass";
 import { mutateOrQueue } from "@/lib/offlineMutation";
 
@@ -436,6 +440,7 @@ export const ManualJWorkflow = forwardRef<
     ductInsulationCodeMinimums: { duct_location: string; min_r_value: number }[];
     initialBuildingFrontFaces: Compass8 | null;
     initialPreferredManufacturer: string | null;
+    initialSystemConfiguration: HvacSystemConfiguration;
     userRole: string;
   }
 >(function ManualJWorkflow(
@@ -463,6 +468,7 @@ export const ManualJWorkflow = forwardRef<
     ductInsulationCodeMinimums,
     initialBuildingFrontFaces,
     initialPreferredManufacturer,
+    initialSystemConfiguration,
     userRole,
   },
   ref,
@@ -487,6 +493,7 @@ export const ManualJWorkflow = forwardRef<
   const roomsSectionRef = useRef<HTMLDivElement>(null);
 
   const [preferredManufacturer, setPreferredManufacturer] = useState(initialPreferredManufacturer);
+  const [systemConfiguration, setSystemConfiguration] = useState(initialSystemConfiguration);
   const manufacturers = useMemo(
     () => Array.from(new Set(equipmentCatalog.map((e) => e.manufacturer))).sort(),
     [equipmentCatalog],
@@ -532,6 +539,57 @@ export const ManualJWorkflow = forwardRef<
     zones,
     codeMinimumsByLocation,
   ]);
+
+  // One equipment-selection panel per real zone (SUMMIT-REPORT-STANDARD.md
+  // Section 5.3's default), OR - when this project is configured as
+  // "single_system_zoned" - ONE combined panel covering every real zone's
+  // SUMMED load, since one physical system genuinely serves all of them
+  // through zone dampers and sizing it against any single zone's own
+  // (often much smaller) load would be wrong. A zone with no rooms
+  // assigned (zero cooling load) is skipped either way - matches
+  // computeManualJ's own "empty zone contributes nothing" guard, nothing
+  // to size equipment against.
+  const equipmentPanels = useMemo(() => {
+    if (!results) return [];
+    const realZones = zones
+      .map((zone) => ({ zone, zoneLoad: results.zones.find((z) => z.zoneId === zone.id) ?? null }))
+      .filter(
+        (entry): entry is { zone: ZoneRow; zoneLoad: NonNullable<typeof entry.zoneLoad> } =>
+          entry.zoneLoad != null && entry.zoneLoad.coolingTotalBtuh > 0,
+      );
+    if (realZones.length === 0) return [];
+
+    if (systemConfiguration === "single_system_zoned") {
+      // If the zones don't already agree (e.g. right after switching from
+      // independent mode, each zone still carries its own old selection),
+      // don't guess which one wins - start the combined panel unselected
+      // rather than silently picking one zone's leftover value.
+      const allAgree = realZones.every(
+        (entry) => entry.zone.selected_equipment_id === realZones[0].zone.selected_equipment_id,
+      );
+      return [
+        {
+          key: "combined-system",
+          zoneIds: realZones.map((entry) => entry.zone.id),
+          zoneName: `Whole House (${realZones.map((entry) => entry.zone.name).join(" + ")})`,
+          manualJCoolingTotalBtuh: realZones.reduce((sum, entry) => sum + entry.zoneLoad.coolingTotalBtuh, 0),
+          manualJHeatingBtuh: realZones.reduce((sum, entry) => sum + entry.zoneLoad.heatingBtuh, 0),
+          initialSelectedEquipmentId: allAgree ? realZones[0].zone.selected_equipment_id : null,
+          initialEquipmentSelectionNotes: allAgree ? realZones[0].zone.equipment_selection_notes : null,
+        },
+      ];
+    }
+
+    return realZones.map((entry) => ({
+      key: entry.zone.id,
+      zoneIds: [entry.zone.id],
+      zoneName: entry.zone.name,
+      manualJCoolingTotalBtuh: entry.zoneLoad.coolingTotalBtuh,
+      manualJHeatingBtuh: entry.zoneLoad.heatingBtuh,
+      initialSelectedEquipmentId: entry.zone.selected_equipment_id,
+      initialEquipmentSelectionNotes: entry.zone.equipment_selection_notes,
+    }));
+  }, [results, zones, systemConfiguration]);
 
   function updateEnvelopeField<K extends keyof EnvelopeFormValues>(
     key: K,
@@ -1514,41 +1572,46 @@ export const ManualJWorkflow = forwardRef<
         />
       )}
 
+      {canCalculate && results && zones.length > 1 && (
+        <SystemConfigurationSection
+          projectId={projectId}
+          initialSystemConfiguration={systemConfiguration}
+          onSaved={setSystemConfiguration}
+        />
+      )}
+
       {canCalculate &&
         results &&
         winterDesignTempF != null &&
         summerDesignTempF != null &&
         summerCoincidentWetbulbF != null &&
         // SUMMIT-REPORT-STANDARD.md Section 5.3 - one equipment panel per
-        // AHU/zone, each evaluated against that zone's own load, not the
-        // whole house. A zone with no rooms assigned yet has nothing to
-        // size against (matches computeManualJ's own "empty zone
-        // contributes nothing" guard) - skipped rather than shown with
-        // zero load.
-        zones.map((zone) => {
-          const zoneLoad = results.zones.find((z) => z.zoneId === zone.id);
-          if (!zoneLoad || zoneLoad.coolingTotalBtuh <= 0) return null;
-          return (
-            <EquipmentSelectionSection
-              key={zone.id}
-              zoneId={zone.id}
-              zoneName={zone.name}
-              catalog={equipmentCatalog}
-              performancePoints={equipmentPerformancePoints}
-              manualJCoolingTotalBtuh={zoneLoad.coolingTotalBtuh}
-              manualJHeatingBtuh={zoneLoad.heatingBtuh}
-              summerOutdoorDesignF={summerDesignTempF}
-              summerCoincidentWetbulbF={summerCoincidentWetbulbF}
-              winterOutdoorDesignF={winterDesignTempF}
-              initialSelectedEquipmentId={zone.selected_equipment_id}
-              initialEquipmentSelectionNotes={zone.equipment_selection_notes}
-              preferredEquipmentIds={preferredEquipmentIds}
-              exclusiveEquipmentIds={exclusiveEquipmentIds}
-              preferredManufacturer={preferredManufacturer}
-              userRole={userRole}
-            />
-          );
-        })}
+        // AHU/zone by default, each evaluated against that zone's own
+        // load. When this project is configured "single_system_zoned",
+        // equipmentPanels collapses this to one combined panel evaluated
+        // against every real zone's summed load instead (one physical
+        // system genuinely serves all of them through zone dampers) - see
+        // the equipmentPanels useMemo above for the full derivation.
+        equipmentPanels.map((panel) => (
+          <EquipmentSelectionSection
+            key={panel.key}
+            zoneIds={panel.zoneIds}
+            zoneName={panel.zoneName}
+            catalog={equipmentCatalog}
+            performancePoints={equipmentPerformancePoints}
+            manualJCoolingTotalBtuh={panel.manualJCoolingTotalBtuh}
+            manualJHeatingBtuh={panel.manualJHeatingBtuh}
+            summerOutdoorDesignF={summerDesignTempF}
+            summerCoincidentWetbulbF={summerCoincidentWetbulbF}
+            winterOutdoorDesignF={winterDesignTempF}
+            initialSelectedEquipmentId={panel.initialSelectedEquipmentId}
+            initialEquipmentSelectionNotes={panel.initialEquipmentSelectionNotes}
+            preferredEquipmentIds={preferredEquipmentIds}
+            exclusiveEquipmentIds={exclusiveEquipmentIds}
+            preferredManufacturer={preferredManufacturer}
+            userRole={userRole}
+          />
+        ))}
       {canCalculate &&
         results &&
         winterDesignTempF != null &&

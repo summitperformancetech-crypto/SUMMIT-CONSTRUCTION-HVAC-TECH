@@ -27,6 +27,7 @@ import {
 } from "@/lib/fieldResolutions";
 import { computeStaleItems, type StaleItem } from "@/lib/staleness";
 import type { Compass8 } from "@/lib/constants/compass";
+import type { HvacSystemConfiguration } from "@/components/system-configuration-section";
 
 type Project = {
   id: string;
@@ -60,6 +61,7 @@ type Project = {
   supply_air_temp_f: number | null;
   building_front_faces: Compass8 | null;
   preferred_manufacturer: string | null;
+  hvac_system_configuration: HvacSystemConfiguration;
 };
 
 type DuctSizingTableDbRow = {
@@ -234,7 +236,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces, preferred_manufacturer",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, building_front_faces, preferred_manufacturer, hvac_system_configuration",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -737,6 +739,7 @@ export default async function ProjectDetailPage({
         ductInsulationCodeMinimums={ductInsulationCodeMinimumRows ?? []}
         initialBuildingFrontFaces={project.building_front_faces}
         initialPreferredManufacturer={project.preferred_manufacturer}
+        initialSystemConfiguration={project.hvac_system_configuration}
         userRole={userRole}
       />
     </div>

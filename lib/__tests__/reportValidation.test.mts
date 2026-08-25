@@ -111,7 +111,7 @@ function wholeHouse(overrides: Partial<WholeHouseLoadResult>): WholeHouseLoadRes
 
 function baseReportData(residential: NonNullable<ReportData["residential"]>): ReportData {
   return {
-    project: { id: "p1", name: "Test", project_type: "residential", address_line1: "1 Main St", address_line2: null, city: "Austin", state: "TX", zip: "78701" },
+    project: { id: "p1", name: "Test", project_type: "residential", address_line1: "1 Main St", address_line2: null, city: "Austin", state: "TX", zip: "78701", hvac_system_configuration: "independent_per_zone" },
     climateZone: null,
     generatedAt: new Date().toISOString(),
     snapshot: null,

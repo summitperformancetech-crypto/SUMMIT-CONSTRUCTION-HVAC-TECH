@@ -16,7 +16,18 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 
-const FONT_DIR = join(__dirname, "fonts");
+// process.cwd(), not __dirname - diagnosed 2026-08-25 against a real
+// request-time (not just build-time) ENOENT on a fresh dev server:
+// __dirname resolved to a Turbopack-virtualized "/ROOT/lib/fonts" even
+// for a genuine runtime request, not only during the build-time
+// "collecting page data" pass the lazy-read pattern below was originally
+// built to dodge (see that comment) - so __dirname turned out not to be
+// reliable at real runtime either, under this bundler. process.cwd() is
+// the actual project root in every context Next.js runs this module in
+// (dev, `next start`, and Vercel's serverless function root all set cwd
+// to the project root) and isn't subject to Turbopack's own bundling of
+// the module's own path.
+const FONT_DIR = join(process.cwd(), "lib/fonts");
 
 function fontFaceDataUri(fileName: string): string {
   const bytes = readFileSync(join(FONT_DIR, fileName));

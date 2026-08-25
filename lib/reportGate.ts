@@ -102,19 +102,61 @@ export function getReportGenerationGateStatus(
         }
 
         const runIdToCfm = new Map(ductSchedule.map((d) => [d.runId, d.cfm]));
-        for (const zone of zonesWithRooms) {
-          const ratedCfm = zoneEquipment.find((z) => z.zoneId === zone.id)?.selectedEquipment?.equipment.ratedCfm;
-          if (ratedCfm == null) continue;
-          const totalBranchCfm = ductRuns
-            .filter((r) => r.run_type === "branch" && r.zone_id === zone.id)
+        const branchCfmForZone = (zoneId: string) =>
+          ductRuns
+            .filter((r) => r.run_type === "branch" && r.zone_id === zoneId)
             .reduce((sum, r) => sum + (runIdToCfm.get(r.id) ?? 0), 0);
-          const deviation = Math.abs(totalBranchCfm - ratedCfm) / ratedCfm;
-          if (deviation > CFM_COMPATIBILITY_TOLERANCE) {
-            blockers.push({
-              code: "duct_design_incomplete",
-              label: "Duct design incompatible with selected equipment",
-              detail: `${zone.name}'s total branch duct CFM (${Math.round(totalBranchCfm)}) differs from its selected equipment's rated airflow (${ratedCfm}) by more than ${Math.round(CFM_COMPATIBILITY_TOLERANCE * 100)}%.`,
-            });
+
+        if (data.project.hvac_system_configuration === "single_system_zoned") {
+          // One physical unit genuinely serves every zone in the group
+          // through dampers (see components/system-configuration-
+          // section.tsx and lib/reportData.ts's own "single_system_zoned"
+          // branch, which already evaluates/selects equipment against
+          // these zones' SUMMED load, not each zone's alone). Diagnosed
+          // 2026-08-25 against real Schneider data: comparing one zone's
+          // own branch CFM against the shared unit's full rated CFM was
+          // guaranteed to fail for any zone that isn't carrying the whole
+          // load (e.g. a 348 CFM upstairs zone against a 1400 CFM unit
+          // shared with a 1149 CFM downstairs zone) - that isn't a real
+          // design defect, it's the expected shape of a zoned system.
+          // Group zones by their actual shared equipment (not just by
+          // this project-level flag) so the right unit is validated
+          // against the right group even if a project has more than one
+          // shared system.
+          const groups = new Map<string, { ratedCfm: number; zoneNames: string[]; totalBranchCfm: number }>();
+          for (const zone of zonesWithRooms) {
+            const selection = zoneEquipment.find((z) => z.zoneId === zone.id)?.selectedEquipment;
+            const equipmentId = selection?.equipment.id;
+            const ratedCfm = selection?.equipment.ratedCfm;
+            if (equipmentId == null || ratedCfm == null) continue;
+            const group = groups.get(equipmentId) ?? { ratedCfm, zoneNames: [], totalBranchCfm: 0 };
+            group.zoneNames.push(zone.name);
+            group.totalBranchCfm += branchCfmForZone(zone.id);
+            groups.set(equipmentId, group);
+          }
+          for (const group of groups.values()) {
+            const deviation = Math.abs(group.totalBranchCfm - group.ratedCfm) / group.ratedCfm;
+            if (deviation > CFM_COMPATIBILITY_TOLERANCE) {
+              blockers.push({
+                code: "duct_design_incomplete",
+                label: "Duct design incompatible with selected equipment",
+                detail: `${group.zoneNames.join(" + ")}'s combined total branch duct CFM (${Math.round(group.totalBranchCfm)}) differs from their shared selected equipment's rated airflow (${group.ratedCfm}) by more than ${Math.round(CFM_COMPATIBILITY_TOLERANCE * 100)}%.`,
+              });
+            }
+          }
+        } else {
+          for (const zone of zonesWithRooms) {
+            const ratedCfm = zoneEquipment.find((z) => z.zoneId === zone.id)?.selectedEquipment?.equipment.ratedCfm;
+            if (ratedCfm == null) continue;
+            const totalBranchCfm = branchCfmForZone(zone.id);
+            const deviation = Math.abs(totalBranchCfm - ratedCfm) / ratedCfm;
+            if (deviation > CFM_COMPATIBILITY_TOLERANCE) {
+              blockers.push({
+                code: "duct_design_incomplete",
+                label: "Duct design incompatible with selected equipment",
+                detail: `${zone.name}'s total branch duct CFM (${Math.round(totalBranchCfm)}) differs from its selected equipment's rated airflow (${ratedCfm}) by more than ${Math.round(CFM_COMPATIBILITY_TOLERANCE * 100)}%.`,
+              });
+            }
           }
         }
       }

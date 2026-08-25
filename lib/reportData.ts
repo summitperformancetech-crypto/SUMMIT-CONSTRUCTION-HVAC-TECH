@@ -56,6 +56,12 @@ export type ReportProject = {
   city: string;
   state: string;
   zip: string;
+  // Needed by lib/reportGate.ts's duct/equipment CFM-compatibility check -
+  // a "single_system_zoned" project shares one physical unit across
+  // multiple zones (see components/system-configuration-section.tsx), so
+  // that check has to validate the zones' SUMMED branch CFM against the
+  // shared unit once, not each zone's own CFM against the whole unit.
+  hvac_system_configuration: "independent_per_zone" | "single_system_zoned";
 };
 
 export type ReportClimateZone = {
@@ -835,6 +841,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       city: project.city,
       state: project.state,
       zip: project.zip,
+      hvac_system_configuration: project.hvac_system_configuration,
     },
     climateZone,
     generatedAt: new Date().toISOString(),

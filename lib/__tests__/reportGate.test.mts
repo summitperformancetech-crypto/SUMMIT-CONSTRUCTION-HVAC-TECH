@@ -9,9 +9,12 @@
 // to backfill.
 import { describe, it, expect } from "vitest";
 import { getReportGenerationGateStatus } from "../reportGate";
-import type { ReportData } from "../reportData";
+import type { ReportData, ZoneEquipmentSelection } from "../reportData";
 import type { RoomRow } from "../../components/manual-j-workflow";
-import type { ManualJEnvelope, RoomLoadResult, WholeHouseLoadResult } from "../manualJ";
+import type { ManualJEnvelope, ManualJZone, RoomLoadResult, WholeHouseLoadResult } from "../manualJ";
+import type { DuctRunRow } from "../../components/duct-design-section";
+import type { DuctSizingResult } from "../manualD";
+import type { EquipmentEvaluation } from "../manualS";
 
 function room(overrides: Partial<RoomRow> = {}): RoomRow {
   return {
@@ -126,6 +129,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       city: "Austin",
       state: "TX",
       zip: "78701",
+      hvac_system_configuration: "independent_per_zone",
     },
     climateZone: null,
     generatedAt: new Date().toISOString(),
@@ -186,6 +190,7 @@ describe("getReportGenerationGateStatus - data completeness gate", () => {
         city: "Austin",
         state: "TX",
         zip: "78701",
+        hvac_system_configuration: "independent_per_zone",
       },
       climateZone: null,
       generatedAt: new Date().toISOString(),
@@ -197,5 +202,159 @@ describe("getReportGenerationGateStatus - data completeness gate", () => {
     };
     const status = getReportGenerationGateStatus(data, [], new Set());
     expect(status.blockers.some((b) => b.code === "data_incomplete")).toBe(false);
+  });
+});
+
+// Gate condition 3, "single_system_zoned" grouping (diagnosed 2026-08-25
+// against real Schneider project data): a project can share one physical
+// unit across multiple zones through dampers (see components/system-
+// configuration-section.tsx and lib/reportData.ts's own
+// "single_system_zoned" branch, which already evaluates/selects
+// equipment against the zones' SUMMED load). The compatibility check has
+// to match that - validate the group's summed branch CFM against the
+// shared unit once, not each zone's own CFM against the whole unit.
+function ductRun(overrides: Partial<DuctRunRow> = {}): DuctRunRow {
+  return {
+    id: "run1",
+    project_id: "p1",
+    zone_id: "z1",
+    run_type: "branch",
+    room_id: "r1",
+    length_ft: 20,
+    fitting_equivalent_length_ft: 15,
+    duct_shape: "round",
+    target_height_in: null,
+    material: "flex",
+    cfm: 0,
+    friction_rate: 0.08,
+    velocity_fpm: 0,
+    calculated_diameter_in: null,
+    calculated_width_in: null,
+    calculated_height_in: null,
+    ...overrides,
+  };
+}
+
+function equipmentEvaluation(id: string, ratedCfm: number): EquipmentEvaluation {
+  return {
+    equipment: {
+      id,
+      manufacturer: "Amana",
+      modelNumber: "ASZ160481K",
+      equipmentType: "heat_pump",
+      stageType: "single",
+      nominalCoolingCapacityBtu: 47000,
+      nominalHeatingCapacityBtu: 47000,
+      ratedCfm,
+      sourceDocument: "test",
+    },
+    coolingCapacityAtDesign: null,
+    coolingPercentOfLoad: null,
+    withinCoolingWindow: true,
+    heatingCapacityAtDesign: null,
+    heatingPercentOfLoad: null,
+    withinHeatingWindow: true,
+    balancePointF: null,
+    supplementalHeatBtuh: null,
+    supplementalHeatKw: null,
+  } as EquipmentEvaluation;
+}
+
+function zoneEquipmentSelection(zoneId: string, evaluation: EquipmentEvaluation): ZoneEquipmentSelection {
+  return {
+    zoneId,
+    equipmentEvaluations: [evaluation],
+    selectedEquipment: evaluation,
+    equipmentSelectionNotes: null,
+  };
+}
+
+function baseReportDataWithDuctDesign(overrides: {
+  hvacSystemConfiguration: "independent_per_zone" | "single_system_zoned";
+  zones: ManualJZone[];
+  ductRuns: DuctRunRow[];
+  ductSchedule: DuctSizingResult[];
+  zoneEquipment: ZoneEquipmentSelection[];
+}): ReportData {
+  const data = baseReportData([
+    room({ id: "r1", zone_id: "z1" }),
+    room({ id: "r2", zone_id: "z2" }),
+  ]);
+  data.project.hvac_system_configuration = overrides.hvacSystemConfiguration;
+  data.residential!.zones = overrides.zones;
+  data.residential!.ductRuns = overrides.ductRuns;
+  data.residential!.ductSchedule = overrides.ductSchedule;
+  data.residential!.zoneEquipment = overrides.zoneEquipment;
+  return data;
+}
+
+describe("getReportGenerationGateStatus - duct/equipment CFM compatibility", () => {
+  it("independent_per_zone: blocks a zone whose own branch CFM deviates from its own equipment", () => {
+    const data = baseReportDataWithDuctDesign({
+      hvacSystemConfiguration: "independent_per_zone",
+      zones: [{ id: "z1", name: "Zone 1", ahu_label: null }],
+      ductRuns: [ductRun({ id: "run1", zone_id: "z1", room_id: "r1" })],
+      ductSchedule: [{ runId: "run1", cfm: 348, frictionRate: 0.08, ductShape: "round", diameterIn: 6, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false }],
+      zoneEquipment: [zoneEquipmentSelection("z1", equipmentEvaluation("eq1", 1400))],
+    });
+    const status = getReportGenerationGateStatus(data, [], new Set());
+    const blocker = status.blockers.find((b) => b.code === "duct_design_incomplete" && b.detail.includes("differs from"));
+    expect(blocker).toBeDefined();
+    expect(blocker?.detail).toContain("Zone 1");
+  });
+
+  it("single_system_zoned: does NOT block when two zones share one unit and their COMBINED branch CFM is within tolerance, even though each zone alone deviates wildly", () => {
+    const data = baseReportDataWithDuctDesign({
+      hvacSystemConfiguration: "single_system_zoned",
+      zones: [
+        { id: "z1", name: "Zone 1", ahu_label: null },
+        { id: "z2", name: "Zone 2 - Upstairs AHU", ahu_label: "AHU-2" },
+      ],
+      ductRuns: [
+        ductRun({ id: "run1", zone_id: "z1", room_id: "r1" }),
+        ductRun({ id: "run2", zone_id: "z2", room_id: "r2" }),
+      ],
+      ductSchedule: [
+        { runId: "run1", cfm: 1149, frictionRate: 0.08, ductShape: "round", diameterIn: 14, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
+        { runId: "run2", cfm: 348, frictionRate: 0.08, ductShape: "round", diameterIn: 9, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
+      ],
+      // Real Schneider shape: both zones share the exact same equipment
+      // record (1149 + 348 = 1497 vs. a 1400 CFM shared unit - 7% off,
+      // well within tolerance combined; 348 alone against 1400 is a 75%
+      // deviation, which is what falsely blocked before this fix).
+      zoneEquipment: (() => {
+        const evaluation = equipmentEvaluation("eq1", 1400);
+        return [zoneEquipmentSelection("z1", evaluation), zoneEquipmentSelection("z2", evaluation)];
+      })(),
+    });
+    const status = getReportGenerationGateStatus(data, [], new Set());
+    const blocker = status.blockers.find((b) => b.code === "duct_design_incomplete" && b.detail.includes("differs from"));
+    expect(blocker).toBeUndefined();
+  });
+
+  it("single_system_zoned: still blocks when the shared group's COMBINED branch CFM is actually out of tolerance", () => {
+    const data = baseReportDataWithDuctDesign({
+      hvacSystemConfiguration: "single_system_zoned",
+      zones: [
+        { id: "z1", name: "Zone 1", ahu_label: null },
+        { id: "z2", name: "Zone 2 - Upstairs AHU", ahu_label: "AHU-2" },
+      ],
+      ductRuns: [
+        ductRun({ id: "run1", zone_id: "z1", room_id: "r1" }),
+        ductRun({ id: "run2", zone_id: "z2", room_id: "r2" }),
+      ],
+      ductSchedule: [
+        { runId: "run1", cfm: 300, frictionRate: 0.08, ductShape: "round", diameterIn: 8, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
+        { runId: "run2", cfm: 200, frictionRate: 0.08, ductShape: "round", diameterIn: 6, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
+      ],
+      zoneEquipment: (() => {
+        const evaluation = equipmentEvaluation("eq1", 1400);
+        return [zoneEquipmentSelection("z1", evaluation), zoneEquipmentSelection("z2", evaluation)];
+      })(),
+    });
+    const status = getReportGenerationGateStatus(data, [], new Set());
+    const blocker = status.blockers.find((b) => b.code === "duct_design_incomplete" && b.detail.includes("combined total branch duct CFM"));
+    expect(blocker).toBeDefined();
+    expect(blocker?.detail).toContain("Zone 1 + Zone 2 - Upstairs AHU");
   });
 });

@@ -90,6 +90,17 @@ export type DuctRoutingIllustrationPin = {
   yNorm: number;
   zoneId: string;
   zoneName: string;
+  // Only set for kind==="ahu" - the zone's real trunk duct_runs row,
+  // sized via the same computeManualD/sizeDuctRun path as every branch
+  // (see lib/manualD.ts's sizeDuctRun - a plenum/trunk sized by the
+  // zone's combined CFM). Rendered as a short labeled stub off the AHU
+  // icon (real ACCA sizing, not a fabricated shared-backbone path) -
+  // see lib/reportHtmlV2.ts's renderDuctRoutingPage for why a true
+  // trunk-and-branch geometry isn't drawn: this app currently computes
+  // home-run (radial AHU-to-register) routing, not a shared trunk path,
+  // and drawing one anyway would misrepresent the real sizing basis.
+  trunkDiameterIn?: number | null;
+  trunkCfm?: number | null;
 };
 export type DuctRoutingIllustrationRoute = {
   roomName: string;
@@ -158,11 +169,16 @@ export function buildDuctRoutingIllustrations(
         routes: [],
       };
       bySheet.set(sheetKey, sheet);
+      const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
+      const trunkSized = trunkRun ? sizedByRunId.get(trunkRun.id) : undefined;
+      const trunkCfmFallback = zoneRooms.reduce((sum, r) => sum + (requiredCfmByRoom.get(r.id) ?? 0), 0);
       sheet.pins.push({
         kind: "ahu",
         label: `${zone.name} (AHU)`,
         xNorm: zone.ahu_position_x_norm,
         yNorm: zone.ahu_position_y_norm,
+        trunkDiameterIn: trunkSized?.diameterIn ?? null,
+        trunkCfm: trunkSized?.cfm ?? (trunkCfmFallback > 0 ? trunkCfmFallback : null),
         zoneId: zone.id,
         zoneName: zone.name,
       });

@@ -532,35 +532,28 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     );
   }
 
-  // Schematic, not an annotated photo - modeled on how an electrical
-  // riser diagram reads: symbols + one color per circuit (here, per
-  // zone), a legend explaining both, and nothing else printed on the
-  // drawing itself. No room names, no length/diameter callouts, no label
-  // boxes - only what a tech standing at the register with a flex run in
-  // hand actually needs: which zone it belongs to (color) and what it's
-  // supposed to deliver (CFM), read straight off the real floor plan
-  // page underneath (never a redrawn/approximated one).
-  const ZONE_COLORS = ["#2f6f4f", "#a9822f", "#2f5f8f", "#8a3b6f", "#b0532f", "#4f4f9e", "#2f8f8f", "#8f2f4f"];
-  const zoneColorById = new Map<string, string>();
-  for (const sheet of sheets) {
-    for (const pin of sheet.pins) {
-      if (!zoneColorById.has(pin.zoneId)) {
-        zoneColorById.set(pin.zoneId, ZONE_COLORS[zoneColorById.size % ZONE_COLORS.length]);
-      }
-    }
-  }
-  const zoneNameById = new Map<string, string>();
-  for (const sheet of sheets) for (const pin of sheet.pins) zoneNameById.set(pin.zoneId, pin.zoneName);
-
-  const legendRows = [...zoneColorById.entries()]
-    .map(
-      ([zoneId, color]) =>
-        `<div style="display:flex;align-items:center;gap:6px;">
-           <span style="display:inline-block;width:10px;height:10px;background:${color};border:1px solid ${BRAND.paper};flex-shrink:0;"></span>
-           <span>${esc(zoneNameById.get(zoneId) ?? "Zone")}</span>
-         </div>`,
-    )
-    .join("");
+  // Redesigned 2026-08-25 against 4 real Wrightsoft/AutoCAD Manual D
+  // duct diagrams the user supplied as the target standard. Adopts that
+  // convention directly: supply duct = red, return = green (a single
+  // central return near the AHU - this app doesn't model per-room
+  // return grilles, disclosed below), duct size AND CFM printed along
+  // each run (not just at the register), room names, a real symbol
+  // legend. Zone identity is carried by which sheet/page a zone's rooms
+  // are on (real projects put different zones on different floor-plan
+  // sheets already) rather than competing with supply/return for the
+  // line-color channel.
+  //
+  // Deliberately NOT drawn: a shared trunk-and-branch backbone path like
+  // the reference images show. This app's routing engine computes
+  // home-run (radial AHU-to-register) branches, not a shared trunk path
+  // - drawing a fake spine to visually match the reference would
+  // misrepresent the real sizing basis. What IS real and shown: each
+  // zone's actual computed trunk/plenum size, as a short labeled stub at
+  // the AHU icon. A true shared-backbone router is a separate, larger
+  // effort, flagged not built here.
+  const SUPPLY_COLOR = "#c0392b";
+  const RETURN_COLOR = "#2f8f4f";
+  const SYMBOL_INK = "#1c2b3a";
 
   const body = sheets
     .map((sheet, sheetIndex) => {
@@ -579,64 +572,87 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           const y2 = route.toYNorm * 100;
           const straight = Math.abs(x1 - x2) < 0.2 || Math.abs(y1 - y2) < 0.2;
           const points = straight ? `${x1},${y1} ${x2},${y2}` : `${x1},${y1} ${x1},${y2} ${x2},${y2}`;
-          const color = zoneColorById.get(route.zoneId) ?? BRAND.amber;
-          // No vector-effect="non-scaling-stroke" here (diagnosed
-          // 2026-08-25 via a real rendered screenshot, not just code
-          // review) - it makes the stroke width immune to the SVG's own
-          // viewBox scale, which for a 0-100 viewBox stretched over a
-          // ~1700px image renders as a hairline under 1 real pixel wide -
-          // effectively invisible. Letting it scale normally (same as
-          // the pin icons below, which never had this attribute) is what
-          // actually makes the route visible.
-          return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="0.6" stroke-dasharray="1.6 1.1" stroke-linecap="round" />`;
+          // No vector-effect="non-scaling-stroke" (diagnosed 2026-08-25
+          // via a real rendered screenshot, not just code review) - it
+          // makes the stroke width immune to the SVG's own viewBox
+          // scale, which for a 0-100 viewBox stretched over a ~1700px
+          // image renders as a hairline under 1 real pixel wide -
+          // effectively invisible.
+          return `<polyline points="${points}" fill="none" stroke="${SUPPLY_COLOR}" stroke-width="0.55" stroke-linecap="round" />`;
         })
         .join("");
 
-      // CFM printed directly beside the register symbol, plain text with
-      // a thin light halo for legibility over the drawing - not a filled
-      // label box. This is the one number the diagram exists to show.
-      const cfmLabels = sheet.routes
-        .map((route) => {
-          if (route.cfm == null) return "";
-          const cx = route.toXNorm * 100;
-          const cy = route.toYNorm * 100;
-          return `<text x="${cx}" y="${cy}" dx="2.1" dy="0.6" font-size="1.7" font-weight="700" fill="${BRAND.ink}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.5px;stroke-linejoin:round;">${Math.round(route.cfm)}</text>`;
+      // Duct size + CFM printed directly along each run (matching the
+      // reference standard - both figures on the line itself, not just
+      // one at the register), offset 35%/65% along the route
+      // (alternating) rather than the exact midpoint so short runs
+      // converging near the AHU don't stack every label on top of each
+      // other. Still not full collision avoidance (disclosed).
+      const runLabels = sheet.routes
+        .map((route, routeIndex) => {
+          const sizeText = route.diameterIn ? `${route.diameterIn}"⌀` : null;
+          const cfmText = route.cfm != null ? `${Math.round(route.cfm)} cfm` : null;
+          const text = [sizeText, cfmText].filter(Boolean).join(" / ");
+          if (!text) return "";
+          const t = routeIndex % 2 === 0 ? 0.4 : 0.6;
+          const lx = (route.fromXNorm + (route.toXNorm - route.fromXNorm) * t) * 100;
+          const ly = (route.fromYNorm + (route.toYNorm - route.fromYNorm) * t) * 100;
+          return `<text x="${lx.toFixed(3)}" y="${ly.toFixed(3)}" dy="-0.6" font-size="1.6" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="middle" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(text)}</text>`;
         })
         .join("");
 
-      // Register: the standard schematic diffuser symbol (circle with
-      // crosshatch louvers), tinted per-zone. AHU: a filled square, same
-      // per-zone tint, "AHU" printed inside it - both real, recognizable
-      // installer symbols. No name/room labels on either - the legend
-      // carries zone identity, the color carries it on the drawing.
+      // Room name next to each register - real project room names, per
+      // direct instruction (this replaces the earlier "no callouts"
+      // version, which the reference standard doesn't follow either).
+      const roomLabels = sheet.pins
+        .filter((p) => p.kind === "room")
+        .map((pin) => {
+          const cx = pin.xNorm * 100;
+          const cy = pin.yNorm * 100;
+          return `<text x="${cx}" y="${cy}" dx="2.4" dy="-2.2" font-size="1.7" font-weight="600" fill="#1f3a5f" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(pin.label)}</text>`;
+        })
+        .join("");
+
+      // Register: the standard one-way supply diffuser symbol (circle
+      // with an X, per the reference legend). AHU: a filled equipment
+      // square with a short red trunk/plenum stub (real computed size,
+      // not a fabricated backbone path - see module comment above) and
+      // a green return-grille swatch offset to the side, matching the
+      // reference's supply/return color convention.
       const pinIcons = sheet.pins
         .map((pin) => {
           const cx = pin.xNorm * 100;
           const cy = pin.yNorm * 100;
-          const color = zoneColorById.get(pin.zoneId) ?? BRAND.amber;
           if (pin.kind === "ahu") {
+            const trunkText = [pin.trunkDiameterIn ? `${pin.trunkDiameterIn}"⌀` : null, pin.trunkCfm != null ? `${Math.round(pin.trunkCfm)} cfm` : null]
+              .filter(Boolean)
+              .join(" / ");
             return `<g transform="translate(${cx} ${cy})">
-              <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${color}" stroke="${BRAND.paper}" stroke-width="0.3" />
-              <text x="0" y="0.7" font-size="1.6" font-weight="700" text-anchor="middle" fill="${BRAND.paper}">AHU</text>
+              <line x1="0" y1="0" x2="-4.5" y2="0" stroke="${SUPPLY_COLOR}" stroke-width="0.7" stroke-linecap="round" />
+              ${trunkText ? `<text x="-2.3" y="-0.9" font-size="1.5" font-weight="700" text-anchor="middle" fill="${SUPPLY_COLOR}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;">${esc(trunkText)}</text>` : ""}
+              <rect x="2" y="2.6" width="2.6" height="2.6" fill="${RETURN_COLOR}" stroke="${BRAND.paper}" stroke-width="0.25" />
+              <line x1="2" y1="2.6" x2="4.6" y2="5.2" stroke="${BRAND.paper}" stroke-width="0.2" />
+              <line x1="4.6" y1="2.6" x2="2" y2="5.2" stroke="${BRAND.paper}" stroke-width="0.2" />
+              <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="0.3" />
+              <text x="0" y="0.7" font-size="1.5" font-weight="700" text-anchor="middle" fill="${BRAND.paper}">AHU</text>
             </g>`;
           }
           return `<g transform="translate(${cx} ${cy})">
-            <circle r="1.7" fill="${BRAND.paper}" stroke="${color}" stroke-width="0.45" />
-            <line x1="-1.4" y1="-1.4" x2="1.4" y2="1.4" stroke="${color}" stroke-width="0.3" />
-            <line x1="-1.4" y1="1.4" x2="1.4" y2="-1.4" stroke="${color}" stroke-width="0.3" />
-            <line x1="0" y1="-1.7" x2="0" y2="1.7" stroke="${color}" stroke-width="0.3" />
-            <line x1="-1.7" y1="0" x2="1.7" y2="0" stroke="${color}" stroke-width="0.3" />
+            <circle r="1.5" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="0.4" />
+            <line x1="-1.2" y1="-1.2" x2="1.2" y2="1.2" stroke="${SYMBOL_INK}" stroke-width="0.28" />
+            <line x1="-1.2" y1="1.2" x2="1.2" y2="-1.2" stroke="${SYMBOL_INK}" stroke-width="0.28" />
           </g>`;
         })
         .join("");
 
       return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
         <div style="position:relative;display:inline-block;">
-          <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};" />
+          <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};filter:grayscale(1) brightness(1.55) contrast(0.82);" />
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
             ${routeLines}
             ${pinIcons}
-            ${cfmLabels}
+            ${runLabels}
+            ${roomLabels}
           </svg>
         </div>`;
     })
@@ -648,17 +664,19 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     `${body}
      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:18px;align-items:center;border:1px solid ${BRAND.grid};border-radius:6px;padding:10px 14px;font-size:11px;color:${BRAND.inkSoft};">
        <strong style="color:${BRAND.ink};">Legend</strong>
-       ${legendRows}
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.inkSoft}" /></svg> AHU / mechanical equipment</span>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="${BRAND.paper}" stroke="${BRAND.inkSoft}" stroke-width="1.4" /></svg> Supply register (CFM printed beside it)</span>
-       <span>‑ ‑ ‑ Routed duct path, colored by zone</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="2" /></svg> Supply duct (size / CFM labeled on the run)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${RETURN_COLOR}" /></svg> Return air (single central return)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="1" y="1" width="12" height="12" fill="${SYMBOL_INK}" /></svg> AHU / mechanical equipment</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="1.2" /></svg> Supply register (one-way)</span>
      </div>
      <p class="muted" style="margin-top:8px;">
-       Routed paths follow the same right-angle (Manhattan) geometry used to compute each run's real length in
-       the Manual D schedule - ductwork runs along framing, not diagonally through it. Return air uses a single
-       central return near the AHU per standard residential practice; this app does not currently model
-       per-room return grilles separately. Pin positions were confirmed or placed by a technician against the
-       actual source drawing - never AI-inferred without confirmation (see the Audit Trail page for who
+       Routed paths follow the same right-angle (Manhattan) geometry used to compute each run's real length and
+       size in the Manual D schedule - ductwork runs along framing, not diagonally through it. Each branch
+       currently routes independently to the AHU (home-run); a shared trunk-and-branch backbone is not yet
+       modeled - the AHU's own real trunk/plenum size is shown as the short labeled stub at its icon. Return air
+       uses a single central return near the AHU per standard residential practice; this app does not currently
+       model per-room return grilles separately. Pin positions were confirmed or placed by a technician against
+       the actual source drawing - never AI-inferred without confirmation (see the Audit Trail page for who
        resolved each one and when).
      </p>`,
     projectAddress(data),

@@ -152,6 +152,88 @@ describe("buildDuctRoutingIllustrations", () => {
     expect(result[0].routes[0].zoneName).toBe("Zone 1");
   });
 
+  it("attaches the zone's real trunk size/CFM to the AHU pin, not a fabricated backbone", () => {
+    const rooms = [
+      makeRoom({
+        id: "room-1",
+        position_x_norm: 0.3,
+        position_y_norm: 0.4,
+        position_source_drawing_id: "drawing-1",
+        position_source_page_number: 2,
+      }),
+    ];
+    const zones = [
+      makeZone({
+        ahu_position_x_norm: 0.5,
+        ahu_position_y_norm: 0.5,
+        ahu_position_source_drawing_id: "drawing-1",
+        ahu_position_source_page_number: 2,
+      }),
+    ];
+    const ductRuns: DuctRunRow[] = [
+      {
+        id: "trunk-1",
+        project_id: "project-1",
+        zone_id: "zone-1",
+        run_type: "trunk",
+        room_id: null,
+        length_ft: 30,
+        fitting_equivalent_length_ft: 0,
+        duct_shape: "round",
+        target_height_in: null,
+        material: "sheet_metal",
+        cfm: 0,
+        friction_rate: 0,
+        velocity_fpm: 0,
+        calculated_diameter_in: null,
+        calculated_width_in: null,
+        calculated_height_in: null,
+      },
+    ];
+    const ductSchedule: DuctSizingResult[] = [
+      {
+        runId: "trunk-1",
+        cfm: 400,
+        frictionRate: 0.08,
+        ductShape: "round",
+        diameterIn: 14,
+        widthIn: null,
+        heightIn: null,
+        velocityFpm: 700,
+        velocityWarning: null,
+        exceedsTableRange: false,
+      },
+    ];
+    const result = buildDuctRoutingIllustrations(rooms, zones, ductRuns, ductSchedule, new Map());
+    const ahuPin = result[0].pins.find((p) => p.kind === "ahu");
+    expect(ahuPin?.trunkDiameterIn).toBe(14);
+    expect(ahuPin?.trunkCfm).toBe(400);
+  });
+
+  it("falls back to the zone's summed room CFM for the trunk stub when no static-pressure-sized trunk exists yet", () => {
+    const rooms = [
+      makeRoom({
+        id: "room-1",
+        position_x_norm: 0.3,
+        position_y_norm: 0.4,
+        position_source_drawing_id: "drawing-1",
+        position_source_page_number: 2,
+      }),
+    ];
+    const zones = [
+      makeZone({
+        ahu_position_x_norm: 0.5,
+        ahu_position_y_norm: 0.5,
+        ahu_position_source_drawing_id: "drawing-1",
+        ahu_position_source_page_number: 2,
+      }),
+    ];
+    const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map([["room-1", 180]]));
+    const ahuPin = result[0].pins.find((p) => p.kind === "ahu");
+    expect(ahuPin?.trunkDiameterIn).toBeNull();
+    expect(ahuPin?.trunkCfm).toBe(180);
+  });
+
   it("excludes the room the AHU pin itself sits in - no overlapping register at the same spot", () => {
     const rooms = [
       makeRoom({

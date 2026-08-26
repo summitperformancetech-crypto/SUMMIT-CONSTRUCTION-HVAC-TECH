@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { layoutDuctRoutingLabels, type LiveDuctRoutingSheet } from "@/lib/ductRouting";
+import {
+  layoutDuctRoutingLabels,
+  computeSheetDuctRouting,
+  buildDuctNetworkPrimitives,
+  type LiveDuctRoutingSheet,
+  type RoutedDuctSegment,
+} from "@/lib/ductRouting";
+import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
+import type { DrawingRow } from "@/lib/drawingExtraction";
 
 // Live, in-app rendering of the exact same Manual D duct schematic the
 // PDF report produces (lib/reportHtmlV2.ts's renderDuctRoutingPage) -
@@ -12,13 +20,52 @@ import { layoutDuctRoutingLabels, type LiveDuctRoutingSheet } from "@/lib/ductRo
 // codebase already uses elsewhere - see duct-design-section.tsx's
 // DUCT_RUN_COLUMNS comment for why runtime values aren't shared that
 // way here).
+//
+// Rebuilt 2026-08-25 against 4 real Wrightsoft/AutoCAD reference sheets
+// the user supplied: real orthogonal trunk-and-branch routing (via
+// lib/ductPathGeometry.ts/lib/ductRouting.ts's computeSheetDuctRouting),
+// not a straight-line home-run star pattern - see that module's own
+// comments for the full routing algorithm and its honestly-disclosed
+// limits (axis-aligned room-box obstacle avoidance from real extracted
+// geometry, not full wall/door-vector CAD routing).
 const SUPPLY_COLOR = "#c0392b";
 const RETURN_COLOR = "#2f8f4f";
 const SYMBOL_INK = "#1c2b3a";
 const PAPER = "#f0efec";
 
-export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] }) {
+// Real line-weight hierarchy (SVG stroke-width in the diagram's own 0-100
+// viewBox units) - trunk visibly heavier than branch, branch heavier than
+// an individual run-out to one diffuser.
+const SEGMENT_WIDTH: Record<RoutedDuctSegment["cls"], number> = {
+  trunk: 1.1,
+  branch: 0.7,
+  runout: 0.42,
+};
+
+// Soft, distinct per-zone background tints (first floor vs. second floor,
+// etc.) - low-opacity so the underlying floor plan linework stays
+// legible, per the reference sheets' own zone-color-coding convention.
+const ZONE_TINTS = ["#fde68a", "#93c5fd", "#86efac", "#f9a8d4", "#c4b5fd", "#fca5a5"];
+
+function zoneTintColor(zoneId: string, zoneIdsInOrder: string[]): string {
+  const index = zoneIdsInOrder.indexOf(zoneId);
+  return ZONE_TINTS[index % ZONE_TINTS.length];
+}
+
+export function DuctRoutingDiagram({
+  sheets,
+  rooms,
+  zones,
+  drawings,
+}: {
+  sheets: LiveDuctRoutingSheet[];
+  rooms: RoomRow[];
+  zones: ZoneRow[];
+  drawings: DrawingRow[];
+}) {
   const [images, setImages] = useState<Map<string, string>>(new Map());
+  const [routing, setRouting] = useState<Map<string, Map<string, RoutedDuctSegment[]>>>(new Map());
+  const [routingNotice, setRoutingNotice] = useState<Map<string, string>>(new Map());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -32,18 +79,75 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
     setError(null);
     Promise.all(
       missing.map(async (key) => {
-        const [drawingId, pageNumber] = key.split(":");
+        const [drawingId, pageNumberStr] = key.split(":");
+        const pageNumber = Number(pageNumberStr);
         const res = await fetch(`/api/drawings/${drawingId}/page-image?page=${pageNumber}`);
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? "Failed to load page image");
-        return [key, body.dataUri as string] as const;
+
+        const sheet = sheets.find((s) => s.drawingId === drawingId && s.pageNumber === pageNumber)!;
+        let routedForSheet: Map<string, RoutedDuctSegment[]> | null = null;
+        let notice: string | null = null;
+        if (body.pageWidthPt != null && body.pageHeightPt != null) {
+          const drawing = drawings.find((d) => d.id === drawingId);
+          const roomsOnSheet = rooms
+            .filter(
+              (r) =>
+                r.position_source_drawing_id === drawingId &&
+                r.position_source_page_number === pageNumber &&
+                r.position_x_norm != null &&
+                r.position_y_norm != null,
+            )
+            .map((r) => ({ id: r.id, xNorm: r.position_x_norm!, yNorm: r.position_y_norm! }));
+          const zoneIdsOnSheet = [...new Set(sheet.pins.filter((p) => p.kind === "ahu").map((p) => p.zoneId))];
+          const zonesOnSheet = zoneIdsOnSheet
+            .map((zoneId) => {
+              const ahuPin = sheet.pins.find((p) => p.kind === "ahu" && p.zoneId === zoneId);
+              if (!ahuPin) return null;
+              const ahuOwnRoom = rooms.find(
+                (r) => r.zone_id === zoneId && r.position_x_norm === ahuPin.xNorm && r.position_y_norm === ahuPin.yNorm,
+              );
+              return {
+                id: zoneId,
+                ahuPoint: { xNorm: ahuPin.xNorm, yNorm: ahuPin.yNorm },
+                ahuOwnRoomId: ahuOwnRoom?.id ?? null,
+                targetRoomIds: sheet.routes.filter((r) => r.zoneId === zoneId).map((r) => r.roomId),
+              };
+            })
+            .filter((z): z is NonNullable<typeof z> => z != null);
+
+          routedForSheet = computeSheetDuctRouting(
+            drawing?.extracted_data ?? null,
+            pageNumber,
+            body.pageWidthPt,
+            body.pageHeightPt,
+            roomsOnSheet,
+            zonesOnSheet,
+          );
+          if (routedForSheet == null) {
+            notice =
+              "Couldn't derive a real-world scale for this sheet (no room has both a known printed dimension and a placed pin) - showing pins without routed duct lines.";
+          }
+        }
+
+        return { key, dataUri: body.dataUri as string, routedForSheet, notice };
       }),
     )
-      .then((pairs) => {
+      .then((results) => {
         if (cancelled) return;
         setImages((prev) => {
           const next = new Map(prev);
-          for (const [key, dataUri] of pairs) next.set(key, dataUri);
+          for (const r of results) next.set(r.key, r.dataUri);
+          return next;
+        });
+        setRouting((prev) => {
+          const next = new Map(prev);
+          for (const r of results) if (r.routedForSheet) next.set(r.key, r.routedForSheet);
+          return next;
+        });
+        setRoutingNotice((prev) => {
+          const next = new Map(prev);
+          for (const r of results) if (r.notice) next.set(r.key, r.notice);
           return next;
         });
       })
@@ -68,6 +172,8 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
     );
   }
 
+  const allZoneIds = [...new Set(sheets.flatMap((s) => s.pins.map((p) => p.zoneId)))];
+
   return (
     <div className="space-y-6">
       {error && (
@@ -76,7 +182,8 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
         </p>
       )}
       {sheets.map((sheet, sheetIndex) => {
-        const imageDataUri = images.get(`${sheet.drawingId}:${sheet.pageNumber}`);
+        const key = `${sheet.drawingId}:${sheet.pageNumber}`;
+        const imageDataUri = images.get(key);
         if (!imageDataUri) {
           return (
             <p key={sheetIndex} className="text-sm text-brand-grey-text">
@@ -85,39 +192,80 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
           );
         }
 
-        const routeLines = sheet.routes.map((route, i) => {
-          const x1 = route.fromXNorm * 100;
-          const y1 = route.fromYNorm * 100;
-          const x2 = route.toXNorm * 100;
-          const y2 = route.toYNorm * 100;
-          const straight = Math.abs(x1 - x2) < 0.2 || Math.abs(y1 - y2) < 0.2;
-          const points = straight ? `${x1},${y1} ${x2},${y2}` : `${x1},${y1} ${x1},${y2} ${x2},${y2}`;
-          return <polyline key={i} points={points} fill="none" stroke={SUPPLY_COLOR} strokeWidth={0.55} strokeLinecap="round" />;
-        });
+        const routedByRoomId = routing.get(key);
+        const notice = routingNotice.get(key);
+        const allSegments = routedByRoomId ? [...routedByRoomId.values()].flat() : [];
+        const primitives = buildDuctNetworkPrimitives(allSegments);
 
-        // Real collision-avoided label positions (see
-        // lib/ductRouting.ts's layoutDuctRoutingLabels) - replaces the
-        // fixed-fraction-of-the-line placement that was stacking multiple
-        // CFM/size numbers directly on top of each other wherever rooms
-        // cluster tightly on the real floor plan.
+        const sheetZoneIds = [...new Set(sheet.pins.map((p) => p.zoneId))];
+        const zoneTint = sheetZoneIds.length === 1 ? zoneTintColor(sheetZoneIds[0], allZoneIds) : null;
+
+        const routeLines = primitives.segments.map((seg, i) => (
+          <line
+            key={i}
+            x1={seg.fromXNorm * 100}
+            y1={seg.fromYNorm * 100}
+            x2={seg.toXNorm * 100}
+            y2={seg.toYNorm * 100}
+            stroke={SUPPLY_COLOR}
+            strokeWidth={SEGMENT_WIDTH[seg.cls]}
+            strokeLinecap="round"
+          />
+        ));
+
+        // Real fitting symbols at real graph junctions (see
+        // buildDuctNetworkPrimitives) - a filled circle at a 90-degree
+        // elbow, a filled square at a branch takeoff (3-way tee),
+        // matching the reference sheets' own fitting convention rather
+        // than just two lines crossing with no symbol at all.
+        const elbowSymbols = primitives.elbows.map((p, i) => (
+          <circle key={`elbow-${i}`} cx={p.xNorm * 100} cy={p.yNorm * 100} r={0.4} fill={SUPPLY_COLOR} />
+        ));
+        const teeSymbols = primitives.tees.map((p, i) => (
+          <rect
+            key={`tee-${i}`}
+            x={p.xNorm * 100 - 0.5}
+            y={p.yNorm * 100 - 0.5}
+            width={1}
+            height={1}
+            fill={SYMBOL_INK}
+            stroke={PAPER}
+            strokeWidth={0.15}
+          />
+        ));
+
         const labels = layoutDuctRoutingLabels(sheet).map((label, i) => {
           const style =
             label.kind === "room"
               ? { fontSize: 1.7, fontWeight: 600, fill: "#1f3a5f" }
               : { fontSize: label.kind === "trunk" ? 1.5 : 1.6, fontWeight: 700, fill: SUPPLY_COLOR };
+          const leaderDistance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
+          const showLeader = leaderDistance > 3.5;
           return (
-            <text
-              key={i}
-              x={label.x}
-              y={label.y}
-              fontSize={style.fontSize}
-              fontWeight={style.fontWeight}
-              fill={style.fill}
-              textAnchor={label.textAnchor}
-              style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
-            >
-              {label.text}
-            </text>
+            <g key={i}>
+              {showLeader && (
+                <line
+                  x1={label.anchorX}
+                  y1={label.anchorY}
+                  x2={label.textAnchor === "middle" ? label.x : label.x - 0.6}
+                  y2={label.y - style.fontSize * 0.35}
+                  stroke={style.fill}
+                  strokeWidth={0.18}
+                  strokeDasharray="0.6,0.5"
+                />
+              )}
+              <text
+                x={label.x}
+                y={label.y}
+                fontSize={style.fontSize}
+                fontWeight={style.fontWeight}
+                fill={style.fill}
+                textAnchor={label.textAnchor}
+                style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
+              >
+                {label.text}
+              </text>
+            </g>
           );
         });
 
@@ -152,6 +300,7 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
             {sheets.length > 1 && (
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-brand-grey-text">Sheet {sheetIndex + 1}</p>
             )}
+            {notice && <p className="mb-2 text-xs text-amber-400">{notice}</p>}
             <div className="relative inline-block max-w-full">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -161,7 +310,10 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
                 style={{ filter: "grayscale(1) brightness(1.55) contrast(0.82)" }}
               />
               <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
+                {zoneTint && <rect x={0} y={0} width={100} height={100} fill={zoneTint} opacity={0.22} />}
                 {routeLines}
+                {elbowSymbols}
+                {teeSymbols}
                 {pinIcons}
                 {labels}
               </svg>
@@ -174,9 +326,21 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
         <strong className="text-brand-silver-highlight">Legend</strong>
         <span className="flex items-center gap-1.5">
           <svg width={20} height={6}>
-            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={2} />
+            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={3} />
           </svg>
-          Supply duct (size / CFM on the run)
+          Trunk
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={20} height={6}>
+            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={1.8} />
+          </svg>
+          Branch
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={20} height={6}>
+            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={1} />
+          </svg>
+          Run-out (size / CFM at the register)
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={14} height={14}>
@@ -195,6 +359,12 @@ export function DuctRoutingDiagram({ sheets }: { sheets: LiveDuctRoutingSheet[] 
             <circle cx={7} cy={7} r={5} fill={PAPER} stroke={SYMBOL_INK} strokeWidth={1.2} />
           </svg>
           Supply register (one-way)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={14} height={14}>
+            <rect x={4} y={4} width={6} height={6} fill={SYMBOL_INK} />
+          </svg>
+          Branch takeoff (tee)
         </span>
       </div>
     </div>

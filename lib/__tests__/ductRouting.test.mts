@@ -15,6 +15,8 @@ import {
   resolveRoomPositionSource,
   layoutDuctRoutingLabels,
   formatDuctSizeCfm,
+  computeSheetDuctRouting,
+  buildDuctNetworkPrimitives,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -403,6 +405,42 @@ describe("layoutDuctRoutingLabels", () => {
     expect(runLabel.text).toBe('7"⌀ / 200 cfm');
     expect(runLabel.x).toBeCloseTo(0.8 * 100 + 2.4);
     expect(runLabel.y).toBeCloseTo(0.2 * 100 + 2.6);
+    // Leader-line anchor points at the TRUE register location, not the
+    // label's own offset position - a leader line drawn from anchorX/Y to
+    // x/y therefore points back at the real register, not at empty space
+    // near it.
+    expect(runLabel.anchorX).toBeCloseTo(0.8 * 100);
+    expect(runLabel.anchorY).toBeCloseTo(0.2 * 100);
+  });
+
+  it("leaves anchorX/anchorY equal to the natural (undisplaced) position when nothing collided", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [{ kind: "room", label: "Kitchen", xNorm: 0.1, yNorm: 0.1 }],
+      routes: [],
+    });
+    const label = labels[0];
+    // The room label's own natural offset is +2.4/-2.2 from the pin -
+    // when undisplaced, the leader line target (anchorX/Y, the true pin)
+    // and the label's own drawn position (x/y) are close enough that a
+    // renderer can skip drawing a leader line at all (direct adjacency).
+    const distance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
+    expect(distance).toBeLessThan(4);
+  });
+
+  it("a label pushed to clear a collision keeps its anchor at the true feature point, not the pushed position", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [
+        { kind: "room", label: "Kitchen", xNorm: 0.5, yNorm: 0.5 },
+        { kind: "room", label: "Bathroom 2", xNorm: 0.5, yNorm: 0.5 },
+      ],
+      routes: [],
+    });
+    const pushed = labels.find((l) => Math.abs(l.y - l.anchorY) > 0.5 || Math.abs(l.x - l.anchorX) > 0.5);
+    expect(pushed).toBeDefined();
+    // Anchor still points at the real pin (50, 50), regardless of where
+    // decluttering moved the label text itself.
+    expect(pushed!.anchorX).toBeCloseTo(50);
+    expect(pushed!.anchorY).toBeCloseTo(50);
   });
 
   it("omits a run label entirely when neither size nor CFM is known yet", () => {
@@ -425,5 +463,152 @@ describe("layoutDuctRoutingLabels", () => {
       routes: [],
     });
     expect(withoutTrunk.some((l) => l.kind === "trunk")).toBe(false);
+  });
+});
+
+describe("computeSheetDuctRouting - end to end orchestration", () => {
+  function makeExtractedRoom(overrides: Partial<ExtractedRoom>): ExtractedRoom {
+    return {
+      name: "Room",
+      floor_area_sqft: 150,
+      wall_north_len_ft: null,
+      wall_south_len_ft: null,
+      wall_east_len_ft: null,
+      wall_west_len_ft: null,
+      wall_front_len_ft: null,
+      wall_rear_len_ft: null,
+      wall_left_len_ft: null,
+      wall_right_len_ft: null,
+      wall_page_horizontal_len_ft: null,
+      wall_page_vertical_len_ft: null,
+      window_north_area_sqft: null,
+      window_south_area_sqft: null,
+      window_east_area_sqft: null,
+      window_west_area_sqft: null,
+      window_front_area_sqft: null,
+      window_rear_area_sqft: null,
+      window_left_area_sqft: null,
+      window_right_area_sqft: null,
+      window_count: null,
+      windows: { value: null, unresolved: true, reason: null, certainty: null },
+      door_count: null,
+      unresolved: false,
+      reason: null,
+      duct_location: { value: null, unresolved: true, certainty: null },
+      duct_insulation_r_value: { value: null, unresolved: true, certainty: null },
+      duct_source: null,
+      duct_confidence: null,
+      ceiling_height_ft: null,
+      ceiling_height_ft_elevation_derived: null,
+      room_label_text: null,
+      source_sheet: "A1.1",
+      room_position: null,
+      ...overrides,
+    };
+  }
+
+  // A real, printed 40ft-wide sheet: a utility closet (AHU) on the left,
+  // two bedrooms further along a shared corridor - both known dimensions
+  // (so derivePageScale can resolve a real scale) and known bounding
+  // boxes (so routing has real geometry to avoid).
+  const extractedData = {
+    rooms: [
+      makeExtractedRoom({
+        name: "Utility",
+        wall_page_horizontal_len_ft: 4,
+        room_position: { x_norm: 0.05, y_norm: 0.45, width_norm: 0.1, height_norm: 0.1, unresolved: false, reason: null },
+      }),
+      makeExtractedRoom({
+        name: "Bedroom A",
+        wall_page_horizontal_len_ft: 8,
+        room_position: { x_norm: 0.6, y_norm: 0.1, width_norm: 0.2, height_norm: 0.2, unresolved: false, reason: null },
+      }),
+      makeExtractedRoom({
+        name: "Bedroom B",
+        wall_page_horizontal_len_ft: 8,
+        room_position: { x_norm: 0.6, y_norm: 0.7, width_norm: 0.2, height_norm: 0.2, unresolved: false, reason: null },
+      }),
+    ],
+    sheets: [{ name: "A1.1", page_number: 3 }],
+  };
+
+  const roomsOnSheet = [
+    { id: "utility", xNorm: 0.1, yNorm: 0.5 },
+    { id: "bedroomA", xNorm: 0.7, yNorm: 0.2 },
+    { id: "bedroomB", xNorm: 0.7, yNorm: 0.8 },
+  ];
+
+  it("routes every target room with real orthogonal geometry", () => {
+    const result = computeSheetDuctRouting(extractedData, 3, 400, 400, roomsOnSheet, [
+      {
+        id: "zone1",
+        ahuPoint: { xNorm: 0.1, yNorm: 0.5 },
+        ahuOwnRoomId: "utility",
+        targetRoomIds: ["bedroomA", "bedroomB"],
+      },
+    ]);
+    expect(result).not.toBeNull();
+    expect(result!.get("bedroomA")).toBeDefined();
+    expect(result!.get("bedroomB")).toBeDefined();
+    for (const segments of result!.values()) {
+      for (const seg of segments!) {
+        const dx = Math.abs(seg.toXNorm - seg.fromXNorm);
+        const dy = Math.abs(seg.toYNorm - seg.fromYNorm);
+        // Every segment axis-aligned - no diagonal star-pattern lines.
+        expect(dx < 1e-6 || dy < 1e-6).toBe(true);
+      }
+    }
+  });
+
+  it("returns null when no real scale can be derived for the sheet (no known printed dimension)", () => {
+    const noScaleData = {
+      rooms: extractedData.rooms.map((r) => ({ ...r, wall_page_horizontal_len_ft: null })),
+      sheets: extractedData.sheets,
+    };
+    const result = computeSheetDuctRouting(noScaleData, 3, 400, 400, roomsOnSheet, [
+      { id: "zone1", ahuPoint: { xNorm: 0.1, yNorm: 0.5 }, ahuOwnRoomId: "utility", targetRoomIds: ["bedroomA"] },
+    ]);
+    expect(result).toBeNull();
+  });
+});
+
+describe("buildDuctNetworkPrimitives", () => {
+  it("dedupes a segment shared by two rooms' paths into a single drawn segment, keeping the higher classification", () => {
+    const primitives = buildDuctNetworkPrimitives([
+      { fromXNorm: 0, fromYNorm: 0, toXNorm: 1, toYNorm: 0, cls: "trunk" },
+      { fromXNorm: 1, fromYNorm: 0, toXNorm: 0, toYNorm: 0, cls: "branch" }, // same physical segment, reversed
+    ]);
+    expect(primitives.segments).toHaveLength(1);
+    expect(primitives.segments[0].cls).toBe("trunk");
+  });
+
+  it("places a tee at a real 3-way branch junction", () => {
+    const primitives = buildDuctNetworkPrimitives([
+      { fromXNorm: 0, fromYNorm: 0.5, toXNorm: 0.5, toYNorm: 0.5, cls: "trunk" }, // trunk approaches from the left
+      { fromXNorm: 0.5, fromYNorm: 0.5, toXNorm: 1, toYNorm: 0.5, cls: "trunk" }, // trunk continues right
+      { fromXNorm: 0.5, fromYNorm: 0.5, toXNorm: 0.5, toYNorm: 1, cls: "branch" }, // branch peels off downward
+    ]);
+    expect(primitives.tees).toHaveLength(1);
+    expect(primitives.tees[0]).toEqual({ xNorm: 0.5, yNorm: 0.5 });
+    expect(primitives.elbows).toHaveLength(0);
+  });
+
+  it("places an elbow at a real 90-degree turn, not a tee", () => {
+    const primitives = buildDuctNetworkPrimitives([
+      { fromXNorm: 0, fromYNorm: 0, toXNorm: 0.5, toYNorm: 0, cls: "runout" },
+      { fromXNorm: 0.5, fromYNorm: 0, toXNorm: 0.5, toYNorm: 0.5, cls: "runout" },
+    ]);
+    expect(primitives.elbows).toHaveLength(1);
+    expect(primitives.elbows[0]).toEqual({ xNorm: 0.5, yNorm: 0 });
+    expect(primitives.tees).toHaveLength(0);
+  });
+
+  it("places no fitting symbol at a straight pass-through point", () => {
+    const primitives = buildDuctNetworkPrimitives([
+      { fromXNorm: 0, fromYNorm: 0, toXNorm: 0.5, toYNorm: 0, cls: "trunk" },
+      { fromXNorm: 0.5, fromYNorm: 0, toXNorm: 1, toYNorm: 0, cls: "trunk" },
+    ]);
+    expect(primitives.elbows).toHaveLength(0);
+    expect(primitives.tees).toHaveLength(0);
   });
 });

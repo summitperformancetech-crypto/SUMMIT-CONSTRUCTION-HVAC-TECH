@@ -17,6 +17,15 @@ import type { ExtractedRoom, DrawingRow } from "./drawingExtraction";
 import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 import type { DuctRunRow } from "@/components/duct-design-section";
 import type { DuctSizingResult } from "./manualD";
+import {
+  matchRoomBoxByPosition,
+  fallbackRoomBox,
+  routeZoneDucts,
+  classifyPathSegments,
+  type NormPoint,
+  type NormBox,
+  type SegmentClass,
+} from "./ductPathGeometry";
 
 // -----------------------------------------------------------------------
 // ACCA Manual D, Third Edition v2.00 (2013), Appendix 3 "Fitting
@@ -355,6 +364,7 @@ export type LiveDuctRoutingPin = {
   trunkCfm?: number | null;
 };
 export type LiveDuctRoutingRoute = {
+  roomId: string;
   roomName: string;
   fromXNorm: number;
   fromYNorm: number;
@@ -442,6 +452,7 @@ export function buildLiveDuctRoutingIllustration(
       const sized = run ? sizedByRunId.get(run.id) : undefined;
       const persistedCfm = run && run.cfm > 0 ? run.cfm : null;
       sheet.routes.push({
+        roomId: room.id,
         roomName: room.name,
         fromXNorm: zone.ahu_position_x_norm,
         fromYNorm: zone.ahu_position_y_norm,
@@ -512,6 +523,13 @@ export type DuctRoutingLabel = {
   y: number;
   text: string;
   textAnchor: "start" | "middle";
+  // The label's natural (pre-decluttering) anchor point - equal to x/y
+  // unless the greedy pass had to push it to clear a collision. Callers
+  // draw a short leader line from anchorX/anchorY to x/y whenever they
+  // differ meaningfully, per the real drafting convention the reference
+  // sheets use for dense clusters of diffuser callouts.
+  anchorX: number;
+  anchorY: number;
 };
 
 export function formatDuctSizeCfm(diameterIn: number | null | undefined, cfm: number | null | undefined): string {
@@ -547,16 +565,32 @@ function boxesOverlap(a: LabelBox, b: LabelBox): boolean {
 }
 
 export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRoutingLabel[] {
-  type Candidate = { kind: DuctRoutingLabel["kind"]; x: number; y: number; text: string; fontSize: number; textAnchor: "start" | "middle" };
+  type Candidate = {
+    kind: DuctRoutingLabel["kind"];
+    x: number;
+    y: number;
+    text: string;
+    fontSize: number;
+    textAnchor: "start" | "middle";
+    // The real feature (register/AHU/room pin) this label describes - the
+    // leader-line endpoint, distinct from the label's own natural offset
+    // position above.
+    featureX: number;
+    featureY: number;
+  };
   const candidates: Candidate[] = [];
 
   for (const pin of sheet.pins) {
     if (pin.kind === "room") {
-      candidates.push({ kind: "room", x: pin.xNorm * 100 + 2.4, y: pin.yNorm * 100 - 2.2, text: pin.label, fontSize: 1.7, textAnchor: "start" });
+      const fx = pin.xNorm * 100;
+      const fy = pin.yNorm * 100;
+      candidates.push({ kind: "room", x: fx + 2.4, y: fy - 2.2, text: pin.label, fontSize: 1.7, textAnchor: "start", featureX: fx, featureY: fy });
     } else {
       const trunkText = formatDuctSizeCfm(pin.trunkDiameterIn, pin.trunkCfm);
       if (trunkText) {
-        candidates.push({ kind: "trunk", x: pin.xNorm * 100 - 2.3, y: pin.yNorm * 100 - 0.9, text: trunkText, fontSize: 1.5, textAnchor: "middle" });
+        const fx = pin.xNorm * 100;
+        const fy = pin.yNorm * 100;
+        candidates.push({ kind: "trunk", x: fx - 2.3, y: fy - 0.9, text: trunkText, fontSize: 1.5, textAnchor: "middle", featureX: fx, featureY: fy });
       }
     }
   }
@@ -572,7 +606,9 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
     // above-right offset, so a register's own two lines of text (name,
     // then size/CFM) stack rather than collide with each other before
     // the cross-register pass even runs.
-    candidates.push({ kind: "run", x: route.toXNorm * 100 + 2.4, y: route.toYNorm * 100 + 2.6, text, fontSize: 1.6, textAnchor: "start" });
+    const fx = route.toXNorm * 100;
+    const fy = route.toYNorm * 100;
+    candidates.push({ kind: "run", x: fx + 2.4, y: fy + 2.6, text, fontSize: 1.6, textAnchor: "start", featureX: fx, featureY: fy });
   }
 
   // Greedy vertical decluttering: process top-to-bottom, push each new
@@ -602,8 +638,236 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
       }
       y += LABEL_ROW_HEIGHT;
     }
-    results.push({ kind: candidate.kind, x: candidate.x, y, text: candidate.text, textAnchor: candidate.textAnchor });
+    results.push({
+      kind: candidate.kind,
+      x: candidate.x,
+      y,
+      text: candidate.text,
+      textAnchor: candidate.textAnchor,
+      anchorX: candidate.featureX,
+      anchorY: candidate.featureY,
+    });
   }
 
   return results;
+}
+
+// -----------------------------------------------------------------------
+// Real orthogonal, room-avoiding routing orchestration - the actual
+// pathfinding lives in lib/ductPathGeometry.ts (pure, no domain types);
+// this is the glue that resolves each room's real geometry (via
+// nearest-position box matching, never by name - see that module's
+// comment for why) and calls it. Shared by both the live client diagram
+// (components/duct-routing-diagram.tsx, which has real page dimensions
+// once its own async page-image fetch resolves) and the PDF report
+// (lib/reportImages.ts's attachFrozenImages, which has real page
+// dimensions once it renders the source PDF page) - same client/server
+// split this module already uses elsewhere (see this file's own header
+// comment), except here the shared PURE algorithm itself lives in one
+// place and only the "when do we know the real page size" orchestration
+// differs by side.
+export function resolveRoomBox(pin: NormPoint, extractedBoxesOnPage: NormBox[]): NormBox {
+  return matchRoomBoxByPosition(pin, extractedBoxesOnPage) ?? fallbackRoomBox(pin);
+}
+
+export type SheetRoomForBoxResolution = { id: string; xNorm: number; yNorm: number };
+
+// One box per room actually on this sheet/page, regardless of which zone
+// it belongs to - every room is a real physical obstacle no matter which
+// AHU serves it.
+export function resolveSheetRoomBoxes(
+  roomsOnSheet: SheetRoomForBoxResolution[],
+  extractedBoxesOnPage: NormBox[],
+): Map<string, NormBox> {
+  const map = new Map<string, NormBox>();
+  for (const room of roomsOnSheet) {
+    map.set(room.id, resolveRoomBox({ xNorm: room.xNorm, yNorm: room.yNorm }, extractedBoxesOnPage));
+  }
+  return map;
+}
+
+export type RoutedDuctSegment = {
+  fromXNorm: number;
+  fromYNorm: number;
+  toXNorm: number;
+  toYNorm: number;
+  cls: SegmentClass;
+};
+
+export function routeSheetDucts(
+  ahuPoint: NormPoint,
+  ahuBox: NormBox,
+  targets: { roomId: string; point: NormPoint }[],
+  targetBoxes: Map<string, NormBox>,
+  allRoomBoxesOnSheet: NormBox[],
+  pageWidthFt: number,
+  pageHeightFt: number,
+): Map<string, RoutedDuctSegment[]> {
+  const routed = routeZoneDucts(
+    ahuPoint,
+    ahuBox,
+    targets.map((t) => ({ id: t.roomId, point: t.point })),
+    targetBoxes,
+    allRoomBoxesOnSheet,
+    pageWidthFt,
+    pageHeightFt,
+  );
+  const result = new Map<string, RoutedDuctSegment[]>();
+  for (const path of routed.paths) {
+    const segments = classifyPathSegments(path.points, routed.cellUsage, routed.cols, routed.rows, routed.paths.length);
+    result.set(
+      path.targetId,
+      segments.map((s) => ({
+        fromXNorm: s.from.xNorm,
+        fromYNorm: s.from.yNorm,
+        toXNorm: s.to.xNorm,
+        toYNorm: s.to.yNorm,
+        cls: s.cls,
+      })),
+    );
+  }
+  return result;
+}
+
+export function extractedRoomBoxesForPage(
+  extractedRooms: ExtractedRoom[],
+  sheetName: string,
+): NormBox[] {
+  return extractedRooms
+    .filter((r) => r.source_sheet === sheetName)
+    .map((r) => r.room_position)
+    .filter(
+      (p): p is NonNullable<ExtractedRoom["room_position"]> & { x_norm: number; y_norm: number; width_norm: number; height_norm: number } =>
+        p != null && p.x_norm != null && p.y_norm != null && p.width_norm != null && p.height_norm != null,
+    )
+    .map((p) => ({ xNorm: p.x_norm, yNorm: p.y_norm, widthNorm: p.width_norm, heightNorm: p.height_norm }));
+}
+
+// Single entrypoint both the live client diagram and the PDF report call
+// once they each have real page dimensions (in PDF points) for a sheet -
+// resolves real room geometry (position-matched, see resolveRoomBox) and
+// runs the real routing for every zone whose AHU sits on this sheet, in
+// one pass so all zones on a shared sheet see each other's rooms as real
+// obstacles too. Returns null when no real-world scale could be derived
+// for this sheet (same "don't guess" gate handleAutoGenerateFromPins
+// already uses for the exact same reason) - callers fall back to showing
+// pins/registers without routed lines rather than a fabricated distance.
+export function computeSheetDuctRouting(
+  extractedData: { rooms: ExtractedRoom[]; sheets?: { name: string; page_number: number | null }[] } | null,
+  pageNumber: number,
+  pageWidthPt: number,
+  pageHeightPt: number,
+  roomsOnSheet: SheetRoomForBoxResolution[],
+  zonesOnSheet: {
+    id: string;
+    ahuPoint: NormPoint;
+    ahuOwnRoomId: string | null;
+    targetRoomIds: string[];
+  }[],
+): Map<string, RoutedDuctSegment[]> | null {
+  const extractedRooms = extractedData?.rooms ?? [];
+  const sheetName = extractedData?.sheets?.find((s) => s.page_number === pageNumber)?.name ?? null;
+
+  const scaleSampleRooms: ScaleSampleRoom[] = (sheetName != null ? extractedRooms.filter((er) => er.source_sheet === sheetName) : []).map(
+    (er) => ({
+      wallPageHorizontalLenFt: er.wall_page_horizontal_len_ft,
+      wallPageVerticalLenFt: er.wall_page_vertical_len_ft,
+      widthNorm: er.room_position?.width_norm ?? null,
+      heightNorm: er.room_position?.height_norm ?? null,
+    }),
+  );
+  const scale = derivePageScale(scaleSampleRooms, pageWidthPt, pageHeightPt);
+  if (scale.feetPerPagePoint == null) return null;
+  const pageWidthFt = scale.feetPerPagePoint * pageWidthPt;
+  const pageHeightFt = scale.feetPerPagePoint * pageHeightPt;
+
+  const extractedBoxes = sheetName != null ? extractedRoomBoxesForPage(extractedRooms, sheetName) : [];
+  const roomBoxes = resolveSheetRoomBoxes(roomsOnSheet, extractedBoxes);
+  const allBoxes = [...roomBoxes.values()];
+  const roomById = new Map(roomsOnSheet.map((r) => [r.id, r]));
+
+  const result = new Map<string, RoutedDuctSegment[]>();
+  for (const zone of zonesOnSheet) {
+    const ahuBox = (zone.ahuOwnRoomId ? roomBoxes.get(zone.ahuOwnRoomId) : null) ?? fallbackRoomBox(zone.ahuPoint);
+    const targets = zone.targetRoomIds
+      .map((id) => {
+        const room = roomById.get(id);
+        return room ? { roomId: id, point: { xNorm: room.xNorm, yNorm: room.yNorm } } : null;
+      })
+      .filter((t): t is { roomId: string; point: NormPoint } => t != null);
+    const routed = routeSheetDucts(zone.ahuPoint, ahuBox, targets, roomBoxes, allBoxes, pageWidthFt, pageHeightFt);
+    for (const [roomId, segments] of routed) result.set(roomId, segments);
+  }
+  return result;
+}
+
+// -----------------------------------------------------------------------
+// Raw routed segments -> real drafting primitives: a deduped segment set
+// (the same shared trunk cell can appear once per room whose path used
+// it - collapsed to a single drawn line, keeping the HIGHEST-hierarchy
+// classification whenever the same physical run got two different
+// classifications from two different rooms' paths) plus real elbow/tee
+// fitting positions derived from actual vertex degree in the network -
+// not guessed, not "wherever two lines happen to cross," an honest graph
+// read of where runs actually join. Shared by both renderers so a fix
+// here fixes both at once, same pattern as layoutDuctRoutingLabels.
+// -----------------------------------------------------------------------
+
+export type DuctNetworkPrimitives = {
+  segments: RoutedDuctSegment[];
+  elbows: NormPoint[];
+  tees: NormPoint[];
+};
+
+const CLASS_RANK: Record<SegmentClass, number> = { trunk: 3, branch: 2, runout: 1 };
+
+export function buildDuctNetworkPrimitives(allSegments: RoutedDuctSegment[]): DuctNetworkPrimitives {
+  const round = (n: number) => Math.round(n * 10000) / 10000;
+  const segKey = (s: RoutedDuctSegment) => {
+    const a = `${round(s.fromXNorm)},${round(s.fromYNorm)}`;
+    const b = `${round(s.toXNorm)},${round(s.toYNorm)}`;
+    return a < b ? `${a}|${b}` : `${b}|${a}`;
+  };
+  const bestByKey = new Map<string, RoutedDuctSegment>();
+  for (const seg of allSegments) {
+    const key = segKey(seg);
+    const existing = bestByKey.get(key);
+    if (!existing || CLASS_RANK[seg.cls] > CLASS_RANK[existing.cls]) bestByKey.set(key, seg);
+  }
+  const segments = [...bestByKey.values()];
+
+  type VertexEntry = { point: NormPoint; dirs: Set<string> };
+  const adjacency = new Map<string, VertexEntry>();
+  const pointKey = (x: number, y: number) => `${round(x)},${round(y)}`;
+  const addVertex = (x: number, y: number, dir: string) => {
+    const key = pointKey(x, y);
+    let entry = adjacency.get(key);
+    if (!entry) {
+      entry = { point: { xNorm: x, yNorm: y }, dirs: new Set() };
+      adjacency.set(key, entry);
+    }
+    entry.dirs.add(dir);
+  };
+  const OPPOSITE: Record<string, string> = { up: "down", down: "up", left: "right", right: "left" };
+  for (const seg of segments) {
+    const dx = seg.toXNorm - seg.fromXNorm;
+    const dy = seg.toYNorm - seg.fromYNorm;
+    const dir = dx === 0 ? (dy > 0 ? "down" : "up") : dx > 0 ? "right" : "left";
+    addVertex(seg.fromXNorm, seg.fromYNorm, dir);
+    addVertex(seg.toXNorm, seg.toYNorm, OPPOSITE[dir]);
+  }
+
+  const elbows: NormPoint[] = [];
+  const tees: NormPoint[] = [];
+  for (const entry of adjacency.values()) {
+    const degree = entry.dirs.size;
+    if (degree >= 3) {
+      tees.push(entry.point);
+    } else if (degree === 2) {
+      const [a, b] = [...entry.dirs];
+      const isStraightThrough = OPPOSITE[a] === b;
+      if (!isStraightThrough) elbows.push(entry.point);
+    }
+  }
+  return { segments, elbows, tees };
 }

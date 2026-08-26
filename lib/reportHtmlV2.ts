@@ -28,7 +28,7 @@ import { computeRequiredCfmForRooms } from "./manualD";
 import type { Compass8 } from "./constants/compass";
 import type { DrawingExtraction } from "./drawingExtraction";
 import { getEmbeddedFontFaces } from "./reportFonts";
-import { layoutDuctRoutingLabels } from "./ductRouting";
+import { layoutDuctRoutingLabels, buildDuctNetworkPrimitives, type RoutedDuctSegment } from "./ductRouting";
 
 export type OrgBranding = {
   name: string;
@@ -533,28 +533,25 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     );
   }
 
-  // Redesigned 2026-08-25 against 4 real Wrightsoft/AutoCAD Manual D
-  // duct diagrams the user supplied as the target standard. Adopts that
-  // convention directly: supply duct = red, return = green (a single
-  // central return near the AHU - this app doesn't model per-room
-  // return grilles, disclosed below), duct size AND CFM printed along
-  // each run (not just at the register), room names, a real symbol
-  // legend. Zone identity is carried by which sheet/page a zone's rooms
-  // are on (real projects put different zones on different floor-plan
-  // sheets already) rather than competing with supply/return for the
-  // line-color channel.
-  //
-  // Deliberately NOT drawn: a shared trunk-and-branch backbone path like
-  // the reference images show. This app's routing engine computes
-  // home-run (radial AHU-to-register) branches, not a shared trunk path
-  // - drawing a fake spine to visually match the reference would
-  // misrepresent the real sizing basis. What IS real and shown: each
-  // zone's actual computed trunk/plenum size, as a short labeled stub at
-  // the AHU icon. A true shared-backbone router is a separate, larger
-  // effort, flagged not built here.
+  // Rebuilt 2026-08-25 against 4 real Wrightsoft/AutoCAD Manual D duct
+  // diagrams the user supplied as the target standard: real orthogonal
+  // trunk-and-branch routing (lib/ductPathGeometry.ts/lib/ductRouting.ts's
+  // computeSheetDuctRouting, computed at snapshot time by
+  // lib/reportImages.ts's attachFrozenImages, since it needs a real
+  // rendered page's dimensions), a visible trunk/branch/run-out line-
+  // weight hierarchy, real elbow/tee fitting symbols at actual routing
+  // junctions (buildDuctNetworkPrimitives), per-zone background tinting,
+  // and collision-avoided labels with leader lines for anything pushed
+  // off its natural position. Shares every one of these functions with
+  // the live in-app diagram (components/duct-routing-diagram.tsx) so a
+  // fix in one place fixes both - only the string-vs-JSX rendering
+  // syntax differs, same client/server split this module already uses.
   const SUPPLY_COLOR = "#c0392b";
   const RETURN_COLOR = "#2f8f4f";
   const SYMBOL_INK = "#1c2b3a";
+  const SEGMENT_WIDTH: Record<RoutedDuctSegment["cls"], number> = { trunk: 1.1, branch: 0.7, runout: 0.42 };
+  const ZONE_TINTS = ["#fde68a", "#93c5fd", "#86efac", "#f9a8d4", "#c4b5fd", "#fca5a5"];
+  const allZoneIds = [...new Set(sheets.flatMap((s) => s.pins.map((p) => p.zoneId)))];
 
   const body = sheets
     .map((sheet, sheetIndex) => {
@@ -562,44 +559,70 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
           <div class="callout">This sheet's source image could not be rendered for this report.</div>`;
       }
-      // Manhattan (right-angle) polyline, not a diagonal line - matches
-      // how the run's own real length was computed (lib/ductRouting.ts's
-      // computeRoutedBranchRun) and how the duct is actually installed.
-      const routeLines = sheet.routes
-        .map((route) => {
-          const x1 = route.fromXNorm * 100;
-          const y1 = route.fromYNorm * 100;
-          const x2 = route.toXNorm * 100;
-          const y2 = route.toYNorm * 100;
-          const straight = Math.abs(x1 - x2) < 0.2 || Math.abs(y1 - y2) < 0.2;
-          const points = straight ? `${x1},${y1} ${x2},${y2}` : `${x1},${y1} ${x1},${y2} ${x2},${y2}`;
-          // No vector-effect="non-scaling-stroke" (diagnosed 2026-08-25
-          // via a real rendered screenshot, not just code review) - it
-          // makes the stroke width immune to the SVG's own viewBox
-          // scale, which for a 0-100 viewBox stretched over a ~1700px
-          // image renders as a hairline under 1 real pixel wide -
-          // effectively invisible.
-          return `<polyline points="${points}" fill="none" stroke="${SUPPLY_COLOR}" stroke-width="0.55" stroke-linecap="round" />`;
-        })
+
+      const sheetZoneIds = [...new Set(sheet.pins.map((p) => p.zoneId))];
+      const zoneTint =
+        sheetZoneIds.length === 1 ? ZONE_TINTS[allZoneIds.indexOf(sheetZoneIds[0]) % ZONE_TINTS.length] : null;
+      const zoneTintRect = zoneTint
+        ? `<rect x="0" y="0" width="100" height="100" fill="${zoneTint}" opacity="0.22" />`
+        : "";
+
+      const primitives = buildDuctNetworkPrimitives(sheet.routedSegments ?? []);
+      const routingNotice =
+        sheet.routedSegments == null
+          ? `<p class="muted" style="margin-top:4px;">Couldn't derive a real-world scale for this sheet (no room has both a known printed dimension and a placed pin) - showing pins without routed duct lines.</p>`
+          : "";
+
+      // Real routed segments (not a diagonal home-run line) - matches
+      // how each run's own real length was computed
+      // (lib/ductRouting.ts's computeRoutedBranchRun) and how the duct
+      // is actually installed: orthogonal, following the open space
+      // between rooms, never cutting through a room it doesn't serve.
+      // No vector-effect="non-scaling-stroke" (diagnosed 2026-08-25 via
+      // a real rendered screenshot, not just code review) - it makes the
+      // stroke width immune to the SVG's own viewBox scale, which for a
+      // 0-100 viewBox stretched over a ~1700px image renders as a
+      // hairline under 1 real pixel wide - effectively invisible.
+      const routeLines = primitives.segments
+        .map(
+          (seg) =>
+            `<line x1="${(seg.fromXNorm * 100).toFixed(3)}" y1="${(seg.fromYNorm * 100).toFixed(3)}" x2="${(seg.toXNorm * 100).toFixed(3)}" y2="${(seg.toYNorm * 100).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="${SEGMENT_WIDTH[seg.cls]}" stroke-linecap="round" />`,
+        )
+        .join("");
+
+      // Real fitting symbols at real graph junctions (see
+      // buildDuctNetworkPrimitives) - a filled circle at a 90-degree
+      // elbow, a filled square at a branch takeoff (3-way tee), matching
+      // the reference sheets' own fitting convention.
+      const elbowSymbols = primitives.elbows
+        .map((p) => `<circle cx="${(p.xNorm * 100).toFixed(3)}" cy="${(p.yNorm * 100).toFixed(3)}" r="0.4" fill="${SUPPLY_COLOR}" />`)
+        .join("");
+      const teeSymbols = primitives.tees
+        .map(
+          (p) =>
+            `<rect x="${(p.xNorm * 100 - 0.5).toFixed(3)}" y="${(p.yNorm * 100 - 0.5).toFixed(3)}" width="1" height="1" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="0.15" />`,
+        )
         .join("");
 
       // Real collision-avoided label positions (see
       // lib/ductRouting.ts's layoutDuctRoutingLabels) - shared with the
-      // live in-app diagram so both stay in sync. Replaces the old fixed
-      // 35%/65%-along-the-line placement, which had no check against any
-      // other label and stacked multiple CFM/size numbers directly on
-      // top of each other wherever rooms cluster tightly on the real
-      // floor plan (diagnosed 2026-08-25 against a real rendered
-      // screenshot). Run labels are now anchored at the register end,
-      // per the original "mark the CFM information at the register"
-      // instruction, which is also what spreads them apart spatially in
-      // the first place.
+      // live in-app diagram so both stay in sync. Run labels anchor at
+      // the register end, per the original "mark the CFM information at
+      // the register" instruction, which is also what spreads them
+      // apart spatially in the first place. A short dashed leader line
+      // is drawn back to the real feature (register/AHU/room pin)
+      // whenever decluttering pushed a label meaningfully away from it.
       const labels = layoutDuctRoutingLabels(sheet)
         .map((label) => {
           const fontSize = label.kind === "room" ? 1.7 : label.kind === "trunk" ? 1.5 : 1.6;
           const fontWeight = label.kind === "room" ? 600 : 700;
           const fill = label.kind === "room" ? "#1f3a5f" : SUPPLY_COLOR;
-          return `<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
+          const leaderDistance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
+          const leader =
+            leaderDistance > 3.5
+              ? `<line x1="${label.anchorX.toFixed(3)}" y1="${label.anchorY.toFixed(3)}" x2="${(label.textAnchor === "middle" ? label.x : label.x - 0.6).toFixed(3)}" y2="${(label.y - fontSize * 0.35).toFixed(3)}" stroke="${fill}" stroke-width="0.18" stroke-dasharray="0.6,0.5" />`
+              : "";
+          return `${leader}<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
         })
         .join("");
 
@@ -632,10 +655,14 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         .join("");
 
       return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
+        ${routingNotice}
         <div style="position:relative;display:inline-block;">
           <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};filter:grayscale(1) brightness(1.55) contrast(0.82);" />
           <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
+            ${zoneTintRect}
             ${routeLines}
+            ${elbowSymbols}
+            ${teeSymbols}
             ${pinIcons}
             ${labels}
           </svg>
@@ -649,20 +676,25 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     `${body}
      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:18px;align-items:center;border:1px solid ${BRAND.grid};border-radius:6px;padding:10px 14px;font-size:11px;color:${BRAND.inkSoft};">
        <strong style="color:${BRAND.ink};">Legend</strong>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="2" /></svg> Supply duct (size / CFM labeled on the run)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="3" /></svg> Trunk</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1.8" /></svg> Branch</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1" /></svg> Run-out (size / CFM at the register)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${RETURN_COLOR}" /></svg> Return air (single central return)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="1" y="1" width="12" height="12" fill="${SYMBOL_INK}" /></svg> AHU / mechanical equipment</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="1.2" /></svg> Supply register (one-way)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="4" y="4" width="6" height="6" fill="${SYMBOL_INK}" /></svg> Branch takeoff (tee)</span>
      </div>
      <p class="muted" style="margin-top:8px;">
-       Routed paths follow the same right-angle (Manhattan) geometry used to compute each run's real length and
-       size in the Manual D schedule - ductwork runs along framing, not diagonally through it. Each branch
-       currently routes independently to the AHU (home-run); a shared trunk-and-branch backbone is not yet
-       modeled - the AHU's own real trunk/plenum size is shown as the short labeled stub at its icon. Return air
-       uses a single central return near the AHU per standard residential practice; this app does not currently
-       model per-room return grilles separately. Pin positions were confirmed or placed by a technician against
-       the actual source drawing - never AI-inferred without confirmation (see the Audit Trail page for who
-       resolved each one and when).
+       Routed paths follow real orthogonal geometry through the open space between rooms - a shared trunk near
+       the AHU with branches peeling off at right angles to each register, computed from each room's real
+       extracted bounding box (matched to its confirmed pin position, not by name - see
+       lib/ductPathGeometry.ts for why) so a run never cuts through a room it doesn't serve. Line weight marks
+       real hierarchy: heavier where more registers' air travels the same run, lighter down to each individual
+       run-out. This is axis-aligned room-box obstacle avoidance from real extracted geometry, not a full
+       wall/door-vector CAD routing engine - disclosed, not hidden. Return air uses a single central return near
+       the AHU per standard residential practice; this app does not currently model per-room return grilles
+       separately. Pin positions were confirmed or placed by a technician against the actual source drawing -
+       never AI-inferred without confirmation (see the Audit Trail page for who resolved each one and when).
      </p>`,
     projectAddress(data),
   );

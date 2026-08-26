@@ -46,6 +46,7 @@ import { latestResolutions, type FieldResolution } from "./fieldResolutions";
 import { resolveCounty, resolveLatLong } from "./countyLookup";
 import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessment";
 import type { CompassDirection } from "./solarIrradiance";
+import type { RoutedDuctSegment } from "./ductRouting";
 
 export type ReportProject = {
   id: string;
@@ -109,6 +110,7 @@ export type DuctRoutingIllustrationPin = {
   trunkCfm?: number | null;
 };
 export type DuctRoutingIllustrationRoute = {
+  roomId: string;
   roomName: string;
   fromXNorm: number;
   fromYNorm: number;
@@ -126,6 +128,13 @@ export type DuctRoutingSheetIllustration = {
   imageDataUri: string | null;
   pins: DuctRoutingIllustrationPin[];
   routes: DuctRoutingIllustrationRoute[];
+  // Real orthogonal, room-avoiding routed duct segments (see
+  // lib/ductPathGeometry.ts/lib/ductRouting.ts's computeSheetDuctRouting)
+  // - null until lib/reportImages.ts's attachFrozenImages fills it in at
+  // snapshot-creation time, the same "needs a real rendered page, so
+  // deferred past this cheap aggregation pass" reason imageDataUri is
+  // null here too (see that field's own comment above).
+  routedSegments: RoutedDuctSegment[] | null;
 };
 
 export function buildDuctRoutingIllustrations(
@@ -173,6 +182,7 @@ export function buildDuctRoutingIllustrations(
         imageDataUri: null,
         pins: [],
         routes: [],
+        routedSegments: null,
       };
       bySheet.set(sheetKey, sheet);
       const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
@@ -210,6 +220,7 @@ export function buildDuctRoutingIllustrations(
       const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
       const sized = run ? sizedByRunId.get(run.id) : undefined;
       sheet.routes.push({
+        roomId: room.id,
         roomName: room.name,
         fromXNorm: zone.ahu_position_x_norm,
         fromYNorm: zone.ahu_position_y_norm,

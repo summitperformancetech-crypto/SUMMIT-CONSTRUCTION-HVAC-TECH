@@ -702,7 +702,7 @@ export function DuctDesignSection({
           <p className="mb-3 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
             Duct Routing Diagram
           </p>
-          <DuctRoutingDiagram sheets={liveIllustrationSheets} />
+          <DuctRoutingDiagram sheets={liveIllustrationSheets} rooms={rooms} zones={zones} drawings={drawings} />
         </div>
       </div>
 

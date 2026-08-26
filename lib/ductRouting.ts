@@ -857,6 +857,31 @@ export type DuctDiffuserRow = {
   source: "ai_extracted" | "manual";
 };
 
+// One row per AHU/zone (ahu_installation_detail table) - real physical
+// install detail beyond duct sizing: plenum, takeoffs, fresh air/ODA,
+// refrigerant lines, condensate routing, return platform, dampers. Every
+// field nullable - a tech enters what's actually known; nothing here is
+// ever inferred or defaulted, per this app's standing null-means-unknown
+// convention (see the 20260826010000 migration's own comments for the
+// real, cited code minimums a UI should surface as help text next to
+// condensate_routing_note/damper_types, never as a fabricated pass/fail).
+export type AhuInstallationDetailRow = {
+  id: string;
+  project_id: string;
+  zone_id: string;
+  plenum_size: string | null;
+  supply_takeoff_sizes: string[] | null;
+  fresh_air_duct_size: string | null;
+  oda_termination_id: string | null;
+  refrigerant_vapor_line_in: number | null;
+  refrigerant_liquid_line_in: number | null;
+  condensate_routing_note: string | null;
+  return_platform_construction: string | null;
+  return_platform_insulation_r: number | null;
+  filter_backed_return_specs: string[] | null;
+  damper_types: string[] | null;
+};
+
 export function formatDuctSizeCfm(diameterIn: number | null | undefined, cfm: number | null | undefined): string {
   const sizeText = diameterIn ? `${diameterIn}"⌀` : null;
   const cfmText = cfm != null ? `${Math.round(cfm)} cfm` : null;

@@ -46,7 +46,12 @@ import { latestResolutions, type FieldResolution } from "./fieldResolutions";
 import { resolveCounty, resolveLatLong } from "./countyLookup";
 import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessment";
 import type { CompassDirection } from "./solarIrradiance";
-import { DIFFUSER_PATTERN_TAG_CODES, type DuctDiffuserRow, type RoutedDuctSegment } from "./ductRouting";
+import {
+  DIFFUSER_PATTERN_TAG_CODES,
+  type DuctDiffuserRow,
+  type AhuInstallationDetailRow,
+  type RoutedDuctSegment,
+} from "./ductRouting";
 import type { CorridorGraph } from "./ductCorridorGraph";
 
 export type ReportProject = {
@@ -402,6 +407,11 @@ export type ReportData = {
     // resolved AHU pin with at least one resolved room pin on the same
     // sheet.
     ductRoutingIllustration: DuctRoutingSheetIllustration[];
+    // Real, project-entered AHU physical install detail (Manual D
+    // Schematic Diagram Generator, Section 6) - one entry per zone that
+    // has a row; a zone with none renders its report block as "not yet
+    // specified" per field, never a fabricated default.
+    ahuInstallationDetails: AhuInstallationDetailRow[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -418,6 +428,8 @@ const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
+const AHU_INSTALLATION_DETAIL_COLUMNS =
+  "id, project_id, zone_id, plenum_size, supply_takeoff_sizes, fresh_air_duct_size, oda_termination_id, refrigerant_vapor_line_in, refrigerant_liquid_line_in, condensate_routing_note, return_platform_construction, return_platform_insulation_r, filter_backed_return_specs, damper_types";
 const COMMERCIAL_ZONE_COLUMNS =
   "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, ceiling_height_ft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc, cleanroom_class";
 const EQUIPMENT_CATALOG_COLUMNS =
@@ -500,8 +512,14 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   let commercial: ReportData["commercial"] = null;
 
   if (project.project_type === "residential" && climateZone) {
-    const [{ data: rooms }, { data: zones }, { data: roomTypeDefaults }, { data: ductRuns }, { data: ductDiffusers }] =
-      await Promise.all([
+    const [
+      { data: rooms },
+      { data: zones },
+      { data: roomTypeDefaults },
+      { data: ductRuns },
+      { data: ductDiffusers },
+      { data: ahuInstallationDetails },
+    ] = await Promise.all([
         supabase
           .from("rooms")
           .select(ROOM_COLUMNS)
@@ -532,6 +550,11 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
           .eq("project_id", projectId)
           .order("created_at", { ascending: true })
           .returns<DuctDiffuserRow[]>(),
+        supabase
+          .from("ahu_installation_detail")
+          .select(AHU_INSTALLATION_DETAIL_COLUMNS)
+          .eq("project_id", projectId)
+          .returns<AhuInstallationDetailRow[]>(),
       ]);
 
     const envelope: ManualJEnvelope = {
@@ -826,6 +849,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         illustrationCfmByRoom,
         ductDiffusers ?? [],
       ),
+      ahuInstallationDetails: ahuInstallationDetails ?? [],
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&

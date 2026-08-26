@@ -34,6 +34,7 @@ import {
   computeSheetCropViewBox,
   getDiffuserSymbolSpec,
   type RoutedDuctSegment,
+  type AhuInstallationDetailRow,
 } from "./ductRouting";
 
 export type OrgBranding = {
@@ -794,13 +795,68 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
        lib/ductPathGeometry.ts for why) so a run never cuts through a room it doesn't serve. Line weight marks
        real hierarchy: heavier where more registers' air travels the same run, lighter down to each individual
        run-out. This is axis-aligned room-box obstacle avoidance from real extracted geometry, not a full
-       wall/door-vector CAD routing engine - disclosed, not hidden. Return air uses a single central return near
-       the AHU per standard residential practice; this app does not currently model per-room return grilles
-       separately. Pin positions were confirmed or placed by a technician against the actual source drawing -
-       never AI-inferred without confirmation (see the Audit Trail page for who resolved each one and when).
-     </p>`,
+       wall/door-vector CAD routing engine - disclosed, not hidden. Each zone's own confirmed return-air pin is
+       always shown; additional per-room supply or return diffusers render when a technician has entered real
+       duct_diffusers records for them (see the Diffusers &amp; Registers panel in Duct Design) - a room with none
+       yet still shows the generic default this diagram always used. Pin positions were confirmed or placed by a
+       technician against the actual source drawing - never AI-inferred without confirmation (see the Audit Trail
+       page for who resolved each one and when).
+     </p>
+     ${data.residential!.zones.map((zone) => renderAhuInstallationDetailBlock(zone, data.residential!.ahuInstallationDetails.find((d) => d.zone_id === zone.id) ?? null, org)).join("")}`,
     projectAddress(data),
   );
+}
+
+// Manual D Schematic Diagram Generator, Section 6 - a standard template
+// layout generated from ahu_installation_detail, not hand-drawn per
+// project. Every field renders "Not yet specified" when null rather than
+// a fabricated default - this is real install detail a technician enters
+// once, not something derivable from Manual J/D/S calc output.
+function renderAhuInstallationDetailBlock(
+  zone: { id: string; name: string; ahu_label: string | null },
+  detail: AhuInstallationDetailRow | null,
+  org: OrgBranding,
+): string {
+  const field = (label: string, value: string | number | null | undefined, unit = "") =>
+    `<div class="stat"><div class="stat-label">${esc(label)}</div><div class="stat-value" style="font-size:13px;">${
+      value != null && value !== "" ? `${esc(String(value))}${unit}` : '<span class="muted">Not yet specified</span>'
+    }</div></div>`;
+
+  const takeoffs = detail?.supply_takeoff_sizes?.length ? detail.supply_takeoff_sizes.join(", ") : null;
+  const filterReturns = detail?.filter_backed_return_specs?.length ? detail.filter_backed_return_specs.join("; ") : null;
+  const dampers = detail?.damper_types?.length ? detail.damper_types.join("; ") : null;
+
+  return `<div style="page-break-before:always;"></div>
+    <div class="section-title">AHU Installation Detail — ${esc(zone.ahu_label ?? zone.name)}</div>
+    <div class="panel-grid">
+      ${field("Plenum size", detail?.plenum_size)}
+      ${field("Supply takeoff sizes", takeoffs)}
+      ${field("Fresh air / ODA duct size", detail?.fresh_air_duct_size)}
+      ${field("Refrigerant vapor line", detail?.refrigerant_vapor_line_in, '"')}
+      ${field("Refrigerant liquid line", detail?.refrigerant_liquid_line_in, '"')}
+      ${field("Return platform construction", detail?.return_platform_construction)}
+      ${field("Return platform insulation", detail?.return_platform_insulation_r, " R-value")}
+    </div>
+    <div class="section-title" style="margin-top:10px;font-size:12px;">Condensate Routing</div>
+    <div class="callout" style="font-size:11px;">
+      ${detail?.condensate_routing_note ? esc(detail.condensate_routing_note) : '<span class="muted">Not yet specified.</span>'}
+      <div class="muted" style="margin-top:6px;font-size:10px;">
+        Code minimum: IMC 307.2.1 requires a minimum slope of 1/8 in. per 12 in. horizontal (1%) toward the point
+        of disposal, trapped per the equipment manufacturer's instructions - this note documents the technician's
+        actual routing, not an automated compliance check.
+      </div>
+    </div>
+    <div class="section-title" style="margin-top:10px;font-size:12px;">Filter-Backed Return Grille(s)</div>
+    <p style="font-size:11px;">${filterReturns ? esc(filterReturns) : '<span class="muted">Not yet specified.</span>'}</p>
+    <div class="section-title" style="margin-top:10px;font-size:12px;">Dampers</div>
+    <p style="font-size:11px;">
+      ${dampers ? esc(dampers) : '<span class="muted">Not yet specified.</span>'}
+      <span class="muted" style="display:block;font-size:10px;margin-top:4px;">
+        IMC 608.1 requires a means to adjust air volume in branch/distribution ductwork - a manual balancing
+        damper at each branch takeoff is the standard baseline method.
+      </span>
+    </p>
+    <div class="muted" style="font-size:10px;margin-top:10px;">${esc(org.name)} — real technician-entered installation detail, not calculated.</div>`;
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ import {
   DIFFUSER_PATTERN_OPTIONS,
   type ScaleSampleRoom,
   type DuctDiffuserRow,
+  type AhuInstallationDetailRow,
 } from "@/lib/ductRouting";
 import { DuctRoutingDiagram } from "@/components/duct-routing-diagram";
 import type { RoomLoadResult } from "@/lib/manualJ";
@@ -59,6 +60,8 @@ export const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 export const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
+export const AHU_INSTALLATION_DETAIL_COLUMNS =
+  "id, project_id, zone_id, plenum_size, supply_takeoff_sizes, fresh_air_duct_size, oda_termination_id, refrigerant_vapor_line_in, refrigerant_liquid_line_in, condensate_routing_note, return_platform_construction, return_platform_insulation_r, filter_backed_return_specs, damper_types";
 
 const MATERIAL_OPTIONS = [
   { value: "flex", label: "Flex" },
@@ -138,6 +141,42 @@ const EMPTY_DIFFUSER_FORM: DiffuserFormValues = {
   model: "",
 };
 
+type AhuDetailFormValues = {
+  plenum_size: string;
+  supply_takeoff_sizes: string;
+  fresh_air_duct_size: string;
+  refrigerant_vapor_line_in: string;
+  refrigerant_liquid_line_in: string;
+  condensate_routing_note: string;
+  return_platform_construction: string;
+  return_platform_insulation_r: string;
+  filter_backed_return_specs: string;
+  damper_types: string;
+};
+
+function ahuDetailToForm(detail: AhuInstallationDetailRow | undefined): AhuDetailFormValues {
+  return {
+    plenum_size: detail?.plenum_size ?? "",
+    supply_takeoff_sizes: detail?.supply_takeoff_sizes?.join(", ") ?? "",
+    fresh_air_duct_size: detail?.fresh_air_duct_size ?? "",
+    refrigerant_vapor_line_in: detail?.refrigerant_vapor_line_in?.toString() ?? "",
+    refrigerant_liquid_line_in: detail?.refrigerant_liquid_line_in?.toString() ?? "",
+    condensate_routing_note: detail?.condensate_routing_note ?? "",
+    return_platform_construction: detail?.return_platform_construction ?? "",
+    return_platform_insulation_r: detail?.return_platform_insulation_r?.toString() ?? "",
+    filter_backed_return_specs: detail?.filter_backed_return_specs?.join("; ") ?? "",
+    damper_types: detail?.damper_types?.join("; ") ?? "",
+  };
+}
+
+function splitToArrayOrNull(value: string, separator: string): string[] | null {
+  const items = value
+    .split(separator)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return items.length > 0 ? items : null;
+}
+
 export function DuctDesignSection({
   projectId,
   rooms,
@@ -153,6 +192,7 @@ export function DuctDesignSection({
   initialGrillesRegistersLossIwc,
   initialDuctRuns,
   initialDuctDiffusers,
+  initialAhuInstallationDetails,
   ductSizingTable,
   ductInsulationCodeMinimums,
 }: {
@@ -170,6 +210,7 @@ export function DuctDesignSection({
   initialGrillesRegistersLossIwc: number | null;
   initialDuctRuns: DuctRunRow[];
   initialDuctDiffusers: DuctDiffuserRow[];
+  initialAhuInstallationDetails: AhuInstallationDetailRow[];
   ductSizingTable: DuctSizingTableRow[];
   // Data Integrity Addendum, Section 3 - duct_location -> current code
   // minimum R-value, for the compliance badge below. Plain array (not the
@@ -237,6 +278,13 @@ export function DuctDesignSection({
   const [diffuserForm, setDiffuserForm] = useState<DiffuserFormValues>(EMPTY_DIFFUSER_FORM);
   const [diffuserError, setDiffuserError] = useState<string | null>(null);
   const [diffuserSaving, setDiffuserSaving] = useState(false);
+
+  const [ahuDetails, setAhuDetails] = useState<AhuInstallationDetailRow[]>(initialAhuInstallationDetails);
+  const [ahuDetailForms, setAhuDetailForms] = useState<Record<string, AhuDetailFormValues>>(() =>
+    Object.fromEntries(zones.map((z) => [z.id, ahuDetailToForm(initialAhuInstallationDetails.find((d) => d.zone_id === z.id))])),
+  );
+  const [ahuDetailSavingZoneId, setAhuDetailSavingZoneId] = useState<string | null>(null);
+  const [ahuDetailError, setAhuDetailError] = useState<string | null>(null);
 
   const availableStaticPressureIwc = toNullableNumber(staticPressureForm);
   const supplyAirTempF = toNullableNumber(supplyAirTempForm);
@@ -775,6 +823,45 @@ export function DuctDesignSection({
       setDiffuserError(
         err instanceof Error ? err.message : "Failed to delete diffuser - check your connection and try again.",
       );
+    }
+  }
+
+  async function handleSaveAhuDetail(zoneId: string) {
+    setAhuDetailSavingZoneId(zoneId);
+    setAhuDetailError(null);
+    try {
+      const form = ahuDetailForms[zoneId];
+      const supabase = createClient();
+      const payload = {
+        project_id: projectId,
+        zone_id: zoneId,
+        plenum_size: form.plenum_size || null,
+        supply_takeoff_sizes: splitToArrayOrNull(form.supply_takeoff_sizes, ","),
+        fresh_air_duct_size: form.fresh_air_duct_size || null,
+        refrigerant_vapor_line_in: toNullableNumber(form.refrigerant_vapor_line_in),
+        refrigerant_liquid_line_in: toNullableNumber(form.refrigerant_liquid_line_in),
+        condensate_routing_note: form.condensate_routing_note || null,
+        return_platform_construction: form.return_platform_construction || null,
+        return_platform_insulation_r: toNullableNumber(form.return_platform_insulation_r),
+        filter_backed_return_specs: splitToArrayOrNull(form.filter_backed_return_specs, ";"),
+        damper_types: splitToArrayOrNull(form.damper_types, ";"),
+      };
+      const { data, error } = await supabase
+        .from("ahu_installation_detail")
+        .upsert(payload, { onConflict: "zone_id" })
+        .select(AHU_INSTALLATION_DETAIL_COLUMNS)
+        .single<AhuInstallationDetailRow>();
+      if (error || !data) {
+        setAhuDetailError(error?.message ?? "Failed to save AHU installation detail.");
+        return;
+      }
+      setAhuDetails((prev) => [...prev.filter((d) => d.zone_id !== zoneId), data]);
+    } catch (err) {
+      setAhuDetailError(
+        err instanceof Error ? err.message : "Failed to save AHU installation detail - check your connection and try again.",
+      );
+    } finally {
+      setAhuDetailSavingZoneId(null);
     }
   }
 
@@ -1401,6 +1488,156 @@ export function DuctDesignSection({
           </div>
         )
       )}
+
+      <div className="mb-4 mt-8 border-t border-zinc-800 pt-6">
+        <h3 className="text-sm font-semibold text-brand-silver-highlight">AHU Installation Detail</h3>
+        <p className="mt-1 text-xs text-brand-grey-text">
+          Real physical install detail per air handler - plenum, takeoffs, fresh air duct, refrigerant lines,
+          condensate routing, return platform, and dampers. Every field is optional; blank means not yet
+          entered, never a fabricated default.
+        </p>
+      </div>
+
+      {ahuDetailError && (
+        <p className="mb-4 text-sm text-red-400" role="alert">
+          {ahuDetailError}
+        </p>
+      )}
+
+      {zones.map((zone) => {
+        const form = ahuDetailForms[zone.id] ?? ahuDetailToForm(undefined);
+        const alreadySaved = ahuDetails.some((d) => d.zone_id === zone.id);
+        return (
+          <div key={zone.id} className="mb-4 space-y-3 rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium text-brand-silver-highlight">{zone.ahu_label ?? zone.name}</h4>
+              {alreadySaved && <span className="text-xs text-brand-gold">Saved</span>}
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-brand-grey-text">Plenum size</label>
+                <input
+                  type="text"
+                  placeholder='e.g. 20x20x24"'
+                  value={form.plenum_size}
+                  onChange={(e) =>
+                    setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], plenum_size: e.target.value } }))
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-brand-grey-text">
+                  Supply takeoff sizes (comma-separated)
+                </label>
+                <input
+                  type="text"
+                  placeholder='e.g. 8", 7", 6", 6"'
+                  value={form.supply_takeoff_sizes}
+                  onChange={(e) =>
+                    setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], supply_takeoff_sizes: e.target.value } }))
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-brand-grey-text">Fresh air / ODA duct size</label>
+                <input
+                  type="text"
+                  value={form.fresh_air_duct_size}
+                  onChange={(e) =>
+                    setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], fresh_air_duct_size: e.target.value } }))
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+                />
+              </div>
+              <NumberField
+                label="Refrigerant vapor line (in)"
+                value={form.refrigerant_vapor_line_in}
+                onChange={(v) => setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], refrigerant_vapor_line_in: v } }))}
+              />
+              <NumberField
+                label="Refrigerant liquid line (in)"
+                value={form.refrigerant_liquid_line_in}
+                onChange={(v) => setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], refrigerant_liquid_line_in: v } }))}
+              />
+              <div>
+                <label className="mb-1 block text-xs font-medium text-brand-grey-text">Return platform construction</label>
+                <input
+                  type="text"
+                  value={form.return_platform_construction}
+                  onChange={(e) =>
+                    setAhuDetailForms((prev) => ({
+                      ...prev,
+                      [zone.id]: { ...prev[zone.id], return_platform_construction: e.target.value },
+                    }))
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+                />
+              </div>
+              <NumberField
+                label="Return platform insulation (R-value)"
+                value={form.return_platform_insulation_r}
+                onChange={(v) =>
+                  setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], return_platform_insulation_r: v } }))
+                }
+              />
+              <div>
+                <label className="mb-1 block text-xs font-medium text-brand-grey-text">
+                  Filter-backed return specs (semicolon-separated)
+                </label>
+                <input
+                  type="text"
+                  placeholder='e.g. 20x20 @ 8in AFF'
+                  value={form.filter_backed_return_specs}
+                  onChange={(e) =>
+                    setAhuDetailForms((prev) => ({
+                      ...prev,
+                      [zone.id]: { ...prev[zone.id], filter_backed_return_specs: e.target.value },
+                    }))
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-brand-grey-text">
+                  Dampers (semicolon-separated)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Manual balance @ Bedroom 2 branch"
+                  value={form.damper_types}
+                  onChange={(e) =>
+                    setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], damper_types: e.target.value } }))
+                  }
+                  className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">
+                Condensate routing note (IMC 307.2.1 requires min. 1/8in per 12in horizontal slope, trapped per
+                manufacturer instructions)
+              </label>
+              <textarea
+                value={form.condensate_routing_note}
+                onChange={(e) =>
+                  setAhuDetailForms((prev) => ({ ...prev, [zone.id]: { ...prev[zone.id], condensate_routing_note: e.target.value } }))
+                }
+                rows={2}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+            <button
+              onClick={() => handleSaveAhuDetail(zone.id)}
+              disabled={ahuDetailSavingZoneId === zone.id}
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+            >
+              {ahuDetailSavingZoneId === zone.id ? "Saving..." : "Save"}
+            </button>
+          </div>
+        );
+      })}
     </section>
   );
 }

@@ -141,6 +141,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       ductSchedule: [],
       aed: [],
       ductRoutingIllustration: [],
+      ahuInstallationDetails: [],
       ductRuns: [],
       rooms,
       zones: [],

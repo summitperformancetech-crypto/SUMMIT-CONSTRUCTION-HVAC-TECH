@@ -11,7 +11,7 @@ import {
   type ZoneRow,
 } from "@/components/manual-j-workflow";
 import type { DuctRunRow } from "@/components/duct-design-section";
-import type { DuctDiffuserRow } from "@/lib/ductRouting";
+import type { DuctDiffuserRow, AhuInstallationDetailRow } from "@/lib/ductRouting";
 import type { ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
@@ -43,6 +43,7 @@ export function ProjectWorkspace({
   initialGrillesRegistersLossIwc,
   initialDuctRuns,
   initialDuctDiffusers,
+  initialAhuInstallationDetails,
   ductSizingTable,
   summerCoincidentWetbulbF,
   equipmentCatalog,
@@ -77,6 +78,7 @@ export function ProjectWorkspace({
   initialGrillesRegistersLossIwc: number | null;
   initialDuctRuns: DuctRunRow[];
   initialDuctDiffusers: DuctDiffuserRow[];
+  initialAhuInstallationDetails: AhuInstallationDetailRow[];
   ductSizingTable: DuctSizingTableRow[];
   summerCoincidentWetbulbF: number | null;
   equipmentCatalog: EquipmentCatalogEntry[];
@@ -164,6 +166,7 @@ export function ProjectWorkspace({
         initialGrillesRegistersLossIwc={initialGrillesRegistersLossIwc}
         initialDuctRuns={initialDuctRuns}
         initialDuctDiffusers={initialDuctDiffusers}
+        initialAhuInstallationDetails={initialAhuInstallationDetails}
         ductSizingTable={ductSizingTable}
         summerCoincidentWetbulbF={summerCoincidentWetbulbF}
         equipmentCatalog={equipmentCatalog}

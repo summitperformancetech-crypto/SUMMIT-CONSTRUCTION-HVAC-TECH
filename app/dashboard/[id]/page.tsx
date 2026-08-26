@@ -13,7 +13,7 @@ import type {
 } from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
 import type { DuctRunRow } from "@/components/duct-design-section";
-import type { DuctDiffuserRow } from "@/lib/ductRouting";
+import type { DuctDiffuserRow, AhuInstallationDetailRow } from "@/lib/ductRouting";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import { CommercialWorkflow, type CommercialZoneRow } from "@/components/commercial-workflow";
@@ -134,6 +134,8 @@ const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
+const AHU_INSTALLATION_DETAIL_COLUMNS =
+  "id, project_id, zone_id, plenum_size, supply_takeoff_sizes, fresh_air_duct_size, oda_termination_id, refrigerant_vapor_line_in, refrigerant_liquid_line_in, condensate_routing_note, return_platform_construction, return_platform_insulation_r, filter_backed_return_specs, damper_types";
 
 // Duplicated from commercial-workflow.tsx rather than imported - same
 // "use client" runtime-value-across-the-boundary issue documented on
@@ -516,6 +518,7 @@ export default async function ProjectDetailPage({
     { data: fieldResolutions },
     { data: ductRuns },
     { data: ductDiffusers },
+    { data: ahuInstallationDetails },
     { data: ductSizingRows },
     { data: equipmentCatalogRows },
     { data: equipmentPerformancePointRows },
@@ -563,6 +566,11 @@ export default async function ProjectDetailPage({
       .eq("project_id", project.id)
       .order("created_at", { ascending: true })
       .returns<DuctDiffuserRow[]>(),
+    supabase
+      .from("ahu_installation_detail")
+      .select(AHU_INSTALLATION_DETAIL_COLUMNS)
+      .eq("project_id", project.id)
+      .returns<AhuInstallationDetailRow[]>(),
     // Global reference data, not project-scoped - see migration
     // 20260811014540_add_manual_d.sql for how these rows were derived.
     supabase
@@ -749,6 +757,7 @@ export default async function ProjectDetailPage({
         initialGrillesRegistersLossIwc={project.grilles_registers_loss_iwc}
         initialDuctRuns={ductRuns ?? []}
         initialDuctDiffusers={ductDiffusers ?? []}
+        initialAhuInstallationDetails={ahuInstallationDetails ?? []}
         ductSizingTable={ductSizingTable}
         summerCoincidentWetbulbF={climateZone?.summer_coincident_wetbulb_f ?? null}
         equipmentCatalog={equipmentCatalog}

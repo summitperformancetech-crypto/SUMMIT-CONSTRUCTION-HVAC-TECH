@@ -24,6 +24,8 @@ import {
   DIFFUSER_PATTERN_TAG_CODES,
   DIFFUSER_PATTERN_OPTIONS,
   deriveDuctRoutingModeBasis,
+  checkReturnAirBalance,
+  type DuctDiffuserRow,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -924,5 +926,89 @@ describe("deriveDuctRoutingModeBasis", () => {
 
   it("returns unknown rather than guessing when nothing has been entered at all", () => {
     expect(deriveDuctRoutingModeBasis([], null, null)).toEqual({ basis: "unknown", source: "unknown" });
+  });
+});
+
+function makeTestDiffuser(overrides: Partial<DuctDiffuserRow>): DuctDiffuserRow {
+  return {
+    id: "d1",
+    project_id: "p1",
+    zone_id: "zone-1",
+    room_id: "room-1",
+    airflow_direction: "supply",
+    pattern_type: "four_way",
+    duct_size: null,
+    round_diameter_in: 8,
+    cfm: 100,
+    mounting_height_aff_in: null,
+    manufacturer: null,
+    model: null,
+    description: null,
+    position_x_norm: null,
+    position_y_norm: null,
+    position_source_drawing_id: null,
+    position_source_page_number: null,
+    source: "manual",
+    ...overrides,
+  };
+}
+
+describe("checkReturnAirBalance", () => {
+  it("reports not determinable when a zone has no return diffuser data, never fabricating a pass/fail", () => {
+    const diffusers = [makeTestDiffuser({ airflow_direction: "supply", cfm: 400 })];
+    const result = checkReturnAirBalance("zone-1", "Zone 1", diffusers);
+    expect(result.determinable).toBe(false);
+    expect(result.balanced).toBeNull();
+    expect(result.returnCfm).toBeNull();
+  });
+
+  it("reports not determinable when a zone has no supply diffuser data either", () => {
+    const diffusers = [makeTestDiffuser({ id: "d2", airflow_direction: "return", cfm: 400 })];
+    const result = checkReturnAirBalance("zone-1", "Zone 1", diffusers);
+    expect(result.determinable).toBe(false);
+    expect(result.balanced).toBeNull();
+  });
+
+  it("marks a real balanced zone (within tolerance) as passing with real numbers", () => {
+    const diffusers = [
+      makeTestDiffuser({ id: "d1", airflow_direction: "supply", cfm: 500 }),
+      makeTestDiffuser({ id: "d2", airflow_direction: "return", cfm: 480 }),
+    ];
+    const result = checkReturnAirBalance("zone-1", "Zone 1", diffusers);
+    expect(result.determinable).toBe(true);
+    expect(result.supplyCfm).toBe(500);
+    expect(result.returnCfm).toBe(480);
+    expect(result.balanced).toBe(true);
+  });
+
+  it("marks a genuinely unbalanced zone as failing with the real percent difference", () => {
+    const diffusers = [
+      makeTestDiffuser({ id: "d1", airflow_direction: "supply", cfm: 500 }),
+      makeTestDiffuser({ id: "d2", airflow_direction: "return", cfm: 300 }),
+    ];
+    const result = checkReturnAirBalance("zone-1", "Zone 1", diffusers);
+    expect(result.balanced).toBe(false);
+    expect(result.percentDifference).toBeCloseTo(40, 5);
+  });
+
+  it("sums multiple supply and multiple return diffusers in the same zone", () => {
+    const diffusers = [
+      makeTestDiffuser({ id: "d1", airflow_direction: "supply", cfm: 200 }),
+      makeTestDiffuser({ id: "d2", airflow_direction: "supply", cfm: 200 }),
+      makeTestDiffuser({ id: "d3", airflow_direction: "return", cfm: 390 }),
+    ];
+    const result = checkReturnAirBalance("zone-1", "Zone 1", diffusers);
+    expect(result.supplyCfm).toBe(400);
+    expect(result.returnCfm).toBe(390);
+  });
+
+  it("ignores diffusers belonging to a different zone", () => {
+    const diffusers = [
+      makeTestDiffuser({ id: "d1", zone_id: "zone-1", airflow_direction: "supply", cfm: 400 }),
+      makeTestDiffuser({ id: "d2", zone_id: "zone-1", airflow_direction: "return", cfm: 400 }),
+      makeTestDiffuser({ id: "d3", zone_id: "zone-2", airflow_direction: "supply", cfm: 9999 }),
+    ];
+    const result = checkReturnAirBalance("zone-1", "Zone 1", diffusers);
+    expect(result.supplyCfm).toBe(400);
   });
 });

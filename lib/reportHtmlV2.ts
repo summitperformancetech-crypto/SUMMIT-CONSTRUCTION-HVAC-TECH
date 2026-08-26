@@ -24,7 +24,7 @@ import { validateReportTotals, computeRequiredTonnage, type ReportValidationResu
 import { getReportGenerationGateStatus, type ReportGenerationGateStatus } from "./reportGate";
 import { renderCompassSvg } from "./reportCompass";
 import { buildHeatingSegments, buildCoolingSegments, renderDonutSvg, type ChartSegment } from "./reportCharts";
-import { computeRequiredCfmForRooms } from "./manualD";
+import { computeRequiredCfmForRooms, TRUNK_MAX_VELOCITY_FPM, BRANCH_MAX_VELOCITY_FPM } from "./manualD";
 import type { Compass8 } from "./constants/compass";
 import type { DrawingExtraction } from "./drawingExtraction";
 import { getEmbeddedFontFaces } from "./reportFonts";
@@ -34,6 +34,10 @@ import {
   computeSheetCropViewBox,
   getDiffuserSymbolSpec,
   DUCT_ROUTING_MODE_BASIS_LABELS,
+  DIFFUSER_PATTERN_TAG_CODES,
+  DUCT_TERMINATION_TYPE_LABELS,
+  checkReturnAirBalance,
+  RETURN_BALANCE_TOLERANCE_PERCENT,
   type RoutedDuctSegment,
   type AhuInstallationDetailRow,
   type DuctRoutingModeBasis,
@@ -130,7 +134,30 @@ const STYLES = `
   }
 `;
 
-function pageShell(label: string, org: OrgBranding, bodyHtml: string, projectAddr: string): string {
+// Permit-Submittable Manual D Package, Section 7 - the sign-off gate must
+// be visible on every page, not just the cover, since a reviewer or
+// permit office may pull a single page (e.g. the Duct Sizing Schedule)
+// out of the bundle. A sign-off only means something against the exact
+// frozen snapshot version it names - live/unsnapshotted data (data.snapshot
+// null) can never show as signed even if a past version was, since this
+// render isn't that version. Real reviewer name/license/date shown when
+// signed; an unmissable DRAFT banner otherwise - never silently absent.
+function renderSignOffBanner(data: ReportData): string {
+  const currentVersion = data.snapshot?.version ?? null;
+  const activeSignOff = currentVersion != null ? data.signOffs.find((s) => s.calculation_snapshot_version === currentVersion) : null;
+
+  if (activeSignOff) {
+    const signedDate = new Date(activeSignOff.signed_at).toLocaleDateString();
+    return `<div style="background:#e6f0e6;border:1px solid #3d6b3d;border-radius:4px;padding:6px 10px;font-size:10px;color:#1c3d1c;margin-bottom:8px;">
+      <strong>REVIEWED AND APPROVED</strong> by ${esc(activeSignOff.reviewer_name)}, License #${esc(activeSignOff.reviewer_license_number)}${activeSignOff.reviewer_license_type ? ` (${esc(activeSignOff.reviewer_license_type)})` : ""} on ${esc(signedDate)} — v${currentVersion}
+    </div>`;
+  }
+  return `<div style="background:#fdeeea;border:1px solid #a13a2b;border-radius:4px;padding:6px 10px;font-size:10px;color:#7a2418;margin-bottom:8px;">
+    <strong>DRAFT — NOT REVIEWED OR SIGNED.</strong> This package is not permit-ready until a licensed reviewer signs off inside the app.
+  </div>`;
+}
+
+function pageShell(label: string, org: OrgBranding, bodyHtml: string, data: ReportData): string {
   const logo = org.logo_data_uri
     ? `<img src="${esc(org.logo_data_uri)}" alt="${esc(org.name)} logo" />`
     : "";
@@ -147,10 +174,11 @@ function pageShell(label: string, org: OrgBranding, bodyHtml: string, projectAdd
       <div class="page-label">${esc(label)}</div>
     </div>
     <div class="page-body">
+      ${renderSignOffBanner(data)}
       ${bodyHtml}
     </div>
     <div class="page-footer">
-      <div>${esc(projectAddr)} — ${esc(label)}</div>
+      <div>${esc(projectAddress(data))} — ${esc(label)}</div>
       <div class="amber">Calculated per ACCA Manual J, 8th Ed. — Summit Load Engine v1</div>
     </div>
   </div>`;
@@ -245,7 +273,7 @@ function renderWholeHouseSummaryPage(data: ReportData, org: OrgBranding): string
       <p class="muted" style="margin-top:8px;">Sized from sensible load divided by a 0.70 target sensible heat ratio, per ACCA Manual S convention - not simply total load ÷ 12,000, which can undersize sensible capacity in humid climates.</p>
     </div>
   `;
-  return pageShell("Project Summary — Entire House", org, body, projectAddress(data));
+  return pageShell("Project Summary — Entire House", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +310,7 @@ function renderPerSystemSummaryPage(data: ReportData, org: OrgBranding): string 
       </div>`;
     })
     .join("");
-  return pageShell("Project Summary — Per System", org, zonesHtml || `<p class="muted">No zones defined for this project.</p>`, projectAddress(data));
+  return pageShell("Project Summary — Per System", org, zonesHtml || `<p class="muted">No zones defined for this project.</p>`, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +346,7 @@ function renderLoadShortFormWholeHousePage(data: ReportData, org: OrgBranding): 
       <tr><td><strong>= Cooling Total</strong></td><td class="num"><strong>${fmt(wh.coolingTotalBtuh)}</strong></td></tr>
     </table>
   `;
-  return pageShell("Load Short Form — Entire House", org, body, projectAddress(data));
+  return pageShell("Load Short Form — Entire House", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +391,7 @@ function renderLoadShortFormRoomsPage(data: ReportData, org: OrgBranding): strin
       `;
     })
     .join("");
-  return pageShell("Load Short Form — Room-Level Detail", org, sections, projectAddress(data));
+  return pageShell("Load Short Form — Room-Level Detail", org, sections, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +444,7 @@ function renderAedPage(data: ReportData, org: OrgBranding): string {
       <tbody>${rows}</tbody>
     </table>
   `;
-  return pageShell("AED Assessment", org, body, projectAddress(data));
+  return pageShell("AED Assessment", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +479,7 @@ function renderBuildingAnalysisPage(data: ReportData, org: OrgBranding): string 
       `;
     })
     .join("");
-  return pageShell("Building Analysis — Per System", org, sections, projectAddress(data));
+  return pageShell("Building Analysis — Per System", org, sections, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -480,7 +508,7 @@ function renderOrientationPage(
     </div>
     ${!buildingFrontFaces ? `<div class="callout warn">Building orientation has not been confirmed for this project. Wall-orientation-dependent solar gain figures elsewhere in this report should be treated as provisional until this is confirmed.</div>` : ""}
   `;
-  return pageShell("Building Orientation", org, body, projectAddress(data));
+  return pageShell("Building Orientation", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -512,7 +540,7 @@ function renderFloorPlanPage(
          explicitly forbids regenerating floor plan geometry from room dimension data - a floor
          plan page is only ever the actual source drawing, never approximated.
        </div>`;
-  return pageShell("Floor Plan", org, body, projectAddress(data));
+  return pageShell("Floor Plan", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -576,7 +604,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
          a pin for each room and each zone's AHU (see the Duct Routing Pins section in the project workspace),
          a real, drawing-accurate installation reference diagram renders here.
        </div>`,
-      projectAddress(data),
+      data,
     );
   }
 
@@ -831,7 +859,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
          ),
        )
        .join("")}`,
-    projectAddress(data),
+    data,
   );
 }
 
@@ -901,6 +929,216 @@ function renderAhuInstallationDetailBlock(
 }
 
 // ---------------------------------------------------------------------------
+// Permit-Submittable Manual D Package, Section 6.3 - Duct Sizing Schedule.
+// One row per real duct_runs segment, from the same computeManualD/
+// sizeDuctRun chain the diagram and gate already use - no separate
+// calculation. Every column is a real, traceable number: CFM traces to
+// the room's Manual J-derived required airflow, friction rate is the
+// actual tabulated rate this run was sized at, total effective length
+// and pressure drop are the same math sizeDuctRun always performed,
+// simply surfaced per segment instead of only feeding the final diameter.
+// ---------------------------------------------------------------------------
+function renderDuctSizingSchedulePage(data: ReportData, org: OrgBranding): string {
+  const r = data.residential!;
+  const sizedByRunId = new Map(r.ductSchedule.map((s) => [s.runId, s]));
+  const roomNameById = new Map(r.rooms.map((room) => [room.id, room.name]));
+
+  const rows = r.ductRuns
+    .map((run) => {
+      const sized = sizedByRunId.get(run.id);
+      if (!sized) return null;
+      const roomLabel = run.run_type === "trunk" ? "— (trunk)" : (run.room_id ? (roomNameById.get(run.room_id) ?? "Unknown room") : "—");
+      const sizeLabel = sized.ductShape === "round" ? `${fmt1(sized.diameterIn)}"⌀` : `${fmt1(sized.widthIn)}"×${fmt1(sized.heightIn)}"`;
+      const zoneLabel = r.zones.find((z) => z.id === run.zone_id)?.name ?? "Unassigned";
+      return { zoneLabel, run, sized, roomLabel, sizeLabel };
+    })
+    .filter((x): x is NonNullable<typeof x> => x != null);
+
+  const byZone = new Map<string, typeof rows>();
+  for (const row of rows) {
+    if (!byZone.has(row.zoneLabel)) byZone.set(row.zoneLabel, []);
+    byZone.get(row.zoneLabel)!.push(row);
+  }
+
+  const sections =
+    [...byZone.entries()]
+      .map(([zoneLabel, zoneRows]) => {
+        const trs = zoneRows
+          .map(
+            ({ run, sized, roomLabel, sizeLabel }) => `<tr>
+            <td>${esc(roomLabel)}</td>
+            <td class="muted">${esc(run.run_type)}</td>
+            <td>${esc(run.material)}</td>
+            <td class="num">${fmt(sized.cfm)}</td>
+            <td class="num">${sizeLabel}</td>
+            <td class="num">${fmt1(run.length_ft)} ft</td>
+            <td class="num">${fmt1(run.fitting_equivalent_length_ft)} ft</td>
+            <td class="num">${fmt1(sized.totalEffectiveLengthFt)} ft</td>
+            <td class="num">${fmt1(sized.frictionRate)}"/100ft</td>
+            <td class="num">${fmt1(sized.pressureDropIwc)}"</td>
+            <td class="num">${Math.round(sized.velocityFpm)} fpm${sized.velocityWarning ? ` <span style="color:#b91c1c;">⚠</span>` : ""}</td>
+          </tr>`,
+          )
+          .join("");
+        return `<div class="section-title" style="font-size:12px;">${esc(zoneLabel)}</div>
+        <table>
+          <thead><tr><th>Room</th><th>Type</th><th>Material</th><th class="num">CFM</th><th class="num">Size</th><th class="num">Length</th><th class="num">Fitting EL</th><th class="num">Total Eff. Length</th><th class="num">Friction Rate</th><th class="num">Pressure Drop</th><th class="num">Velocity</th></tr></thead>
+          <tbody>${trs}</tbody>
+        </table>`;
+      })
+      .join("") || `<p class="muted">No duct runs sized yet.</p>`;
+
+  return pageShell(
+    "Duct Sizing Schedule",
+    org,
+    `<div class="section-title">Duct Sizing Schedule</div>
+     <p class="muted" style="font-size:11px;">
+       Every segment sized by the Equal Friction Method - design friction rate derived from each zone's real
+       Available Static Pressure budget divided by its own critical (longest effective-length) path, per ACCA
+       Manual D. CFM traces to each room's Manual J-derived required airflow. Fitting equivalent lengths are
+       real ACCA Manual D Appendix 3 values (elbow/branch-takeoff), not estimated.
+     </p>
+     ${sections}`,
+    data,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Permit-Submittable Manual D Package, Section 6.5 - Register/Grille
+// Schedule. Real duct_diffusers + duct_terminations rows, not synthetic
+// one-per-room defaults - a room with no diffuser entered yet simply
+// doesn't appear here (see the Duct Routing page's own room-pin fallback
+// for the diagram-only default this schedule deliberately does not use).
+// ---------------------------------------------------------------------------
+function renderRegisterSchedulePage(data: ReportData, org: OrgBranding): string {
+  const r = data.residential!;
+  const roomNameById = new Map(r.rooms.map((room) => [room.id, room.name]));
+  const zoneNameById = new Map(r.zones.map((zone) => [zone.id, zone.name]));
+
+  const diffuserRows = r.ductDiffusers
+    .map((d) => {
+      const tag = DIFFUSER_PATTERN_TAG_CODES[d.pattern_type] ?? d.pattern_type;
+      const size = d.duct_size ?? (d.round_diameter_in ? `${d.round_diameter_in}"⌀` : "—");
+      const roomLabel = d.room_id ? (roomNameById.get(d.room_id) ?? "Unknown room") : "— (central/hallway)";
+      return `<tr>
+        <td>${esc(roomLabel)}</td>
+        <td class="muted">${esc(zoneNameById.get(d.zone_id) ?? "Unassigned")}</td>
+        <td class="muted" style="text-transform:capitalize;">${esc(d.airflow_direction)}</td>
+        <td>${esc(tag)}</td>
+        <td class="num">${esc(size)}</td>
+        <td class="num">${fmt(Math.abs(d.cfm))} CFM</td>
+        <td class="muted">${esc([d.manufacturer, d.model].filter(Boolean).join(" ") || "—")}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const terminationRows = r.ductTerminations
+    .map(
+      (t) => `<tr>
+        <td>${esc(DUCT_TERMINATION_TYPE_LABELS[t.termination_type])}</td>
+        <td class="muted">${esc(t.zone_id ? (zoneNameById.get(t.zone_id) ?? "Unassigned") : "Whole-building")}</td>
+        <td class="num">${esc(t.duct_size ?? "—")}</td>
+        <td class="muted">${esc([t.hood_manufacturer, t.hood_model].filter(Boolean).join(" ") || "—")}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return pageShell(
+    "Register / Grille Schedule",
+    org,
+    `<div class="section-title">Supply &amp; Return Registers</div>
+     <table>
+       <thead><tr><th>Room</th><th>Zone</th><th>Direction</th><th>Type</th><th class="num">Size</th><th class="num">CFM</th><th>Hardware</th></tr></thead>
+       <tbody>${diffuserRows || `<tr><td colspan="7" class="muted">No diffusers entered yet - see the Diffusers &amp; Registers panel in Duct Design.</td></tr>`}</tbody>
+     </table>
+     <div class="section-title" style="margin-top:14px;">Non-Diffuser Terminations</div>
+     <table>
+       <thead><tr><th>Type</th><th>Zone</th><th class="num">Duct Size</th><th>Hood</th></tr></thead>
+       <tbody>${terminationRows || `<tr><td colspan="4" class="muted">No terminations entered yet.</td></tr>`}</tbody>
+     </table>`,
+    data,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Permit-Submittable Manual D Package, Section 6.6 - Design Check Summary.
+// Every check here is either a real, computed pass/fail with the
+// underlying numbers shown, or explicitly marked BLOCKED/NOT APPLICABLE
+// with the real reason why - never a fabricated checkmark. See the
+// diagnostic reported to the user (2026-08-26) for why the ESP-vs-
+// equipment-capacity gate and the extended-plenum/take-off-spacing/
+// damper-placement rules cannot yet be checked: no equipment ESP/blower
+// data exists in equipment_catalog, and the routing engine's own topology
+// is a single home-run trunk per zone, not a modeled multi-segment
+// extended-plenum/reducing trunk with real take-off positions.
+// ---------------------------------------------------------------------------
+function renderDesignCheckSummaryPage(data: ReportData, org: OrgBranding): string {
+  const r = data.residential!;
+
+  const velocityIssues = r.ductSchedule.filter((s) => s.velocityWarning != null);
+  const exceedsTableIssues = r.ductSchedule.filter((s) => s.exceedsTableRange);
+
+  const returnBalanceRows = r.zones
+    .map((zone) => checkReturnAirBalance(zone.id, zone.name, r.ductDiffusers))
+    .map((res) => {
+      const status = !res.determinable
+        ? `<span class="badge badge-neutral">Not yet determinable</span>`
+        : res.balanced
+          ? `<span class="badge badge-pass">Balanced</span>`
+          : `<span class="badge badge-fail">Unbalanced</span>`;
+      return `<tr>
+        <td>${esc(res.zoneName)}</td>
+        <td class="num">${res.supplyCfm != null ? fmt(res.supplyCfm) : "—"}</td>
+        <td class="num">${res.returnCfm != null ? fmt(res.returnCfm) : "—"}</td>
+        <td class="num">${res.percentDifference != null ? `${fmt1(res.percentDifference)}%` : "—"}</td>
+        <td>${status}</td>
+      </tr>`;
+    })
+    .join("");
+
+  const velocityStatus =
+    velocityIssues.length === 0
+      ? `<span class="badge badge-pass">All Segments Pass</span> No run exceeds the ACCA-cited ${TRUNK_MAX_VELOCITY_FPM} fpm (trunk) / ${BRANCH_MAX_VELOCITY_FPM} fpm (branch) noise limit.`
+      : `<span class="badge badge-fail">${velocityIssues.length} Segment(s) Flagged</span> ${velocityIssues.map((s) => esc(s.velocityWarning!)).join("; ")}`;
+
+  return pageShell(
+    "Design Check Summary",
+    org,
+    `<div class="section-title">Equal Friction Method</div>
+     <div class="callout"><span class="badge badge-pass">Applied</span> Every segment sized via the Equal Friction Method - design friction rate derived per zone from real Available Static Pressure ÷ that zone's critical-path total effective length, per ACCA Manual D.</div>
+
+     <div class="section-title">Duct Velocity Limits</div>
+     <div class="callout">${velocityStatus}</div>
+     ${exceedsTableIssues.length > 0 ? `<p class="muted" style="font-size:11px;">${exceedsTableIssues.length} segment(s) exceed the reference friction table's size range at their required CFM - the largest tabulated size was used, flagged for a parallel run or a higher static-pressure budget.</p>` : ""}
+
+     <div class="section-title">Return Air Balance</div>
+     <table>
+       <thead><tr><th>Zone</th><th class="num">Supply CFM</th><th class="num">Return CFM</th><th class="num">Difference</th><th>Status</th></tr></thead>
+       <tbody>${returnBalanceRows || `<tr><td colspan="5" class="muted">No zones.</td></tr>`}</tbody>
+     </table>
+     <p class="muted" style="font-size:10px;">"Not yet determinable" means this zone has no real return-diffuser CFM entered yet - never shown as a false pass. Balance tolerance: ±${RETURN_BALANCE_TOLERANCE_PERCENT}% (a standard HVAC testing-and-balancing rule of thumb, not a specific ACCA Manual D numeric clause).</p>
+
+     <div class="section-title">Total External Static Pressure vs. Equipment Rated Capacity</div>
+     <div class="callout" style="border-color:#b91c1c;">
+       <span class="badge badge-fail">BLOCKED</span> This gate cannot be evaluated. Summit's equipment catalog does not currently
+       capture a rated ESP / airflow-vs-static-pressure blower performance curve for any unit - <code>equipment_catalog</code> and
+       <code>equipment_performance_points</code> both lack this field. Sourcing real OEM blower data per selected unit is required
+       before this check can run; it is never shown as passing without it.
+     </div>
+
+     <div class="section-title">Extended Plenum / Reducing Trunk Topology Rules</div>
+     <div class="callout" style="border-color:#b91c1c;">
+       <span class="badge badge-fail">NOT APPLICABLE</span> Summit's current duct-routing engine models one home-run trunk per
+       zone feeding radial branches, not a multi-segment extended-plenum or reducing trunk with real take-off positions along a
+       backbone. Take-off spacing/offset, end-cap clearance, reducing-trunk step-down, and balancing-damper-per-branch placement
+       cannot be checked against a topology the routing model does not represent. This requires a routing-model rebuild, not a
+       report-page change.
+     </div>`,
+    data,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Page 11: Extraction status / field reference
 // ---------------------------------------------------------------------------
 function renderExtractionStatusPage(
@@ -938,7 +1176,7 @@ function renderExtractionStatusPage(
         : `<p class="muted">No field-verified overrides on this project.</p>`
     }
   `;
-  return pageShell("Extraction Status / Field Reference", org, body, projectAddress(data));
+  return pageShell("Extraction Status / Field Reference", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -994,7 +1232,7 @@ function renderAuditTrailPage(data: ReportData, org: OrgBranding, validation: Re
         : `<p class="muted">No AI-extracted fields required human resolution on this project.</p>`
     }
   `;
-  return pageShell("Audit Trail & QA Certification", org, body, projectAddress(data));
+  return pageShell("Audit Trail & QA Certification", org, body, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -1023,6 +1261,9 @@ export function renderSummitReportHtml(
     renderOrientationPage(data, org, buildingFrontFaces),
     renderFloorPlanPage(data, org, buildingFrontFaces, floorPlanImageDataUri),
     renderDuctRoutingPage(data, org),
+    renderDuctSizingSchedulePage(data, org),
+    renderRegisterSchedulePage(data, org),
+    renderDesignCheckSummaryPage(data, org),
     renderExtractionStatusPage(data, org, drawings),
     renderAuditTrailPage(data, org, validation),
   ].join("\n");

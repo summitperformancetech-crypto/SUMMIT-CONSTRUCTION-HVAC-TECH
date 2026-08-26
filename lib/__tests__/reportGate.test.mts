@@ -134,6 +134,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
     climateZone: null,
     generatedAt: new Date().toISOString(),
     snapshot: null,
+    signOffs: [],
     floorPlanImageDataUri: null,
     residential: {
       envelope: {} as ManualJEnvelope,
@@ -143,6 +144,8 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       ductRoutingIllustration: [],
       ahuInstallationDetails: [],
       ductRoutingModeByZone: [],
+      ductDiffusers: [],
+      ductTerminations: [],
       ductRuns: [],
       rooms,
       zones: [],
@@ -197,6 +200,7 @@ describe("getReportGenerationGateStatus - data completeness gate", () => {
       climateZone: null,
       generatedAt: new Date().toISOString(),
       snapshot: null,
+    signOffs: [],
     floorPlanImageDataUri: null,
       residential: null,
       commercial: { blockLoad: null, industrialLoad: null },
@@ -233,6 +237,8 @@ function ductRun(overrides: Partial<DuctRunRow> = {}): DuctRunRow {
     calculated_diameter_in: null,
     calculated_width_in: null,
     calculated_height_in: null,
+    total_effective_length_ft: null,
+    pressure_drop_iwc: null,
     ...overrides,
   };
 }
@@ -309,7 +315,7 @@ describe("getReportGenerationGateStatus - duct/equipment CFM compatibility", () 
       hvacSystemConfiguration: "independent_per_zone",
       zones: [{ id: "z1", name: "Zone 1", ahu_label: null }],
       ductRuns: [ductRun({ id: "run1", zone_id: "z1", room_id: "r1" })],
-      ductSchedule: [{ runId: "run1", cfm: 348, frictionRate: 0.08, ductShape: "round", diameterIn: 6, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false }],
+      ductSchedule: [{ runId: "run1", cfm: 348, frictionRate: 0.08, ductShape: "round", diameterIn: 6, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false, totalEffectiveLengthFt: 35, pressureDropIwc: 0.028 }],
       zoneEquipment: [zoneEquipmentSelection("z1", equipmentEvaluation("eq1", 1400))],
     });
     const status = getReportGenerationGateStatus(data, [], new Set());
@@ -330,8 +336,8 @@ describe("getReportGenerationGateStatus - duct/equipment CFM compatibility", () 
         ductRun({ id: "run2", zone_id: "z2", room_id: "r2" }),
       ],
       ductSchedule: [
-        { runId: "run1", cfm: 1149, frictionRate: 0.08, ductShape: "round", diameterIn: 14, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
-        { runId: "run2", cfm: 348, frictionRate: 0.08, ductShape: "round", diameterIn: 9, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
+        { runId: "run1", cfm: 1149, frictionRate: 0.08, ductShape: "round", diameterIn: 14, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false, totalEffectiveLengthFt: 35, pressureDropIwc: 0.028 },
+        { runId: "run2", cfm: 348, frictionRate: 0.08, ductShape: "round", diameterIn: 9, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false, totalEffectiveLengthFt: 35, pressureDropIwc: 0.028 },
       ],
       // Real Schneider shape: both zones share the exact same equipment
       // record (1149 + 348 = 1497 vs. a 1400 CFM shared unit - 7% off,
@@ -359,8 +365,8 @@ describe("getReportGenerationGateStatus - duct/equipment CFM compatibility", () 
         ductRun({ id: "run2", zone_id: "z2", room_id: "r2" }),
       ],
       ductSchedule: [
-        { runId: "run1", cfm: 300, frictionRate: 0.08, ductShape: "round", diameterIn: 8, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
-        { runId: "run2", cfm: 200, frictionRate: 0.08, ductShape: "round", diameterIn: 6, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false },
+        { runId: "run1", cfm: 300, frictionRate: 0.08, ductShape: "round", diameterIn: 8, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false, totalEffectiveLengthFt: 35, pressureDropIwc: 0.028 },
+        { runId: "run2", cfm: 200, frictionRate: 0.08, ductShape: "round", diameterIn: 6, widthIn: null, heightIn: null, velocityFpm: 900, velocityWarning: null, exceedsTableRange: false, totalEffectiveLengthFt: 35, pressureDropIwc: 0.028 },
       ],
       zoneEquipment: (() => {
         const evaluation = equipmentEvaluation("eq1", 1400);

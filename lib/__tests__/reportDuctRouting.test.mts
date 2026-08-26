@@ -147,6 +147,8 @@ describe("buildDuctRoutingIllustrations", () => {
         calculated_diameter_in: 6,
         calculated_width_in: null,
         calculated_height_in: null,
+        total_effective_length_ft: 37,
+        pressure_drop_iwc: 0.0296,
       },
     ];
     const ductSchedule: DuctSizingResult[] = [
@@ -161,6 +163,8 @@ describe("buildDuctRoutingIllustrations", () => {
         velocityFpm: 500,
         velocityWarning: null,
         exceedsTableRange: false,
+        totalEffectiveLengthFt: 37,
+        pressureDropIwc: 0.0296,
       },
     ];
 
@@ -218,6 +222,8 @@ describe("buildDuctRoutingIllustrations", () => {
         calculated_diameter_in: null,
         calculated_width_in: null,
         calculated_height_in: null,
+        total_effective_length_ft: 30,
+        pressure_drop_iwc: 0.024,
       },
     ];
     const ductSchedule: DuctSizingResult[] = [
@@ -232,6 +238,8 @@ describe("buildDuctRoutingIllustrations", () => {
         velocityFpm: 700,
         velocityWarning: null,
         exceedsTableRange: false,
+        totalEffectiveLengthFt: 30,
+        pressureDropIwc: 0.024,
       },
     ];
     const result = buildDuctRoutingIllustrations(rooms, zones, ductRuns, ductSchedule, new Map());

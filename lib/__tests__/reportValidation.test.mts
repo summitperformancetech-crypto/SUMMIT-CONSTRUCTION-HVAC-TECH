@@ -115,6 +115,7 @@ function baseReportData(residential: NonNullable<ReportData["residential"]>): Re
     climateZone: null,
     generatedAt: new Date().toISOString(),
     snapshot: null,
+    signOffs: [],
     floorPlanImageDataUri: null,
     residential,
     commercial: null,
@@ -143,6 +144,8 @@ describe("validateReportTotals", () => {
       ductRoutingIllustration: [],
       ahuInstallationDetails: [],
       ductRoutingModeByZone: [],
+      ductDiffusers: [],
+      ductTerminations: [],
     });
 
     const result = validateReportTotals(data);
@@ -185,6 +188,8 @@ describe("validateReportTotals", () => {
       ductRoutingIllustration: [],
       ahuInstallationDetails: [],
       ductRoutingModeByZone: [],
+      ductDiffusers: [],
+      ductTerminations: [],
     });
 
     const result = validateReportTotals(data);

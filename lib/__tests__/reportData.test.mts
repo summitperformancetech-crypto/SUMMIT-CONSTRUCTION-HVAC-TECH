@@ -94,6 +94,13 @@ function makeMockSupabase() {
         limit() {
           return builder;
         },
+        // Needed for lib/reportData.ts's report_sign_offs query
+        // (`.is("superseded_at", null)`) - same no-op pass-through as
+        // order/limit above, since this test's builder ignores filters
+        // for every table except climate_zone_reference (see returns()).
+        is() {
+          return builder;
+        },
         maybeSingle() {
           return Promise.resolve(table === "projects" ? { data: projectRow, error: null } : { data: null, error: null });
         },

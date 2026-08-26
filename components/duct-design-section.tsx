@@ -56,10 +56,14 @@ export type DuctRunRow = {
   calculated_diameter_in: number | null;
   calculated_width_in: number | null;
   calculated_height_in: number | null;
+  // Permit-package auditable trail (Section 3) - same snapshot-on-save
+  // convention as the calculated_* fields above.
+  total_effective_length_ft: number | null;
+  pressure_drop_iwc: number | null;
 };
 
 export const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
+  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc";
 export const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 export const AHU_INSTALLATION_DETAIL_COLUMNS =
@@ -657,6 +661,8 @@ export function DuctDesignSection({
         calculated_diameter_in: result.diameterIn,
         calculated_width_in: result.widthIn,
         calculated_height_in: result.heightIn,
+        total_effective_length_ft: result.totalEffectiveLengthFt,
+        pressure_drop_iwc: result.pressureDropIwc,
       })
       .eq("id", runId);
   }
@@ -762,6 +768,8 @@ export function DuctDesignSection({
             calculated_diameter_in: newResult.diameterIn,
             calculated_width_in: newResult.widthIn,
             calculated_height_in: newResult.heightIn,
+            total_effective_length_ft: newResult.totalEffectiveLengthFt,
+            pressure_drop_iwc: newResult.pressureDropIwc,
           })
           .eq("id", data.id)
           .select(DUCT_RUN_COLUMNS)

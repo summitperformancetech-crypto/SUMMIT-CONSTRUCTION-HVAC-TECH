@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ProjectWorkspace } from "@/components/project-workspace";
 import { DeleteProjectButton } from "@/components/delete-project-button";
 import { GenerateReportsButton, type SnapshotStatus } from "@/components/generate-reports-button";
+import { ReportSignOffSection, type ReportSignOffRow } from "@/components/report-sign-off-section";
 import { StalenessBanner } from "@/components/staleness-banner";
 import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 import type {
@@ -131,7 +132,7 @@ const ZONE_COLUMNS =
 // `import type` across that boundary is fine (erased at compile time),
 // runtime values are not.
 const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
+  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc";
 const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 const AHU_INSTALLATION_DETAIL_COLUMNS =
@@ -300,6 +301,16 @@ export default async function ProjectDetailPage({
   const latestSnapshot: SnapshotStatus | null = latestSnapshotRow
     ? { version: latestSnapshotRow.version, createdAt: latestSnapshotRow.created_at, reason: latestSnapshotRow.reason }
     : null;
+
+  // Permit-Submittable Manual D Package, Section 7 - non-superseded
+  // sign-offs, same "small, cheap, project-scoped" fetch as
+  // latestSnapshotRow above.
+  const { data: signOffRows } = await supabase
+    .from("report_sign_offs")
+    .select("id, calculation_snapshot_version, reviewer_name, reviewer_license_number, reviewer_license_type, signed_at")
+    .eq("project_id", project.id)
+    .is("superseded_at", null)
+    .returns<ReportSignOffRow[]>();
 
   let staleItems: StaleItem[] = [];
   if (!latestSnapshot) {
@@ -492,6 +503,12 @@ export default async function ProjectDetailPage({
 
         <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
         <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} userRole={userRole} />
+        <ReportSignOffSection
+          projectId={project.id}
+          latestSnapshot={latestSnapshot}
+          initialSignOffs={signOffRows ?? []}
+          userRole={userRole}
+        />
 
         <CommercialWorkflow
           projectId={project.id}
@@ -741,6 +758,12 @@ export default async function ProjectDetailPage({
 
       <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
       <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} userRole={userRole} />
+      <ReportSignOffSection
+        projectId={project.id}
+        latestSnapshot={latestSnapshot}
+        initialSignOffs={signOffRows ?? []}
+        userRole={userRole}
+      />
 
       <ProjectWorkspace
         projectId={project.id}

@@ -80,6 +80,15 @@ export type DuctSizingResult = {
   // increase static pressure budget rather than trusting an undersized
   // number silently.
   exceedsTableRange: boolean;
+  // Permit-package auditable trail (Section 3): length_ft +
+  // fitting_equivalent_length_ft, and this run's own real pressure drop
+  // at the friction rate actually used (frictionRate * totalEffectiveLengthFt
+  // / 100) - not a new calculation, just the same two numbers every other
+  // field on this result already depends on, surfaced and persisted so a
+  // reviewer can see the full chain per segment rather than only the
+  // final diameter.
+  totalEffectiveLengthFt: number;
+  pressureDropIwc: number;
 };
 
 // ACCA Manual D's noise-driven velocity guidance (also independently
@@ -316,6 +325,8 @@ export function sizeDuctRun(
       ? `${Math.round(velocityFpm)} fpm exceeds the ${maxVelocity} fpm ${run.runType} limit`
       : null;
 
+  const totalEffectiveLengthFt = run.lengthFt + run.fittingEquivalentLengthFt;
+
   return {
     runId: run.id,
     cfm,
@@ -327,6 +338,12 @@ export function sizeDuctRun(
     velocityFpm,
     velocityWarning,
     exceedsTableRange,
+    totalEffectiveLengthFt,
+    // row.frictionRate (iwc per 100ft) is the ACTUAL tabulated rate used
+    // to size this run - not the zone's raw target rate - so the
+    // pressure drop reported here is the real number this run's own
+    // diameter was sized to deliver, not a target that got rounded away.
+    pressureDropIwc: (row.frictionRate * totalEffectiveLengthFt) / 100,
   };
 }
 

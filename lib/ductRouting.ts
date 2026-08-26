@@ -884,6 +884,63 @@ export type DuctDiffuserRow = {
   source: "ai_extracted" | "manual";
 };
 
+// -----------------------------------------------------------------------
+// Return-air CFM balance (Permit-Submittable Manual D Package, Section 4)
+// - real supply-vs-return airflow comparison per zone, computed only from
+// actual entered duct_diffusers rows. Genuinely NOT determinable (not
+// "balanced: false") when a zone has no real return diffuser data yet -
+// this app has no independent per-zone return-CFM source otherwise (a
+// zone's single return pin carries a position, not an airflow value), so
+// fabricating a pass/fail here would be a fabricated number, not a
+// derived one.
+// -----------------------------------------------------------------------
+export type ReturnAirBalanceResult = {
+  zoneId: string;
+  zoneName: string;
+  supplyCfm: number | null;
+  returnCfm: number | null;
+  percentDifference: number | null;
+  // Within RETURN_BALANCE_TOLERANCE_PERCENT of each other. null when not
+  // determinable.
+  balanced: boolean | null;
+  determinable: boolean;
+};
+
+// No single ACCA Manual D clause states one universal numeric return-
+// balance tolerance - this is a commonly used HVAC testing-and-balancing
+// rule of thumb (within ~10% of design airflow), applied here as a
+// disclosed, stated assumption, not quoted as literal Manual D text.
+export const RETURN_BALANCE_TOLERANCE_PERCENT = 10;
+
+export function checkReturnAirBalance(
+  zoneId: string,
+  zoneName: string,
+  diffusers: DuctDiffuserRow[],
+): ReturnAirBalanceResult {
+  const zoneDiffusers = diffusers.filter((d) => d.zone_id === zoneId);
+  const supplyRows = zoneDiffusers.filter((d) => d.airflow_direction === "supply");
+  const returnRows = zoneDiffusers.filter((d) => d.airflow_direction === "return");
+
+  if (supplyRows.length === 0 || returnRows.length === 0) {
+    const supplyCfm = supplyRows.length > 0 ? supplyRows.reduce((s, d) => s + d.cfm, 0) : null;
+    return { zoneId, zoneName, supplyCfm, returnCfm: null, percentDifference: null, balanced: null, determinable: false };
+  }
+
+  const supplyCfm = supplyRows.reduce((s, d) => s + d.cfm, 0);
+  const returnCfm = returnRows.reduce((s, d) => s + d.cfm, 0);
+  const percentDifference = supplyCfm > 0 ? (Math.abs(supplyCfm - returnCfm) / supplyCfm) * 100 : null;
+
+  return {
+    zoneId,
+    zoneName,
+    supplyCfm,
+    returnCfm,
+    percentDifference,
+    balanced: percentDifference != null ? percentDifference <= RETURN_BALANCE_TOLERANCE_PERCENT : null,
+    determinable: percentDifference != null,
+  };
+}
+
 // One row per AHU/zone (ahu_installation_detail table) - real physical
 // install detail beyond duct sizing: plenum, takeoffs, fresh air/ODA,
 // refrigerant lines, condensate routing, return platform, dampers. Every

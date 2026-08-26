@@ -393,6 +393,17 @@ export type ZoneEquipmentSelection = {
   equipmentSelectionNotes: string | null;
 };
 
+export type ReportSignOff = {
+  id: string;
+  project_id: string;
+  calculation_snapshot_version: number;
+  reviewer_name: string;
+  reviewer_license_number: string;
+  reviewer_license_type: string | null;
+  signed_at: string;
+  superseded_at: string | null;
+};
+
 export type ReportData = {
   project: ReportProject;
   climateZone: ReportClimateZone | null;
@@ -407,6 +418,15 @@ export type ReportData = {
   // so the templates can show "data frozen as of <date>, v<n>" instead of
   // silently implying every PDF reflects live data.
   snapshot: { version: number; createdAt: string; reason: string | null } | null;
+  // Permit-Submittable Manual D Package, Section 7 - licensed reviewer
+  // sign-off records (report_sign_offs table), non-superseded only.
+  // Matched against `snapshot.version` at render time (see pageShell) -
+  // a sign-off only means something against a specific frozen snapshot,
+  // never against live/unsnapshotted data. Empty array (not a single
+  // nullable field) since a project can have signed off multiple past
+  // versions over its life - the renderer picks the one matching the
+  // version actually being rendered.
+  signOffs: ReportSignOff[];
   // Floor Plan report page (SUMMIT-REPORT-STANDARD.md Section 5.9) - the
   // rendered source drawing page, always null out of getReportData
   // itself (see DuctRoutingSheetIllustration's comment above for why
@@ -454,6 +474,15 @@ export type ReportData = {
     // when no room has duct_location set yet - never a new question
     // asked of the technician.
     ductRoutingModeByZone: { zoneId: string; zoneName: string; basis: DuctRoutingModeBasis; source: string }[];
+    // Real, project-entered diffuser/grille hardware (Permit-Submittable
+    // Manual D Package, Section 6.5 - Register/Grille Schedule). Raw rows,
+    // not the illustration-pin projection above - the schedule table
+    // needs every diffuser regardless of whether it landed on a
+    // resolved-position sheet.
+    ductDiffusers: DuctDiffuserRow[];
+    // Real per-zone duct terminations (exhaust fan/dryer vent/ODA/
+    // condensate) - raw rows, same reasoning as ductDiffusers above.
+    ductTerminations: DuctTerminationRow[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -467,7 +496,7 @@ const ROOM_COLUMNS =
 const ZONE_COLUMNS =
   "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
 const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
+  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc";
 const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 const AHU_INSTALLATION_DETAIL_COLUMNS =
@@ -536,6 +565,15 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
 
   const { data: climateZoneRows } = await climateZoneQuery.limit(1).returns<ReportClimateZone[]>();
   const climateZone = climateZoneRows?.[0] ?? null;
+
+  const { data: signOffRows } = await supabase
+    .from("report_sign_offs")
+    .select(
+      "id, project_id, calculation_snapshot_version, reviewer_name, reviewer_license_number, reviewer_license_type, signed_at, superseded_at",
+    )
+    .eq("project_id", projectId)
+    .is("superseded_at", null)
+    .returns<ReportSignOff[]>();
 
   const { data: fieldResolutions } = await supabase
     .from("field_resolutions")
@@ -912,6 +950,8 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         );
         return { zoneId: zone.id, zoneName: zone.name, basis, source };
       }),
+      ductDiffusers: ductDiffusers ?? [],
+      ductTerminations: ductTerminations ?? [],
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&
@@ -1061,6 +1101,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     climateZone,
     generatedAt: new Date().toISOString(),
     snapshot: null,
+    signOffs: signOffRows ?? [],
     floorPlanImageDataUri: null,
     residential,
     commercial,

@@ -533,9 +533,9 @@ describe("computeSheetDuctRouting - end to end orchestration", () => {
   };
 
   const roomsOnSheet = [
-    { id: "utility", xNorm: 0.1, yNorm: 0.5 },
-    { id: "bedroomA", xNorm: 0.7, yNorm: 0.2 },
-    { id: "bedroomB", xNorm: 0.7, yNorm: 0.8 },
+    { id: "utility", name: "Utility", xNorm: 0.1, yNorm: 0.5 },
+    { id: "bedroomA", name: "Bedroom A", xNorm: 0.7, yNorm: 0.2 },
+    { id: "bedroomB", name: "Bedroom B", xNorm: 0.7, yNorm: 0.8 },
   ];
 
   it("routes every target room with real orthogonal geometry", () => {
@@ -545,6 +545,7 @@ describe("computeSheetDuctRouting - end to end orchestration", () => {
         ahuPoint: { xNorm: 0.1, yNorm: 0.5 },
         ahuOwnRoomId: "utility",
         targetRoomIds: ["bedroomA", "bedroomB"],
+        corridorGraph: null,
       },
     ]);
     expect(result).not.toBeNull();
@@ -566,9 +567,59 @@ describe("computeSheetDuctRouting - end to end orchestration", () => {
       sheets: extractedData.sheets,
     };
     const result = computeSheetDuctRouting(noScaleData, 3, 400, 400, roomsOnSheet, [
-      { id: "zone1", ahuPoint: { xNorm: 0.1, yNorm: 0.5 }, ahuOwnRoomId: "utility", targetRoomIds: ["bedroomA"] },
+      { id: "zone1", ahuPoint: { xNorm: 0.1, yNorm: 0.5 }, ahuOwnRoomId: "utility", targetRoomIds: ["bedroomA"], corridorGraph: null },
     ]);
     expect(result).toBeNull();
+  });
+
+  // Per direct instruction: "use the routing graph as the source of
+  // truth for corridor topology - don't compute routing paths
+  // independently." A zone with a real corridor graph must use it, not
+  // the computed A* router, even when the computed router's own scale
+  // derivation would have failed - the graph doesn't need that scale at
+  // all (it calibrates against this project's own room pins directly).
+  it("prefers a zone's real corridor graph over computed routing, even when computed-routing scale derivation would fail", () => {
+    const graph = {
+      ahu: { id: "AHU_1", x: 10, y: 50 },
+      rooms: [
+        { id: "utility", name: "Utility", x: 10, y: 50 },
+        { id: "bedroomA", name: "Bedroom A", x: 70, y: 20 },
+      ],
+      corridor_nodes: [],
+      edges: [{ from: "AHU_1", to: "bedroomA", type: "trunk" as const }],
+    };
+    const noScaleData = {
+      rooms: extractedData.rooms.map((r) => ({ ...r, wall_page_horizontal_len_ft: null })),
+      sheets: extractedData.sheets,
+    };
+    const result = computeSheetDuctRouting(noScaleData, 3, 400, 400, roomsOnSheet, [
+      { id: "zone1", ahuPoint: { xNorm: 0.1, yNorm: 0.5 }, ahuOwnRoomId: "utility", targetRoomIds: ["bedroomA"], corridorGraph: graph },
+    ]);
+    expect(result).not.toBeNull();
+    const segments = [...result!.values()].flat();
+    // AHU_1(10,50) -> bedroomA(70,20) isn't axis-aligned - split into a
+    // real right-angle elbow (2 segments) rather than a diagonal, same
+    // as any other genuinely diagonal graph edge (see
+    // ductCorridorGraph.test.mts for that behavior in isolation).
+    expect(segments).toHaveLength(2);
+    expect(segments.every((s) => s.cls === "trunk")).toBe(true);
+  });
+
+  it("falls back to computed routing for a zone whose graph calibration fails, without affecting a sibling zone's real graph", () => {
+    const uncalibratableGraph = {
+      ahu: { id: "AHU_X", x: 999, y: 999 },
+      rooms: [{ id: "nowhere", name: "Nowhere Real", x: 999, y: 999 }],
+      corridor_nodes: [],
+      edges: [],
+    };
+    const result = computeSheetDuctRouting(extractedData, 3, 400, 400, roomsOnSheet, [
+      { id: "zone1", ahuPoint: { xNorm: 0.1, yNorm: 0.5 }, ahuOwnRoomId: "utility", targetRoomIds: ["bedroomA"], corridorGraph: uncalibratableGraph },
+    ]);
+    // Falls through to the computed router (real geometry from
+    // extractedData is available) rather than returning null just
+    // because the graph itself couldn't be calibrated.
+    expect(result).not.toBeNull();
+    expect(result!.get("bedroomA")).toBeDefined();
   });
 });
 

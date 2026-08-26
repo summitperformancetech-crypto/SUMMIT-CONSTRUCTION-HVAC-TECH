@@ -20,6 +20,7 @@ import {
 import type { ExtractedRoom, DrawingRow } from "@/lib/drawingExtraction";
 import { DuctRoutingCanvas } from "@/components/duct-routing-canvas";
 import { getDuctRoutingGateStatus } from "@/lib/ductRouting";
+import type { CorridorGraph } from "@/lib/ductCorridorGraph";
 import { normalizeDuctLocation, buildCodeMinimumsByLocation } from "@/lib/constants/ductLocations";
 import { normalizeRoomNameForMatch } from "@/lib/fieldResolutions";
 import {
@@ -97,6 +98,11 @@ export type ZoneRow = ManualJZone & {
   ahu_position_y_norm: number | null;
   ahu_position_source_drawing_id: string | null;
   ahu_position_source_page_number: number | null;
+  // Real, human-digitized corridor topology (lib/ductCorridorGraph.ts) -
+  // the routing source of truth for this zone when present, per direct
+  // instruction. See that module's own comment for the full shape and
+  // why computed room-box-avoidance routing is only ever a fallback.
+  corridor_graph: CorridorGraph | null;
 };
 
 const ATTIC_CONSTRUCTION_OPTIONS = [
@@ -134,7 +140,7 @@ export const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, window_front_area_sqft, window_rear_area_sqft, window_left_area_sqft, window_right_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 
 const ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number";
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, corridor_graph";
 
 // Diagnosed 2026-08-23 against real data (Kinsela): a room this drawing
 // genuinely shows (e.g. a wet bar, a second hallway) that doesn't match

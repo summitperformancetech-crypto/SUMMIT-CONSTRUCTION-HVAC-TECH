@@ -26,6 +26,7 @@ import {
   type NormBox,
   type SegmentClass,
 } from "./ductPathGeometry";
+import { computeSegmentsFromCorridorGraph, type CorridorGraph } from "./ductCorridorGraph";
 
 // -----------------------------------------------------------------------
 // ACCA Manual D, Third Edition v2.00 (2013), Appendix 3 "Fitting
@@ -670,7 +671,7 @@ export function resolveRoomBox(pin: NormPoint, extractedBoxesOnPage: NormBox[]):
   return matchRoomBoxByPosition(pin, extractedBoxesOnPage) ?? fallbackRoomBox(pin);
 }
 
-export type SheetRoomForBoxResolution = { id: string; xNorm: number; yNorm: number };
+export type SheetRoomForBoxResolution = { id: string; name: string; xNorm: number; yNorm: number };
 
 // One box per room actually on this sheet/page, regardless of which zone
 // it belongs to - every room is a real physical obstacle no matter which
@@ -763,11 +764,51 @@ export function computeSheetDuctRouting(
     ahuPoint: NormPoint;
     ahuOwnRoomId: string | null;
     targetRoomIds: string[];
+    // Real, human-digitized corridor topology (lib/ductCorridorGraph.ts)
+    // - the source of truth for this zone's routing when present, per
+    // direct instruction, never combined with or overridden by the
+    // computed room-box-avoidance router below. Falls back to that
+    // computed router only when null or when its own calibration fails
+    // (too few of the graph's rooms match this project's own confirmed
+    // pins by name - see fitCorridorGraphCalibration).
+    corridorGraph: CorridorGraph | null;
   }[],
 ): Map<string, RoutedDuctSegment[]> | null {
   const extractedRooms = extractedData?.rooms ?? [];
   const sheetName = extractedData?.sheets?.find((s) => s.page_number === pageNumber)?.name ?? null;
+  const roomById = new Map(roomsOnSheet.map((r) => [r.id, r]));
 
+  const result = new Map<string, RoutedDuctSegment[]>();
+  const zonesNeedingComputedRouting: typeof zonesOnSheet = [];
+
+  for (const zone of zonesOnSheet) {
+    if (zone.corridorGraph) {
+      const graphSegments = computeSegmentsFromCorridorGraph(
+        zone.corridorGraph,
+        roomsOnSheet.map((r) => ({ name: r.name, xNorm: r.xNorm, yNorm: r.yNorm })),
+      );
+      if (graphSegments) {
+        // The graph draws its own whole network at once, not one path
+        // per target room - stored under a single synthetic key per
+        // zone. Every real caller immediately flattens this map's
+        // values() into one segment list anyway (see
+        // buildDuctNetworkPrimitives), so the key itself carries no
+        // meaning beyond keeping this zone's segments out of any other
+        // zone's.
+        result.set(`__corridor_graph__:${zone.id}`, graphSegments);
+        continue;
+      }
+    }
+    zonesNeedingComputedRouting.push(zone);
+  }
+
+  if (zonesNeedingComputedRouting.length === 0) return result;
+
+  // Only derive the AI-based scale/obstacle geometry the computed router
+  // needs if at least one zone actually still needs it - a zone with a
+  // real corridor graph should never be blocked by an unrelated zone's
+  // (or its own graph's) scale-derivation trouble, and shouldn't force
+  // this extra work when it's not needed either.
   const scaleSampleRooms: ScaleSampleRoom[] = (sheetName != null ? extractedRooms.filter((er) => er.source_sheet === sheetName) : []).map(
     (er) => ({
       wallPageHorizontalLenFt: er.wall_page_horizontal_len_ft,
@@ -777,17 +818,15 @@ export function computeSheetDuctRouting(
     }),
   );
   const scale = derivePageScale(scaleSampleRooms, pageWidthPt, pageHeightPt);
-  if (scale.feetPerPagePoint == null) return null;
+  if (scale.feetPerPagePoint == null) return result.size > 0 ? result : null;
   const pageWidthFt = scale.feetPerPagePoint * pageWidthPt;
   const pageHeightFt = scale.feetPerPagePoint * pageHeightPt;
 
   const extractedBoxes = sheetName != null ? extractedRoomBoxesForPage(extractedRooms, sheetName) : [];
   const roomBoxes = resolveSheetRoomBoxes(roomsOnSheet, extractedBoxes);
   const allBoxes = [...roomBoxes.values()];
-  const roomById = new Map(roomsOnSheet.map((r) => [r.id, r]));
 
-  const result = new Map<string, RoutedDuctSegment[]>();
-  for (const zone of zonesOnSheet) {
+  for (const zone of zonesNeedingComputedRouting) {
     const ahuBox = (zone.ahuOwnRoomId ? roomBoxes.get(zone.ahuOwnRoomId) : null) ?? fallbackRoomBox(zone.ahuPoint);
     const targets = zone.targetRoomIds
       .map((id) => {

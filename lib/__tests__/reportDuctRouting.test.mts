@@ -70,6 +70,7 @@ function makeZone(overrides: Partial<ZoneRow>): ZoneRow {
     ahu_position_y_norm: null,
     ahu_position_source_drawing_id: null,
     ahu_position_source_page_number: null,
+    corridor_graph: null,
     ...overrides,
   };
 }

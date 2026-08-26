@@ -281,7 +281,16 @@ function baseReportDataWithDuctDesign(overrides: {
     room({ id: "r2", zone_id: "z2" }),
   ]);
   data.project.hvac_system_configuration = overrides.hvacSystemConfiguration;
-  data.residential!.zones = overrides.zones;
+  data.residential!.zones = overrides.zones.map((z) => ({
+    ...z,
+    selected_equipment_id: null,
+    equipment_selection_notes: null,
+    ahu_position_x_norm: null,
+    ahu_position_y_norm: null,
+    ahu_position_source_drawing_id: null,
+    ahu_position_source_page_number: null,
+    corridor_graph: null,
+  }));
   data.residential!.ductRuns = overrides.ductRuns;
   data.residential!.ductSchedule = overrides.ductSchedule;
   data.residential!.zoneEquipment = overrides.zoneEquipment;

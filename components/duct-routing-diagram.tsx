@@ -98,7 +98,7 @@ export function DuctRoutingDiagram({
                 r.position_x_norm != null &&
                 r.position_y_norm != null,
             )
-            .map((r) => ({ id: r.id, xNorm: r.position_x_norm!, yNorm: r.position_y_norm! }));
+            .map((r) => ({ id: r.id, name: r.name, xNorm: r.position_x_norm!, yNorm: r.position_y_norm! }));
           const zoneIdsOnSheet = [...new Set(sheet.pins.filter((p) => p.kind === "ahu").map((p) => p.zoneId))];
           const zonesOnSheet = zoneIdsOnSheet
             .map((zoneId) => {
@@ -112,6 +112,7 @@ export function DuctRoutingDiagram({
                 ahuPoint: { xNorm: ahuPin.xNorm, yNorm: ahuPin.yNorm },
                 ahuOwnRoomId: ahuOwnRoom?.id ?? null,
                 targetRoomIds: sheet.routes.filter((r) => r.zoneId === zoneId).map((r) => r.roomId),
+                corridorGraph: zones.find((z) => z.id === zoneId)?.corridor_graph ?? null,
               };
             })
             .filter((z): z is NonNullable<typeof z> => z != null);

@@ -47,6 +47,7 @@ import { resolveCounty, resolveLatLong } from "./countyLookup";
 import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessment";
 import type { CompassDirection } from "./solarIrradiance";
 import type { RoutedDuctSegment } from "./ductRouting";
+import type { CorridorGraph } from "./ductCorridorGraph";
 
 export type ReportProject = {
   id: string;
@@ -80,6 +81,11 @@ type ZoneDbRow = ManualJZone & {
   ahu_position_y_norm: number | null;
   ahu_position_source_drawing_id: string | null;
   ahu_position_source_page_number: number | null;
+  // Real, human-digitized corridor topology (lib/ductCorridorGraph.ts) -
+  // the routing source of truth for this zone when present, consumed by
+  // lib/reportImages.ts's attachFrozenImages once it has real page
+  // dimensions to calibrate against.
+  corridor_graph: CorridorGraph | null;
 };
 
 // Duct-routing report illustration (auto Manual D run-length feature) -
@@ -270,7 +276,7 @@ export type ReportData = {
     ductSchedule: DuctSizingResult[];
     ductRuns: DuctRunRow[];
     rooms: RoomRow[];
-    zones: ManualJZone[];
+    zones: ZoneDbRow[];
     // SUMMIT-REPORT-STANDARD.md Section 5.3 - "one panel per AHU/zone", not
     // one selection for the whole project. One entry per real zone (the
     // DB row, not the synthetic "Unassigned" bucket manualJ.zones can also
@@ -304,7 +310,7 @@ export type ReportData = {
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 const ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number";
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, corridor_graph";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 const COMMERCIAL_ZONE_COLUMNS =

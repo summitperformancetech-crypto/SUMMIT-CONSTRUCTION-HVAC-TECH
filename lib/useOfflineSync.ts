@@ -16,11 +16,19 @@ export type OfflineSyncState = {
 // data" - mounted once (components/offline-status-banner.tsx) so every
 // page shares the same state rather than each maintaining its own poll.
 export function useOfflineSync(): OfflineSyncState {
-  // Lazy initializer, not a setState call inside the effect below - this
-  // is the "read the real value once on mount" case the effect used to
-  // handle by calling setIsOnline synchronously, which triggers an
-  // avoidable extra render (react-hooks/set-state-in-effect).
-  const [isOnline, setIsOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  // Always starts true (never navigator.onLine) - diagnosed 2026-08-26
+  // via a real hydration-mismatch error: the server has no `navigator`
+  // and always renders as online, but the OLD lazy initializer here read
+  // the real navigator.onLine value synchronously during the client's
+  // FIRST render (hydration itself, not after it) - if the browser
+  // happened to report offline at that instant (headless Chrome/
+  // Puppeteer reports this by default, with no real network interface to
+  // track), the client's first paint disagreed with the server's and
+  // React discarded the whole tree. Starting both server and client at
+  // the same fixed value guarantees the first paint always matches; the
+  // real value is read exactly once in the mount effect below instead,
+  // safely after hydration has already completed.
+  const [isOnline, setIsOnline] = useState(true);
   const [pendingCount, setPendingCount] = useState(0);
   const [syncing, setSyncing] = useState(false);
 
@@ -53,6 +61,14 @@ export function useOfflineSync(): OfflineSyncState {
     // through the function call boundary.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshPendingCount();
+
+    // Corrects the initial always-true guess with the real value, now
+    // that we're safely past hydration (see the isOnline useState
+    // comment above) - synchronizing React state with a browser API
+    // unavailable during SSR can't happen any earlier than this.
+    if (!navigator.onLine) {
+      setIsOnline(false);
+    }
 
     function handleOnline() {
       setIsOnline(true);

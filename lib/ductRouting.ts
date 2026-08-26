@@ -773,23 +773,16 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
   const candidates: Candidate[] = [];
 
   for (const pin of sheet.pins) {
-    if (pin.kind === "room") {
-      const fx = pin.xNorm * 100;
-      const fy = pin.yNorm * 100;
-      // Uppercase, underlined (see the renderer) - matches
-      // REFERENCE-DOCS/IMG_3916.JPG's real room-label convention.
-      candidates.push({
-        kind: "room",
-        x: fx + 2.4,
-        y: fy - 2.2,
-        text: pin.label.toUpperCase(),
-        fontSize: 1.7,
-        textAnchor: "start",
-        rows: 1,
-        featureX: fx,
-        featureY: fy,
-      });
-    } else {
+    // Deliberately no room-name label here - the user's own explicit
+    // instruction was to draw ONLY supply/branch lines, registers,
+    // callouts, AHU, and the return-air plenum symbol, relying on the
+    // source PDF's own printed room labels rather than drawing a second,
+    // invented set on top of it. (A prior rebuild this session added
+    // uppercase/underlined room labels matching REFERENCE-DOCS/
+    // IMG_3916.JPG's convention without noticing this contradicted that
+    // instruction - caught via direct user review of the live output,
+    // not by re-reading the original spec.)
+    if (pin.kind === "ahu" || pin.kind === "return") {
       const trunkText = formatDuctSizeCfm(pin.trunkDiameterIn, pin.trunkCfm);
       if (trunkText) {
         const fx = pin.xNorm * 100;
@@ -1017,6 +1010,7 @@ export function computeSheetDuctRouting(
       const graphSegments = computeSegmentsFromCorridorGraph(
         zone.corridorGraph,
         roomsOnSheet.map((r) => ({ name: r.name, xNorm: r.xNorm, yNorm: r.yNorm })),
+        zone.ahuPoint,
       );
       if (graphSegments) {
         // The graph draws its own whole network at once, not one path

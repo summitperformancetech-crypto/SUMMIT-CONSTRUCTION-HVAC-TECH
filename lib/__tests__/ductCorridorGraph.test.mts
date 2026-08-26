@@ -101,7 +101,7 @@ describe("buildSegmentsFromCorridorGraph", () => {
         { from: "C1", to: "kitchen", type: "branch" },
       ],
     };
-    const segments = buildSegmentsFromCorridorGraph(graph, calibration);
+    const segments = buildSegmentsFromCorridorGraph(graph, calibration, null);
     expect(segments).toHaveLength(2);
     expect(segments[0].cls).toBe("trunk");
     expect(segments[1].cls).toBe("branch");
@@ -122,7 +122,7 @@ describe("buildSegmentsFromCorridorGraph", () => {
       edges: [{ from: "C1", to: "bedroom_3", type: "branch" }],
     };
     const calibration: AffineCalibration = { scaleX: 0.01, offsetX: 0, scaleY: 0.01, offsetY: 0 };
-    const segments = buildSegmentsFromCorridorGraph(graph, calibration);
+    const segments = buildSegmentsFromCorridorGraph(graph, calibration, null);
     expect(segments).toHaveLength(2);
     for (const seg of segments) {
       const dx = Math.abs(seg.toXNorm - seg.fromXNorm);
@@ -144,8 +144,41 @@ describe("buildSegmentsFromCorridorGraph", () => {
       edges: [{ from: "AHU_1", to: "kitchen", type: "trunk" }],
     };
     const calibration: AffineCalibration = { scaleX: 0.01, offsetX: 0, scaleY: 0.01, offsetY: 0 };
-    const segments = buildSegmentsFromCorridorGraph(graph, calibration);
+    const segments = buildSegmentsFromCorridorGraph(graph, calibration, null);
     expect(segments).toHaveLength(1);
+  });
+
+  // Diagnosed 2026-08-26 against real Schneider data: the digitized
+  // file's own "ahu" coordinate is a rough placement estimate (its own
+  // text says so - "per Summit's existing AHU pin" / "NEEDS PLACEMENT
+  // in Summit per your pin list"), not a confirmed reading. Using it
+  // as-is made the trunk network's start point land ~19ft from the
+  // real, technician-confirmed AHU pin - a visible disconnect between
+  // the AHU icon (drawn from the real pin) and where the duct trunk
+  // actually starts.
+  it("uses the real confirmed AHU point instead of the graph's own calibrated AHU coordinate when one is given", () => {
+    const graph: CorridorGraph = {
+      ahu: { id: "AHU_1", x: 30, y: 20 },
+      rooms: [{ id: "kitchen", name: "Kitchen", x: 30, y: 20 }],
+      corridor_nodes: [{ id: "C1", x: 20, y: 20 }],
+      edges: [{ from: "AHU_1", to: "C1", type: "trunk" }],
+    };
+    const realAhuPoint = { xNorm: 0.66, yNorm: 0.45 }; // far from the graph's own calibrated (0.3, 0.2)
+    const segments = buildSegmentsFromCorridorGraph(graph, calibration, realAhuPoint);
+    expect(segments[0].fromXNorm).toBeCloseTo(0.66);
+    expect(segments[0].fromYNorm).toBeCloseTo(0.45);
+  });
+
+  it("falls back to the graph's own calibrated AHU coordinate when no real confirmed point is given", () => {
+    const graph: CorridorGraph = {
+      ahu: { id: "AHU_1", x: 30, y: 20 },
+      rooms: [{ id: "kitchen", name: "Kitchen", x: 30, y: 20 }],
+      corridor_nodes: [{ id: "C1", x: 20, y: 20 }],
+      edges: [{ from: "AHU_1", to: "C1", type: "trunk" }],
+    };
+    const segments = buildSegmentsFromCorridorGraph(graph, calibration, null);
+    expect(segments[0].fromXNorm).toBeCloseTo(0.3);
+    expect(segments[0].fromYNorm).toBeCloseTo(0.2);
   });
 
   it("skips an edge that references an undefined node id instead of fabricating a position", () => {
@@ -155,7 +188,7 @@ describe("buildSegmentsFromCorridorGraph", () => {
       corridor_nodes: [],
       edges: [{ from: "AHU_1", to: "nonexistent_node", type: "trunk" }],
     };
-    const segments = buildSegmentsFromCorridorGraph(graph, calibration);
+    const segments = buildSegmentsFromCorridorGraph(graph, calibration, null);
     expect(segments).toHaveLength(0);
   });
 });
@@ -175,7 +208,7 @@ describe("computeSegmentsFromCorridorGraph - end to end", () => {
       { name: "Kitchen", xNorm: 0.3, yNorm: 0.2 },
       { name: "Living Room", xNorm: 0.2, yNorm: 0.2 },
     ];
-    const segments = computeSegmentsFromCorridorGraph(graph, summitRooms);
+    const segments = computeSegmentsFromCorridorGraph(graph, summitRooms, null);
     expect(segments).not.toBeNull();
     expect(segments).toHaveLength(1);
   });
@@ -187,7 +220,7 @@ describe("computeSegmentsFromCorridorGraph - end to end", () => {
       corridor_nodes: [],
       edges: [],
     };
-    const segments = computeSegmentsFromCorridorGraph(graph, []);
+    const segments = computeSegmentsFromCorridorGraph(graph, [], null);
     expect(segments).toBeNull();
   });
 });

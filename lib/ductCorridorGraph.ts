@@ -128,9 +128,28 @@ export function applyCorridorGraphCalibration(point: { x: number; y: number }, c
 // produce one.
 const EDGE_ALIGNMENT_TOLERANCE_NORM = 0.006;
 
-export function buildSegmentsFromCorridorGraph(graph: CorridorGraph, calibration: AffineCalibration): RoutedDuctSegment[] {
+export function buildSegmentsFromCorridorGraph(
+  graph: CorridorGraph,
+  calibration: AffineCalibration,
+  // The zone's own real, technician-confirmed AHU pin
+  // (zones.ahu_position_x_norm/y_norm) - always preferred over the
+  // graph's own "ahu" coordinate when known. The digitized file's own
+  // AHU point is a rough placement estimate, not a confirmed reading
+  // (its own text says so directly: Zone 1's says "per Summit's
+  // existing AHU pin" - i.e. defer to it - and Zone 2's says "NEEDS
+  // PLACEMENT in Summit per your pin list... suggested near stair
+  // landing"). Diagnosed 2026-08-26 against real Schneider data: the
+  // graph's calibrated AHU point landed ~19ft from the real confirmed
+  // pin on Zone 1 (inside the Kitchen instead of the real Utility Room)
+  // and inside the stairwell instead of the real Unfinished Attic on
+  // Zone 2 - the AHU icon (drawn from the real pin) and the trunk
+  // network's own start point (drawn from the graph) were visibly
+  // disconnected, which is what the real "duct runs look wrong"
+  // complaint was actually seeing.
+  realAhuPoint: NormPoint | null,
+): RoutedDuctSegment[] {
   const positionById = new Map<string, NormPoint>();
-  positionById.set(graph.ahu.id, applyCorridorGraphCalibration(graph.ahu, calibration));
+  positionById.set(graph.ahu.id, realAhuPoint ?? applyCorridorGraphCalibration(graph.ahu, calibration));
   for (const room of graph.rooms) positionById.set(room.id, applyCorridorGraphCalibration(room, calibration));
   for (const node of graph.corridor_nodes) positionById.set(node.id, applyCorridorGraphCalibration(node, calibration));
 
@@ -169,8 +188,9 @@ export function buildSegmentsFromCorridorGraph(graph: CorridorGraph, calibration
 export function computeSegmentsFromCorridorGraph(
   graph: CorridorGraph,
   summitRoomsOnSheet: { name: string; xNorm: number; yNorm: number }[],
+  realAhuPoint: NormPoint | null,
 ): RoutedDuctSegment[] | null {
   const calibration = fitCorridorGraphCalibration(graph.rooms, summitRoomsOnSheet);
   if (!calibration) return null;
-  return buildSegmentsFromCorridorGraph(graph, calibration);
+  return buildSegmentsFromCorridorGraph(graph, calibration, realAhuPoint);
 }

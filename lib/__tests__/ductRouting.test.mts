@@ -499,36 +499,52 @@ describe("formatDuctSizeCfm", () => {
 });
 
 describe("layoutDuctRoutingLabels", () => {
-  it("leaves well-separated labels at their natural anchor position", () => {
+  // Explicit user requirement (this session): draw ONLY supply/branch
+  // lines, registers, callouts, AHU, and the return-air plenum symbol -
+  // rely on the source PDF's own printed room labels, never draw a
+  // second, invented set of room-name text on top of it. A prior rebuild
+  // this session added room-name labels anyway (matching the visual
+  // reference's own convention) without noticing this contradicted that
+  // instruction - caught via direct user review of the live PDF output,
+  // not by re-reading the spec. This is the regression test for it.
+  it("never produces a label for a room pin, regardless of how many rooms are on the sheet", () => {
     const labels = layoutDuctRoutingLabels({
       pins: [
         { kind: "room", label: "Kitchen", xNorm: 0.1, yNorm: 0.1 },
         { kind: "room", label: "Bedroom 5", xNorm: 0.9, yNorm: 0.9 },
+        { kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.5, yNorm: 0.5 },
       ],
       routes: [],
     });
-    expect(labels).toHaveLength(2);
-    // Room labels render uppercase (see REFERENCE-DOCS/IMG_3916.JPG's
-    // real room-label convention).
-    const kitchen = labels.find((l) => l.text === "KITCHEN")!;
-    const bedroom = labels.find((l) => l.text === "BEDROOM 5")!;
-    expect(kitchen.x).toBeCloseTo(0.1 * 100 + 2.4);
-    expect(kitchen.y).toBeCloseTo(0.1 * 100 - 2.2);
-    expect(bedroom.x).toBeCloseTo(0.9 * 100 + 2.4);
-    expect(bedroom.y).toBeCloseTo(0.9 * 100 - 2.2);
+    expect(labels.some((l) => l.kind === "room")).toBe(false);
+    expect(labels.some((l) => l.text === "KITCHEN" || l.text === "BEDROOM 5")).toBe(false);
+  });
+
+  it("leaves a well-separated run label at its natural anchor position", () => {
+    const labels = layoutDuctRoutingLabels({
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
+      routes: [
+        { toXNorm: 0.1, toYNorm: 0.1, diameterIn: 7, cfm: 200 },
+        { toXNorm: 0.9, toYNorm: 0.9, diameterIn: 6, cfm: 85 },
+      ],
+    });
+    expect(labels.filter((l) => l.kind === "run")).toHaveLength(2);
+    const first = labels.find((l) => l.text === '7"⌀')!;
+    expect(first.x).toBeCloseTo(0.1 * 100 + 2.4);
+    expect(first.y).toBeCloseTo(0.1 * 100 + 2.6);
   });
 
   // Root cause of the real "impossible to read" complaint (diagnosed
   // 2026-08-25 against Schneider's actual dense room cluster) - two
   // labels landing on essentially the same point must not be drawn on
   // top of each other.
-  it("pushes a colliding label away from an earlier one instead of stacking them", () => {
+  it("pushes a colliding run label away from an earlier one instead of stacking them", () => {
     const labels = layoutDuctRoutingLabels({
-      pins: [
-        { kind: "room", label: "Kitchen", xNorm: 0.5, yNorm: 0.5 },
-        { kind: "room", label: "Bathroom 2", xNorm: 0.5, yNorm: 0.5 },
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
+      routes: [
+        { toXNorm: 0.5, toYNorm: 0.5, diameterIn: 7, cfm: 200 },
+        { toXNorm: 0.5, toYNorm: 0.5, diameterIn: 6, cfm: 85 },
       ],
-      routes: [],
     });
     expect(labels).toHaveLength(2);
     const [first, second] = labels;
@@ -538,10 +554,7 @@ describe("layoutDuctRoutingLabels", () => {
 
   it("anchors a run's size/CFM label at the register end, not the line midpoint", () => {
     const labels = layoutDuctRoutingLabels({
-      pins: [
-        { kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 },
-        { kind: "room", label: "Dining Room", xNorm: 0.8, yNorm: 0.2 },
-      ],
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
       routes: [{ toXNorm: 0.8, toYNorm: 0.2, diameterIn: 7, cfm: 200 }],
     });
     const runLabel = labels.find((l) => l.kind === "run")!;
@@ -563,30 +576,31 @@ describe("layoutDuctRoutingLabels", () => {
 
   it("leaves anchorX/anchorY equal to the natural (undisplaced) position when nothing collided", () => {
     const labels = layoutDuctRoutingLabels({
-      pins: [{ kind: "room", label: "Kitchen", xNorm: 0.1, yNorm: 0.1 }],
-      routes: [],
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
+      routes: [{ toXNorm: 0.1, toYNorm: 0.1, diameterIn: 7, cfm: 200 }],
     });
     const label = labels[0];
-    // The room label's own natural offset is +2.4/-2.2 from the pin -
-    // when undisplaced, the leader line target (anchorX/Y, the true pin)
-    // and the label's own drawn position (x/y) are close enough that a
-    // renderer can skip drawing a leader line at all (direct adjacency).
+    // The run label's own natural offset is +2.4/+2.6 from the register -
+    // when undisplaced, the leader line target (anchorX/Y, the true
+    // register) and the label's own drawn position (x/y) are close enough
+    // that a renderer can skip drawing a leader line at all (direct
+    // adjacency).
     const distance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
     expect(distance).toBeLessThan(4);
   });
 
   it("a label pushed to clear a collision keeps its anchor at the true feature point, not the pushed position", () => {
     const labels = layoutDuctRoutingLabels({
-      pins: [
-        { kind: "room", label: "Kitchen", xNorm: 0.5, yNorm: 0.5 },
-        { kind: "room", label: "Bathroom 2", xNorm: 0.5, yNorm: 0.5 },
+      pins: [{ kind: "ahu", label: "Zone 1 (AHU)", xNorm: 0.2, yNorm: 0.2 }],
+      routes: [
+        { toXNorm: 0.5, toYNorm: 0.5, diameterIn: 7, cfm: 200 },
+        { toXNorm: 0.5, toYNorm: 0.5, diameterIn: 6, cfm: 85 },
       ],
-      routes: [],
     });
     const pushed = labels.find((l) => Math.abs(l.y - l.anchorY) > 0.5 || Math.abs(l.x - l.anchorX) > 0.5);
     expect(pushed).toBeDefined();
-    // Anchor still points at the real pin (50, 50), regardless of where
-    // decluttering moved the label text itself.
+    // Anchor still points at the real register (50, 50), regardless of
+    // where decluttering moved the label text itself.
     expect(pushed!.anchorX).toBeCloseTo(50);
     expect(pushed!.anchorY).toBeCloseTo(50);
   });

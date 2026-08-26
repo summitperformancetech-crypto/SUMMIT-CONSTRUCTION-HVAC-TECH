@@ -146,6 +146,7 @@ describe("validateReportTotals", () => {
       ductRoutingModeByZone: [],
       ductDiffusers: [],
       ductTerminations: [],
+      espCapacityCheckByZone: [],
     });
 
     const result = validateReportTotals(data);
@@ -190,6 +191,7 @@ describe("validateReportTotals", () => {
       ductRoutingModeByZone: [],
       ductDiffusers: [],
       ductTerminations: [],
+      espCapacityCheckByZone: [],
     });
 
     const result = validateReportTotals(data);

@@ -18,9 +18,12 @@ import {
   computeManualD,
   computeRequiredCfmForRooms,
   checkDuctInsulationCompliance,
+  checkEspVsEquipmentCapacity,
   type DuctSizingResult,
   type DuctSizingTableRow,
   type DuctInsulationComplianceResult,
+  type BlowerPerformancePoint,
+  type EspCapacityCheckResult,
 } from "./manualD";
 import { buildCodeMinimumsByLocation } from "./constants/ductLocations";
 import type { DuctRunRow } from "@/components/duct-design-section";
@@ -85,6 +88,11 @@ export type ReportClimateZone = {
 
 type ZoneDbRow = ManualJZone & {
   selected_equipment_id: string | null;
+  // Permit-Submittable Manual D Package, Section 5 - a zone's real
+  // selected air handler, independent of its selected outdoor unit
+  // (one air handler model commonly matches a range of outdoor
+  // tonnages per the manufacturer's own match-up tables).
+  selected_air_handler_equipment_id: string | null;
   equipment_selection_notes: string | null;
   ahu_position_x_norm: number | null;
   ahu_position_y_norm: number | null;
@@ -483,6 +491,10 @@ export type ReportData = {
     // Real per-zone duct terminations (exhaust fan/dryer vent/ODA/
     // condensate) - raw rows, same reasoning as ductDiffusers above.
     ductTerminations: DuctTerminationRow[];
+    // Permit-Submittable Manual D Package, Section 5 - real ESP-vs-
+    // equipment-capacity result per zone, null when that zone has no
+    // selected air handler yet (never a fabricated pass).
+    espCapacityCheckByZone: { zoneId: string; zoneName: string; result: EspCapacityCheckResult | null }[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -494,7 +506,7 @@ export type ReportData = {
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 const ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, selected_air_handler_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc";
 const DUCT_DIFFUSER_COLUMNS =
@@ -519,7 +531,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration",
+      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -787,7 +799,14 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
           }[]
         >(),
       ]);
-      const catalog: EquipmentCatalogEntry[] = (catalogRows ?? []).map((r) => ({
+      // air_handler rows are a real equipment_catalog entry type (Section
+      // 5 ESP gate needs them selectable per zone), but they have no
+      // independent cooling/heating capacity of their own - excluded here
+      // so they never get ranked as if they were a candidate outdoor
+      // unit. See selectedAirHandler/blower-performance handling below.
+      const catalog: EquipmentCatalogEntry[] = (catalogRows ?? [])
+        .filter((r) => r.equipment_type !== "air_handler")
+        .map((r) => ({
         id: r.id,
         manufacturer: r.manufacturer,
         modelNumber: r.model_number,
@@ -919,6 +938,44 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       project.indoor_design_temp_cooling_f,
     );
 
+    // Permit-Submittable Manual D Package, Section 5 - ESP vs. equipment
+    // capacity, per zone. Only fetches blower_performance rows for
+    // equipment a zone has actually selected (usually 0-1 distinct air
+    // handlers per project) - not the whole reference table.
+    const selectedAirHandlerIds = [
+      ...new Set((zones ?? []).map((z) => z.selected_air_handler_equipment_id).filter((id): id is string => id != null)),
+    ];
+    const { data: blowerPerformanceRows } =
+      selectedAirHandlerIds.length > 0
+        ? await supabase
+            .from("equipment_blower_performance")
+            .select("equipment_id, speed_tap, esp_iwc, cfm")
+            .in("equipment_id", selectedAirHandlerIds)
+            .returns<{ equipment_id: string; speed_tap: string; esp_iwc: number; cfm: number }[]>()
+        : { data: [] as { equipment_id: string; speed_tap: string; esp_iwc: number; cfm: number }[] };
+    const blowerPointsByEquipment = new Map<string, BlowerPerformancePoint[]>();
+    for (const r of blowerPerformanceRows ?? []) {
+      const point: BlowerPerformancePoint = { equipmentId: r.equipment_id, speedTap: r.speed_tap, espIwc: r.esp_iwc, cfm: r.cfm };
+      if (!blowerPointsByEquipment.has(r.equipment_id)) blowerPointsByEquipment.set(r.equipment_id, []);
+      blowerPointsByEquipment.get(r.equipment_id)!.push(point);
+    }
+    const espCapacityCheckByZone: { zoneId: string; zoneName: string; result: EspCapacityCheckResult | null }[] = (
+      zones ?? []
+    ).map((zone) => {
+      if (!zone.selected_air_handler_equipment_id) {
+        return { zoneId: zone.id, zoneName: zone.name, result: null };
+      }
+      const zoneCfm = (rooms ?? [])
+        .filter((r) => r.zone_id === zone.id)
+        .reduce((sum, r) => sum + (illustrationCfmByRoom.get(r.id) ?? 0), 0);
+      const blowerPoints = blowerPointsByEquipment.get(zone.selected_air_handler_equipment_id) ?? [];
+      return {
+        zoneId: zone.id,
+        zoneName: zone.name,
+        result: checkEspVsEquipmentCapacity(zoneCfm, project.blower_tesp_iwc, blowerPoints),
+      };
+    });
+
     residential = {
       envelope,
       manualJ,
@@ -952,6 +1009,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       }),
       ductDiffusers: ductDiffusers ?? [],
       ductTerminations: ductTerminations ?? [],
+      espCapacityCheckByZone,
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&

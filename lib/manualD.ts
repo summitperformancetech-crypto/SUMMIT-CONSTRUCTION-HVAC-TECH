@@ -120,6 +120,119 @@ export type DevicePressureLosses = {
   grillesRegistersIwc: number;
 };
 
+// -----------------------------------------------------------------------
+// Permit-Submittable Manual D Package, Section 5 - ESP vs. equipment
+// rated capacity. Real per-model airflow-vs-external-static-pressure data
+// (equipment_blower_performance table, e.g. Goodman SS-GAVPTC's own
+// published "Airflow Data" table) - linear interpolation over ESP within
+// one speed tap, the correct method for a manufacturer curve sampled at
+// discrete pressure points (same "real points, interpolate between them,
+// never extrapolate past the table" principle as interpolateCoolingCapacity
+// in lib/manualS.ts, just 1-D here since speed tap is a discrete field
+// selection, not an interpolation axis).
+// -----------------------------------------------------------------------
+export type BlowerPerformancePoint = {
+  equipmentId: string;
+  speedTap: string;
+  espIwc: number;
+  cfm: number;
+};
+
+export function interpolateBlowerCfmAtEsp(
+  points: BlowerPerformancePoint[],
+  speedTap: string,
+  espIwc: number,
+): number | null {
+  const tapPoints = points.filter((p) => p.speedTap === speedTap).sort((a, b) => a.espIwc - b.espIwc);
+  if (tapPoints.length === 0) return null;
+  if (espIwc <= tapPoints[0].espIwc) return tapPoints[0].cfm;
+  if (espIwc >= tapPoints[tapPoints.length - 1].espIwc) return tapPoints[tapPoints.length - 1].cfm;
+  for (let i = 0; i < tapPoints.length - 1; i++) {
+    const lo = tapPoints[i];
+    const hi = tapPoints[i + 1];
+    if (espIwc >= lo.espIwc && espIwc <= hi.espIwc) {
+      const t = hi.espIwc === lo.espIwc ? 0 : (espIwc - lo.espIwc) / (hi.espIwc - lo.espIwc);
+      return lo.cfm + (hi.cfm - lo.cfm) * t;
+    }
+  }
+  return null;
+}
+
+// Picks the real speed tap whose mid-pressure (0.5 iwc, a representative
+// residential design-ESP point) airflow is closest to the zone's required
+// CFM - the same "adjust the speed tap to match installation
+// requirements" selection the manufacturer's own install literature
+// describes an installer doing by hand (see Goodman AVPTC installation
+// instructions p.14). An automated stand-in for that real field step, not
+// a fabricated rating.
+export function selectBlowerSpeedTap(points: BlowerPerformancePoint[], requiredCfm: number): string | null {
+  const taps = [...new Set(points.map((p) => p.speedTap))];
+  if (taps.length === 0) return null;
+  let best: { tap: string; diff: number } | null = null;
+  for (const tap of taps) {
+    const cfmAtMidEsp = interpolateBlowerCfmAtEsp(points, tap, 0.5);
+    if (cfmAtMidEsp == null) continue;
+    const diff = Math.abs(cfmAtMidEsp - requiredCfm);
+    if (best == null || diff < best.diff) best = { tap, diff };
+  }
+  return best?.tap ?? null;
+}
+
+export const ESP_GATE_SAFETY_FACTOR_PERCENT = 12.5;
+
+export type EspCapacityCheckResult = {
+  determinable: boolean;
+  requiredCfm: number;
+  requiredCfmWithSafetyFactor: number;
+  blowerTespIwc: number | null;
+  speedTap: string | null;
+  deliverableCfmAtTesp: number | null;
+  safetyFactorPercent: number;
+  passes: boolean | null;
+};
+
+// Real gate, not a checkbox: confirms the SELECTED air handler's own
+// published blower curve can actually deliver the zone's required
+// airflow at the project's assumed TESP, with a safety margin applied to
+// the required CFM side (per the user's own stated 10-15% range -
+// 12.5%, the midpoint, used as a single disclosed constant rather than a
+// second undocumented input). Genuinely not determinable (never a
+// fabricated pass) until a zone has both a selected air handler with
+// real blower_performance rows AND a project blower_tesp_iwc value.
+export function checkEspVsEquipmentCapacity(
+  requiredCfm: number,
+  blowerTespIwc: number | null,
+  blowerPoints: BlowerPerformancePoint[],
+): EspCapacityCheckResult {
+  const requiredCfmWithSafetyFactor = requiredCfm * (1 + ESP_GATE_SAFETY_FACTOR_PERCENT / 100);
+  const speedTap = selectBlowerSpeedTap(blowerPoints, requiredCfm);
+
+  if (blowerTespIwc == null || speedTap == null) {
+    return {
+      determinable: false,
+      requiredCfm,
+      requiredCfmWithSafetyFactor,
+      blowerTespIwc,
+      speedTap,
+      deliverableCfmAtTesp: null,
+      safetyFactorPercent: ESP_GATE_SAFETY_FACTOR_PERCENT,
+      passes: null,
+    };
+  }
+
+  const deliverableCfmAtTesp = interpolateBlowerCfmAtEsp(blowerPoints, speedTap, blowerTespIwc);
+  return {
+    determinable: deliverableCfmAtTesp != null,
+    requiredCfm,
+    requiredCfmWithSafetyFactor,
+    blowerTespIwc,
+    speedTap,
+    deliverableCfmAtTesp,
+    safetyFactorPercent: ESP_GATE_SAFETY_FACTOR_PERCENT,
+    passes: deliverableCfmAtTesp != null ? deliverableCfmAtTesp >= requiredCfmWithSafetyFactor : null,
+  };
+}
+
 export type AvailableStaticPressureResult = {
   availableStaticPressureIwc: number | null;
   totalDeviceLossesIwc: number;

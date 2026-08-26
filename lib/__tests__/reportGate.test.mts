@@ -146,6 +146,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       ductRoutingModeByZone: [],
       ductDiffusers: [],
       ductTerminations: [],
+      espCapacityCheckByZone: [],
       ductRuns: [],
       rooms,
       zones: [],
@@ -292,6 +293,7 @@ function baseReportDataWithDuctDesign(overrides: {
   data.residential!.zones = overrides.zones.map((z) => ({
     ...z,
     selected_equipment_id: null,
+    selected_air_handler_equipment_id: null,
     equipment_selection_notes: null,
     ahu_position_x_norm: null,
     ahu_position_y_norm: null,

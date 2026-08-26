@@ -90,6 +90,7 @@ function makeZone(overrides: Partial<ZoneRow>): ZoneRow {
     name: "Zone 1",
     ahu_label: null,
     selected_equipment_id: null,
+    selected_air_handler_equipment_id: null,
     equipment_selection_notes: null,
     ahu_position_x_norm: null,
     ahu_position_y_norm: null,

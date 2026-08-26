@@ -91,6 +91,9 @@ export type RoomRow = ManualJRoom & {
 // know about equipment selection.
 export type ZoneRow = ManualJZone & {
   selected_equipment_id: string | null;
+  // Permit-Submittable Manual D Package, Section 5 - a zone's real
+  // selected air handler, independent of the outdoor unit above.
+  selected_air_handler_equipment_id: string | null;
   equipment_selection_notes: string | null;
   // AHU/mechanical-equipment position - always tech-placed from scratch
   // (never AI-suggested, see lib/ductRouting.ts's module comment for why),
@@ -148,7 +151,7 @@ export const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, window_front_area_sqft, window_rear_area_sqft, window_left_area_sqft, window_right_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 
 const ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, selected_air_handler_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
 
 // Diagnosed 2026-08-23 against real data (Kinsela): a room this drawing
 // genuinely shows (e.g. a wet bar, a second hallway) that doesn't match
@@ -623,6 +626,7 @@ export const ManualJWorkflow = forwardRef<
           manualJCoolingTotalBtuh: realZones.reduce((sum, entry) => sum + entry.zoneLoad.coolingTotalBtuh, 0),
           manualJHeatingBtuh: realZones.reduce((sum, entry) => sum + entry.zoneLoad.heatingBtuh, 0),
           initialSelectedEquipmentId: allAgree ? realZones[0].zone.selected_equipment_id : null,
+          initialSelectedAirHandlerId: allAgree ? realZones[0].zone.selected_air_handler_equipment_id : null,
           initialEquipmentSelectionNotes: allAgree ? realZones[0].zone.equipment_selection_notes : null,
         },
       ];
@@ -635,6 +639,7 @@ export const ManualJWorkflow = forwardRef<
       manualJCoolingTotalBtuh: entry.zoneLoad.coolingTotalBtuh,
       manualJHeatingBtuh: entry.zoneLoad.heatingBtuh,
       initialSelectedEquipmentId: entry.zone.selected_equipment_id,
+      initialSelectedAirHandlerId: entry.zone.selected_air_handler_equipment_id,
       initialEquipmentSelectionNotes: entry.zone.equipment_selection_notes,
     }));
   }, [results, zones, systemConfiguration]);
@@ -1681,6 +1686,7 @@ export const ManualJWorkflow = forwardRef<
             summerCoincidentWetbulbF={summerCoincidentWetbulbF}
             winterOutdoorDesignF={winterDesignTempF}
             initialSelectedEquipmentId={panel.initialSelectedEquipmentId}
+            initialSelectedAirHandlerId={panel.initialSelectedAirHandlerId}
             initialEquipmentSelectionNotes={panel.initialEquipmentSelectionNotes}
             preferredEquipmentIds={preferredEquipmentIds}
             exclusiveEquipmentIds={exclusiveEquipmentIds}

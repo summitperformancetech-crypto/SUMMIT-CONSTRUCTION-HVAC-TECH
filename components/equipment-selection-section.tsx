@@ -50,6 +50,7 @@ const TYPE_LABEL: Record<EquipmentCatalogEntry["equipmentType"], string> = {
   heat_pump: "Heat Pump",
   furnace: "Furnace",
   package_unit: "Package Unit",
+  air_handler: "Air Handler",
 };
 
 const DEFAULT_VISIBLE_COUNT = 3;
@@ -73,6 +74,7 @@ export function EquipmentSelectionSection({
   summerCoincidentWetbulbF,
   winterOutdoorDesignF,
   initialSelectedEquipmentId,
+  initialSelectedAirHandlerId,
   initialEquipmentSelectionNotes,
   preferredEquipmentIds,
   exclusiveEquipmentIds,
@@ -97,6 +99,7 @@ export function EquipmentSelectionSection({
   summerCoincidentWetbulbF: number;
   winterOutdoorDesignF: number;
   initialSelectedEquipmentId: string | null;
+  initialSelectedAirHandlerId: string | null;
   initialEquipmentSelectionNotes: string | null;
   preferredEquipmentIds: ReadonlySet<string>;
   exclusiveEquipmentIds: ReadonlySet<string>;
@@ -123,6 +126,37 @@ export function EquipmentSelectionSection({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
 
+  // Permit-Submittable Manual D Package, Section 5 - a zone's real
+  // selected air handler, independent of the outdoor unit selected
+  // below. air_handler rows are excluded from `ranked` (see that
+  // useMemo's own comment) but still present in the raw `catalog` prop,
+  // so this reuses it rather than needing a second fetch/prop.
+  const airHandlers = useMemo(() => catalog.filter((c) => c.equipmentType === "air_handler"), [catalog]);
+  const [selectedAirHandlerId, setSelectedAirHandlerId] = useState(initialSelectedAirHandlerId ?? "");
+  const [airHandlerSaving, setAirHandlerSaving] = useState(false);
+  const [airHandlerError, setAirHandlerError] = useState<string | null>(null);
+
+  async function handleSelectAirHandler(equipmentId: string) {
+    setAirHandlerError(null);
+    setAirHandlerSaving(true);
+    try {
+      const supabase = createClient();
+      const { error: saveError } = await supabase
+        .from("zones")
+        .update({ selected_air_handler_equipment_id: equipmentId || null })
+        .in("id", zoneIds);
+      if (saveError) {
+        setAirHandlerError(saveError.message);
+        return;
+      }
+      setSelectedAirHandlerId(equipmentId);
+    } catch (err) {
+      setAirHandlerError(err instanceof Error ? err.message : "Failed to save air handler selection - check your connection and try again.");
+    } finally {
+      setAirHandlerSaving(false);
+    }
+  }
+
   const pointsByEquipment = useMemo(() => {
     const map = new Map<string, PerformancePoint[]>();
     for (const p of performancePoints) {
@@ -139,7 +173,14 @@ export function EquipmentSelectionSection({
   // this array at all, by design - there is no "show it anyway, ranked
   // low" path.
   const ranked = useMemo(() => {
-    const evals: EquipmentEvaluation[] = catalog.map((equipment) =>
+    // air_handler rows are a real catalog entry type (the Permit-
+    // Submittable Manual D Package's ESP gate needs them selectable per
+    // zone - see components/duct-design-section.tsx), but they carry no
+    // independent cooling/heating capacity - excluded here so one never
+    // gets ranked as if it were a candidate outdoor unit.
+    const evals: EquipmentEvaluation[] = catalog
+      .filter((equipment) => equipment.equipmentType !== "air_handler")
+      .map((equipment) =>
       evaluateEquipment(
         equipment,
         pointsByEquipment.get(equipment.id) ?? [],
@@ -408,6 +449,46 @@ export function EquipmentSelectionSection({
           disabled={!canSelectEquipment}
           className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
         />
+      </div>
+
+      <div className="mt-6 border-t border-zinc-800 pt-4">
+        <h3 className="mb-2 text-sm font-semibold text-brand-silver-highlight">Air Handler (ESP Gate)</h3>
+        <p className="mb-3 text-xs text-brand-grey-text">
+          Selecting a real air handler with published blower-performance data enables the Design Check
+          Summary&apos;s ESP-vs-equipment-capacity check for this zone. Independent of the outdoor unit selected
+          above - one air handler model commonly matches a range of outdoor tonnages.
+        </p>
+        {airHandlerError && (
+          <p className="mb-3 text-sm text-red-400" role="alert">
+            {airHandlerError}
+          </p>
+        )}
+        {airHandlers.length === 0 ? (
+          <p className="text-xs text-brand-grey-text">No air handlers in the catalog yet.</p>
+        ) : (
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedAirHandlerId}
+              onChange={(e) => setSelectedAirHandlerId(e.target.value)}
+              disabled={!canSelectEquipment}
+              className="rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <option value="">None selected</option>
+              {airHandlers.map((ah) => (
+                <option key={ah.id} value={ah.id}>
+                  {ah.manufacturer} {ah.modelNumber}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => handleSelectAirHandler(selectedAirHandlerId)}
+              disabled={!canSelectEquipment || airHandlerSaving}
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+            >
+              {airHandlerSaving ? "Saving..." : "Save"}
+            </button>
+          </div>
+        )}
       </div>
     </section>
   );

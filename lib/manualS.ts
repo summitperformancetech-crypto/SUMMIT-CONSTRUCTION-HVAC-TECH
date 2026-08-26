@@ -1,4 +1,9 @@
-export type EquipmentType = "split_ac" | "heat_pump" | "furnace" | "package_unit";
+// air_handler: a real equipment_catalog entry type with no independent
+// cooling/heating capacity of its own - selectable per zone for the
+// Permit-Submittable Manual D Package's ESP-vs-capacity gate (see
+// lib/manualD.ts's checkEspVsEquipmentCapacity), explicitly excluded
+// from rankEquipment's candidate pool wherever that pool is built.
+export type EquipmentType = "split_ac" | "heat_pump" | "furnace" | "package_unit" | "air_handler";
 export type StageType = "single" | "two_stage" | "variable_speed";
 
 export type EquipmentCatalogEntry = {

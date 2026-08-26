@@ -15,8 +15,13 @@ import {
   estimateHeatingSupplyAirTempF,
   TRUNK_MAX_VELOCITY_FPM,
   BRANCH_MAX_VELOCITY_FPM,
+  interpolateBlowerCfmAtEsp,
+  selectBlowerSpeedTap,
+  checkEspVsEquipmentCapacity,
+  ESP_GATE_SAFETY_FACTOR_PERCENT,
   type DuctSizingTableRow,
   type DuctRunInput,
+  type BlowerPerformancePoint,
 } from "../manualD";
 import type { RoomLoadResult } from "../manualJ";
 
@@ -262,5 +267,118 @@ describe("checkDuctInsulationCompliance", () => {
     const result = checkDuctInsulationCompliance(runs, roomsById, codeMinimumsByLocation);
     expect(result.has("trunk1")).toBe(false);
     expect(result.has("b-no-room")).toBe(false);
+  });
+});
+
+// Real Goodman AVPTC25B14B tap-A airflow data (Goodman SS-GAVPTC
+// Specification Sheet, p.5 "Airflow Data" table - see the
+// 20260826030000 migration for the full sourced dataset). Using real
+// transcribed OEM points, not synthetic ones, for these tests.
+const AVPTC25_TAP_A: BlowerPerformancePoint[] = [
+  { equipmentId: "ah1", speedTap: "A", espIwc: 0.1, cfm: 670 },
+  { equipmentId: "ah1", speedTap: "A", espIwc: 0.2, cfm: 660 },
+  { equipmentId: "ah1", speedTap: "A", espIwc: 0.3, cfm: 650 },
+  { equipmentId: "ah1", speedTap: "A", espIwc: 0.5, cfm: 655 },
+  { equipmentId: "ah1", speedTap: "A", espIwc: 0.9, cfm: 625 },
+];
+const AVPTC25_TAP_D: BlowerPerformancePoint[] = [
+  { equipmentId: "ah1", speedTap: "D", espIwc: 0.1, cfm: 1105 },
+  { equipmentId: "ah1", speedTap: "D", espIwc: 0.5, cfm: 1065 },
+  { equipmentId: "ah1", speedTap: "D", espIwc: 0.9, cfm: 1030 },
+];
+
+describe("interpolateBlowerCfmAtEsp", () => {
+  it("returns the exact tabulated value at a real published ESP point", () => {
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "A", 0.3)).toBe(650);
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "A", 0.5)).toBe(655);
+  });
+
+  it("linearly interpolates between two real bracketing points", () => {
+    // Between 0.3 (650 cfm) and 0.5 (655 cfm) - no real point at 0.4.
+    const result = interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "A", 0.4);
+    expect(result).toBeCloseTo(652.5, 5);
+  });
+
+  it("clamps to the lowest tabulated point rather than extrapolating below it", () => {
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "A", 0.05)).toBe(670);
+  });
+
+  it("clamps to the highest tabulated point rather than extrapolating above it", () => {
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "A", 1.5)).toBe(625);
+  });
+
+  it("returns null for a speed tap with no real data points", () => {
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "Z", 0.3)).toBeNull();
+  });
+
+  it("keeps different speed taps independent", () => {
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_D, "D", 0.1)).toBe(1105);
+    expect(interpolateBlowerCfmAtEsp(AVPTC25_TAP_A, "A", 0.1)).toBe(670);
+  });
+});
+
+describe("selectBlowerSpeedTap", () => {
+  it("picks the real tap whose mid-pressure (0.5 iwc) airflow is closest to the required CFM", () => {
+    const allTaps = [...AVPTC25_TAP_A, ...AVPTC25_TAP_D];
+    // Tap A delivers 655 cfm at 0.5"; tap D delivers 1065 cfm at 0.5".
+    expect(selectBlowerSpeedTap(allTaps, 660)).toBe("A");
+    expect(selectBlowerSpeedTap(allTaps, 1050)).toBe("D");
+  });
+
+  it("returns null when there is no blower data at all", () => {
+    expect(selectBlowerSpeedTap([], 500)).toBeNull();
+  });
+});
+
+describe("checkEspVsEquipmentCapacity", () => {
+  const allTaps = [...AVPTC25_TAP_A, ...AVPTC25_TAP_D];
+
+  it("is not determinable when no TESP has been entered yet - never a fabricated pass", () => {
+    const result = checkEspVsEquipmentCapacity(600, null, allTaps);
+    expect(result.determinable).toBe(false);
+    expect(result.passes).toBeNull();
+  });
+
+  it("is not determinable when the zone's air handler has no real blower data", () => {
+    const result = checkEspVsEquipmentCapacity(600, 0.5, []);
+    expect(result.determinable).toBe(false);
+    expect(result.passes).toBeNull();
+  });
+
+  it("computes a real fail correctly: selected tap cannot deliver required CFM plus margin at the design TESP", () => {
+    // requiredCfm=600 -> tap A selected (655 cfm @ 0.5" is the closer
+    // mid-pressure match vs tap D's 1065) -> required with +12.5% margin
+    // = 675 -> tap A only delivers 655 at 0.5" TESP, so this genuinely
+    // fails - the real math, not an assumed outcome either way.
+    const result = checkEspVsEquipmentCapacity(600, 0.5, allTaps);
+    expect(result.determinable).toBe(true);
+    expect(result.speedTap).toBe("A");
+    expect(result.requiredCfmWithSafetyFactor).toBeCloseTo(675, 5);
+    expect(result.deliverableCfmAtTesp).toBe(655);
+    expect(result.passes).toBe(false);
+  });
+
+  it("computes a real pass correctly: selected tap comfortably clears required CFM plus margin at a low design TESP", () => {
+    // requiredCfm=900 -> tap D selected (1065 cfm @ 0.5" is the closer
+    // mid-pressure match) -> required with +12.5% margin = 1012.5 -> tap
+    // D delivers 1105 at a real 0.1" TESP point, which clears it.
+    const result = checkEspVsEquipmentCapacity(900, 0.1, allTaps);
+    expect(result.determinable).toBe(true);
+    expect(result.speedTap).toBe("D");
+    expect(result.requiredCfmWithSafetyFactor).toBeCloseTo(1012.5, 5);
+    expect(result.deliverableCfmAtTesp).toBe(1105);
+    expect(result.passes).toBe(true);
+  });
+
+  it("fails when the design TESP exceeds what the selected tap can deliver at the required margin", () => {
+    const result = checkEspVsEquipmentCapacity(1000, 0.9, allTaps);
+    expect(result.determinable).toBe(true);
+    expect(result.passes).toBe(false);
+  });
+
+  it("applies the disclosed safety factor consistently", () => {
+    expect(ESP_GATE_SAFETY_FACTOR_PERCENT).toBe(12.5);
+    const result = checkEspVsEquipmentCapacity(500, 0.5, allTaps);
+    expect(result.requiredCfmWithSafetyFactor).toBeCloseTo(500 * 1.125, 5);
   });
 });

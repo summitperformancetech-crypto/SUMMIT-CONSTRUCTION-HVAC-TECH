@@ -1072,6 +1072,46 @@ function renderRegisterSchedulePage(data: ReportData, org: OrgBranding): string 
 // is a single home-run trunk per zone, not a modeled multi-segment
 // extended-plenum/reducing trunk with real take-off positions.
 // ---------------------------------------------------------------------------
+// Permit-Submittable Manual D Package, Section 5. Real per-zone ESP-vs-
+// equipment-capacity result (lib/manualD.ts's checkEspVsEquipmentCapacity,
+// sourced from a real equipment_blower_performance curve for the zone's
+// selected air handler) when determinable; an honest "not yet selected"
+// state per zone otherwise - never a blanket fabricated pass, and never a
+// blanket fabricated block once real data exists for at least one zone.
+function renderEspCapacitySection(r: NonNullable<ReportData["residential"]>): string {
+  if (r.espCapacityCheckByZone.length === 0) {
+    return `<div class="callout"><span class="badge badge-neutral">No zones</span></div>`;
+  }
+  const rows = r.espCapacityCheckByZone
+    .map(({ zoneName, result }) => {
+      if (!result || !result.determinable) {
+        return `<tr>
+          <td>${esc(zoneName)}</td>
+          <td class="num">—</td><td class="num">—</td><td class="num">—</td>
+          <td><span class="badge badge-neutral">${result ? "Blower data incomplete" : "No air handler selected"}</span></td>
+        </tr>`;
+      }
+      return `<tr>
+        <td>${esc(zoneName)}</td>
+        <td class="num">${fmt(result.requiredCfmWithSafetyFactor)} CFM (incl. +${fmt1(result.safetyFactorPercent)}% margin)</td>
+        <td class="num">${fmt1(result.blowerTespIwc)}" (tap ${esc(result.speedTap ?? "—")})</td>
+        <td class="num">${fmt(result.deliverableCfmAtTesp)} CFM</td>
+        <td>${result.passes ? `<span class="badge badge-pass">Pass</span>` : `<span class="badge badge-fail">Fail</span>`}</td>
+      </tr>`;
+    })
+    .join("");
+  return `<table>
+    <thead><tr><th>Zone</th><th class="num">Required CFM + Safety Factor</th><th class="num">Design TESP / Speed Tap</th><th class="num">Blower CFM at TESP</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p class="muted" style="font-size:10px;">
+    Real OEM blower-performance curve per selected air handler (equipment_blower_performance), interpolated at the
+    project's own design TESP - not a fabricated rating. "No air handler selected" means this zone has not yet
+    picked one in Duct Design; it is never shown as a false pass. Safety factor is a single disclosed 12.5%
+    (midpoint of the stated 10-15% range), applied to required CFM.
+  </p>`;
+}
+
 function renderDesignCheckSummaryPage(data: ReportData, org: OrgBranding): string {
   const r = data.residential!;
 
@@ -1119,12 +1159,7 @@ function renderDesignCheckSummaryPage(data: ReportData, org: OrgBranding): strin
      <p class="muted" style="font-size:10px;">"Not yet determinable" means this zone has no real return-diffuser CFM entered yet - never shown as a false pass. Balance tolerance: ±${RETURN_BALANCE_TOLERANCE_PERCENT}% (a standard HVAC testing-and-balancing rule of thumb, not a specific ACCA Manual D numeric clause).</p>
 
      <div class="section-title">Total External Static Pressure vs. Equipment Rated Capacity</div>
-     <div class="callout" style="border-color:#b91c1c;">
-       <span class="badge badge-fail">BLOCKED</span> This gate cannot be evaluated. Summit's equipment catalog does not currently
-       capture a rated ESP / airflow-vs-static-pressure blower performance curve for any unit - <code>equipment_catalog</code> and
-       <code>equipment_performance_points</code> both lack this field. Sourcing real OEM blower data per selected unit is required
-       before this check can run; it is never shown as passing without it.
-     </div>
+     ${renderEspCapacitySection(r)}
 
      <div class="section-title">Extended Plenum / Reducing Trunk Topology Rules</div>
      <div class="callout" style="border-color:#b91c1c;">

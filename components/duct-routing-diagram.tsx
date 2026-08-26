@@ -6,6 +6,7 @@ import {
   computeSheetDuctRouting,
   buildDuctNetworkPrimitives,
   computeSheetCropViewBox,
+  getDiffuserSymbolSpec,
   type LiveDuctRoutingSheet,
   type RoutedDuctSegment,
 } from "@/lib/ductRouting";
@@ -51,6 +52,57 @@ const ZONE_TINTS = ["#fde68a", "#93c5fd", "#86efac", "#f9a8d4", "#c4b5fd", "#fca
 function zoneTintColor(zoneId: string, zoneIdsInOrder: string[]): string {
   const index = zoneIdsInOrder.indexOf(zoneId);
   return ZONE_TINTS[index % ZONE_TINTS.length];
+}
+
+// JSX counterpart of lib/reportHtmlV2.ts's renderDiffuserBodySvg - both
+// consume the exact same getDiffuserSymbolSpec (lib/ductRouting.ts) so a
+// 4-way diffuser looks identical here (live in-app) and in the frozen
+// PDF, even though this renderer's markup can't be shared literally
+// (JSX vs. server-built SVG string).
+function DiffuserBodySvg({ tagCode, color, paperColor }: { tagCode: string | undefined; color: string; paperColor: string }) {
+  const spec = getDiffuserSymbolSpec(tagCode);
+  const ticks = spec.tickAngles.map((deg, i) => {
+    const rad = (deg * Math.PI) / 180;
+    const r1 = spec.bodyShape === "wide_rect" ? 1.8 : 1.3;
+    const r2 = r1 + 0.8;
+    return (
+      <line
+        key={i}
+        x1={r1 * Math.cos(rad)}
+        y1={-r1 * Math.sin(rad)}
+        x2={r2 * Math.cos(rad)}
+        y2={-r2 * Math.sin(rad)}
+        stroke={color}
+        strokeWidth={0.26}
+        strokeLinecap="round"
+      />
+    );
+  });
+
+  if (spec.bodyShape === "bar") {
+    return (
+      <>
+        <rect x={-2.6} y={-0.4} width={5.2} height={0.8} fill={paperColor} stroke={color} strokeWidth={0.3} />
+        {ticks}
+      </>
+    );
+  }
+  if (spec.bodyShape === "wide_rect") {
+    return (
+      <>
+        <rect x={-1.8} y={-1} width={3.6} height={2} fill={paperColor} stroke={color} strokeWidth={0.3} />
+        {ticks}
+      </>
+    );
+  }
+  return (
+    <>
+      <rect x={-1.3} y={-1.3} width={2.6} height={2.6} fill={paperColor} stroke={color} strokeWidth={0.32} />
+      <line x1={-1.05} y1={-1.05} x2={1.05} y2={1.05} stroke={color} strokeWidth={0.26} />
+      <line x1={-1.05} y1={1.05} x2={1.05} y2={-1.05} stroke={color} strokeWidth={0.26} />
+      {ticks}
+    </>
+  );
 }
 
 export function DuctRoutingDiagram({
@@ -399,10 +451,7 @@ export function DuctRoutingDiagram({
           }
           return (
             <g key={i} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
-              <rect x={-1.3} y={-1.3} width={2.6} height={2.6} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={0.32} />
-              <line x1={-1.05} y1={-1.05} x2={1.05} y2={1.05} stroke={SUPPLY_COLOR} strokeWidth={0.26} />
-              <line x1={-1.05} y1={1.05} x2={1.05} y2={-1.05} stroke={SUPPLY_COLOR} strokeWidth={0.26} />
-              <line x1={0} y1={-1.3} x2={0} y2={-2.1} stroke={SUPPLY_COLOR} strokeWidth={0.26} strokeLinecap="round" />
+              <DiffuserBodySvg tagCode={pin.patternTagCode} color={SUPPLY_COLOR} paperColor={PAPER} />
             </g>
           );
         });

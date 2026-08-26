@@ -19,7 +19,9 @@ import {
   computeRoutedBranchRun,
   getDuctRoutingGateStatus,
   buildLiveDuctRoutingIllustration,
+  DIFFUSER_PATTERN_OPTIONS,
   type ScaleSampleRoom,
+  type DuctDiffuserRow,
 } from "@/lib/ductRouting";
 import { DuctRoutingDiagram } from "@/components/duct-routing-diagram";
 import type { RoomLoadResult } from "@/lib/manualJ";
@@ -55,6 +57,8 @@ export type DuctRunRow = {
 
 export const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
+export const DUCT_DIFFUSER_COLUMNS =
+  "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 
 const MATERIAL_OPTIONS = [
   { value: "flex", label: "Flex" },
@@ -108,6 +112,32 @@ const EMPTY_RUN_FORM: RunFormValues = {
   material: "flex",
 };
 
+type DiffuserFormValues = {
+  zone_id: string;
+  room_id: string;
+  airflow_direction: "supply" | "return";
+  pattern_type: string;
+  duct_size: string;
+  round_diameter_in: string;
+  cfm: string;
+  mounting_height_aff_in: string;
+  manufacturer: string;
+  model: string;
+};
+
+const EMPTY_DIFFUSER_FORM: DiffuserFormValues = {
+  zone_id: "",
+  room_id: "",
+  airflow_direction: "supply",
+  pattern_type: "one_way",
+  duct_size: "",
+  round_diameter_in: "",
+  cfm: "",
+  mounting_height_aff_in: "",
+  manufacturer: "",
+  model: "",
+};
+
 export function DuctDesignSection({
   projectId,
   rooms,
@@ -122,6 +152,7 @@ export function DuctDesignSection({
   initialAirFilterLossIwc,
   initialGrillesRegistersLossIwc,
   initialDuctRuns,
+  initialDuctDiffusers,
   ductSizingTable,
   ductInsulationCodeMinimums,
 }: {
@@ -138,6 +169,7 @@ export function DuctDesignSection({
   initialAirFilterLossIwc: number | null;
   initialGrillesRegistersLossIwc: number | null;
   initialDuctRuns: DuctRunRow[];
+  initialDuctDiffusers: DuctDiffuserRow[];
   ductSizingTable: DuctSizingTableRow[];
   // Data Integrity Addendum, Section 3 - duct_location -> current code
   // minimum R-value, for the compliance badge below. Plain array (not the
@@ -199,6 +231,12 @@ export function DuctDesignSection({
   const [runForm, setRunForm] = useState<RunFormValues>(EMPTY_RUN_FORM);
   const [runError, setRunError] = useState<string | null>(null);
   const [runSaving, setRunSaving] = useState(false);
+
+  const [ductDiffusers, setDuctDiffusers] = useState<DuctDiffuserRow[]>(initialDuctDiffusers);
+  const [showAddDiffuserForm, setShowAddDiffuserForm] = useState(false);
+  const [diffuserForm, setDiffuserForm] = useState<DiffuserFormValues>(EMPTY_DIFFUSER_FORM);
+  const [diffuserError, setDiffuserError] = useState<string | null>(null);
+  const [diffuserSaving, setDiffuserSaving] = useState(false);
 
   const availableStaticPressureIwc = toNullableNumber(staticPressureForm);
   const supplyAirTempF = toNullableNumber(supplyAirTempForm);
@@ -678,6 +716,68 @@ export function DuctDesignSection({
     }
   }
 
+  async function handleAddDiffuser() {
+    setDiffuserSaving(true);
+    setDiffuserError(null);
+    try {
+      const cfmValue = toNullableNumber(diffuserForm.cfm);
+      if (!diffuserForm.zone_id || cfmValue == null) {
+        setDiffuserError("Zone and CFM are required.");
+        return;
+      }
+      const supabase = createClient();
+      const payload = {
+        project_id: projectId,
+        zone_id: diffuserForm.zone_id,
+        room_id: diffuserForm.room_id || null,
+        airflow_direction: diffuserForm.airflow_direction,
+        pattern_type: diffuserForm.pattern_type,
+        duct_size: diffuserForm.duct_size || null,
+        round_diameter_in: toNullableNumber(diffuserForm.round_diameter_in),
+        cfm: cfmValue,
+        mounting_height_aff_in: toNullableNumber(diffuserForm.mounting_height_aff_in),
+        manufacturer: diffuserForm.manufacturer || null,
+        model: diffuserForm.model || null,
+        source: "manual" as const,
+      };
+      const { data, error } = await supabase
+        .from("duct_diffusers")
+        .insert(payload)
+        .select(DUCT_DIFFUSER_COLUMNS)
+        .single<DuctDiffuserRow>();
+      if (error || !data) {
+        setDiffuserError(error?.message ?? "Failed to create diffuser.");
+        return;
+      }
+      setDuctDiffusers((prev) => [...prev, data]);
+      setShowAddDiffuserForm(false);
+      setDiffuserForm(EMPTY_DIFFUSER_FORM);
+    } catch (err) {
+      setDiffuserError(
+        err instanceof Error ? err.message : "Failed to create diffuser - check your connection and try again.",
+      );
+    } finally {
+      setDiffuserSaving(false);
+    }
+  }
+
+  async function handleDeleteDiffuser(id: string) {
+    if (!window.confirm("Delete this diffuser?")) return;
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from("duct_diffusers").delete().eq("id", id);
+      if (error) {
+        setDiffuserError(error.message);
+        return;
+      }
+      setDuctDiffusers((prev) => prev.filter((d) => d.id !== id));
+    } catch (err) {
+      setDiffuserError(
+        err instanceof Error ? err.message : "Failed to delete diffuser - check your connection and try again.",
+      );
+    }
+  }
+
   const readyToSize = availableStaticPressureIwc != null && supplyAirTempF != null;
 
   // The live, in-app version of the exact same schematic the PDF report
@@ -686,8 +786,8 @@ export function DuctDesignSection({
   // fallback comment on the table below), and resultByRunId when static-
   // pressure sizing has run. No PDF generation required to see it.
   const liveIllustrationSheets = useMemo(
-    () => buildLiveDuctRoutingIllustration(rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom),
-    [rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom],
+    () => buildLiveDuctRoutingIllustration(rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom, ductDiffusers),
+    [rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom, ductDiffusers],
   );
 
   return (
@@ -1126,6 +1226,181 @@ export function DuctDesignSection({
               </table>
             </div>
           )}
+
+      <div className="mb-4 mt-8 flex items-center justify-between border-t border-zinc-800 pt-6">
+        <h3 className="text-sm font-semibold text-brand-silver-highlight">Diffusers &amp; Registers</h3>
+        {!showAddDiffuserForm && (
+          <button
+            onClick={() => setShowAddDiffuserForm(true)}
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover"
+          >
+            Add Diffuser
+          </button>
+        )}
+      </div>
+      <p className="mb-4 text-xs text-brand-grey-text">
+        Real physical diffuser/grille hardware, per room - throw pattern (1/2/3/4-way, sidewall, linear slot,
+        return grille), size, and CFM. Every project can use a different mix; nothing here defaults to
+        one-way. Once entered, a room&apos;s diagram symbol and register callout reflect its real pattern type
+        instead of the generic default shown above.
+      </p>
+
+      {diffuserError && (
+        <p className="mb-4 text-sm text-red-400" role="alert">
+          {diffuserError}
+        </p>
+      )}
+
+      {showAddDiffuserForm && (
+        <div className="mb-4 space-y-3 rounded-lg border border-brand-gold/50 bg-zinc-900 p-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <SelectField
+              label="Zone"
+              value={diffuserForm.zone_id}
+              onChange={(v) => setDiffuserForm((prev) => ({ ...prev, zone_id: v }))}
+              options={[{ value: "", label: "Select zone..." }, ...zones.map((z) => ({ value: z.id, label: z.name }))]}
+            />
+            <SelectField
+              label="Room (optional - blank for a central/hallway grille)"
+              value={diffuserForm.room_id}
+              onChange={(v) => setDiffuserForm((prev) => ({ ...prev, room_id: v }))}
+              options={[
+                { value: "", label: "None" },
+                ...rooms.filter((r) => r.zone_id === diffuserForm.zone_id).map((r) => ({ value: r.id, label: r.name })),
+              ]}
+            />
+            <SelectField
+              label="Airflow direction"
+              value={diffuserForm.airflow_direction}
+              onChange={(v) =>
+                setDiffuserForm((prev) => ({
+                  ...prev,
+                  airflow_direction: v as "supply" | "return",
+                  pattern_type: DIFFUSER_PATTERN_OPTIONS.find((o) => o.airflowDirection === v)?.code ?? prev.pattern_type,
+                }))
+              }
+              options={[
+                { value: "supply", label: "Supply" },
+                { value: "return", label: "Return" },
+              ]}
+            />
+            <SelectField
+              label="Pattern type"
+              value={diffuserForm.pattern_type}
+              onChange={(v) => setDiffuserForm((prev) => ({ ...prev, pattern_type: v }))}
+              options={DIFFUSER_PATTERN_OPTIONS.filter((o) => o.airflowDirection === diffuserForm.airflow_direction).map(
+                (o) => ({ value: o.code, label: `${o.label} (${o.tagCode})` }),
+              )}
+            />
+            <NumberField
+              label="Round diameter (in)"
+              value={diffuserForm.round_diameter_in}
+              onChange={(v) => setDiffuserForm((prev) => ({ ...prev, round_diameter_in: v }))}
+            />
+            <NumberField
+              label="CFM"
+              value={diffuserForm.cfm}
+              onChange={(v) => setDiffuserForm((prev) => ({ ...prev, cfm: v }))}
+            />
+            <NumberField
+              label="Mounting height, AFF (in) - optional"
+              value={diffuserForm.mounting_height_aff_in}
+              onChange={(v) => setDiffuserForm((prev) => ({ ...prev, mounting_height_aff_in: v }))}
+            />
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">Manufacturer (optional)</label>
+              <input
+                type="text"
+                value={diffuserForm.manufacturer}
+                onChange={(e) => setDiffuserForm((prev) => ({ ...prev, manufacturer: e.target.value }))}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">Model (optional)</label>
+              <input
+                type="text"
+                value={diffuserForm.model}
+                onChange={(e) => setDiffuserForm((prev) => ({ ...prev, model: e.target.value }))}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAddDiffuser}
+              disabled={diffuserSaving || !diffuserForm.zone_id || toNullableNumber(diffuserForm.cfm) == null}
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+            >
+              {diffuserSaving ? "Saving..." : "Save Diffuser"}
+            </button>
+            <button
+              onClick={() => {
+                setShowAddDiffuserForm(false);
+                setDiffuserForm(EMPTY_DIFFUSER_FORM);
+              }}
+              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-grey-text transition hover:border-brand-gold"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {ductDiffusers.length === 0 && !showAddDiffuserForm ? (
+        <p className="text-sm text-brand-grey-text">
+          No diffusers entered yet - the diagram above uses a generic one-way default until real hardware is
+          added here.
+        </p>
+      ) : (
+        ductDiffusers.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-zinc-900 text-xs uppercase text-brand-grey-text">
+                <tr>
+                  <th className="px-3 py-2">Room</th>
+                  <th className="px-3 py-2">Direction</th>
+                  <th className="px-3 py-2">Pattern</th>
+                  <th className="px-3 py-2">Size</th>
+                  <th className="px-3 py-2">CFM</th>
+                  <th className="px-3 py-2">Hardware</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {ductDiffusers.map((d) => {
+                  const roomName = rooms.find((r) => r.id === d.room_id)?.name ?? "(no room / central)";
+                  const patternOption = DIFFUSER_PATTERN_OPTIONS.find((o) => o.code === d.pattern_type);
+                  return (
+                    <tr key={d.id}>
+                      <td className="px-3 py-2 text-brand-silver-highlight">{roomName}</td>
+                      <td className="px-3 py-2 capitalize text-brand-grey-text">{d.airflow_direction}</td>
+                      <td className="px-3 py-2 text-brand-grey-text">
+                        {patternOption ? `${patternOption.label} (${patternOption.tagCode})` : d.pattern_type}
+                      </td>
+                      <td className="px-3 py-2 text-brand-grey-text">
+                        {d.duct_size ?? (d.round_diameter_in ? `${d.round_diameter_in}"⌀` : "—")}
+                      </td>
+                      <td className="px-3 py-2 text-brand-grey-text">{d.cfm}</td>
+                      <td className="px-3 py-2 text-brand-grey-text">
+                        {[d.manufacturer, d.model].filter(Boolean).join(" ") || "—"}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => handleDeleteDiffuser(d.id)}
+                          className="text-xs text-red-400 hover:text-red-300"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
     </section>
   );
 }

@@ -433,6 +433,13 @@ export type LiveDuctRoutingPin = {
   zoneName: string;
   trunkDiameterIn?: number | null;
   trunkCfm?: number | null;
+  // Real per-diffuser pattern type tag (e.g. "4W", "SW") from a
+  // duct_diffusers row, when a technician has entered one - see
+  // getDiffuserSymbolSpec below. Undefined (not "1W") when no diffuser
+  // record exists for this pin, so callers fall back to the same
+  // one-way default they always used, rather than this field silently
+  // asserting a pattern nobody actually specified.
+  patternTagCode?: string;
 };
 export type LiveDuctRoutingRoute = {
   roomId: string;
@@ -446,6 +453,7 @@ export type LiveDuctRoutingRoute = {
   cfm: number | null;
   zoneId: string;
   zoneName: string;
+  patternTagCode?: string;
 };
 export type LiveDuctRoutingSheet = {
   drawingId: string;
@@ -510,8 +518,16 @@ export function buildLiveDuctRoutingIllustration(
   ductRuns: DuctRunRow[],
   sizedByRunId: Map<string, Pick<DuctSizingResult, "diameterIn" | "cfm">>,
   requiredCfmByRoom: Map<string, number | null>,
+  ductDiffusers: DuctDiffuserRow[] = [],
 ): LiveDuctRoutingSheet[] {
   const bySheet = new Map<string, LiveDuctRoutingSheet>();
+  const diffusersByRoom = new Map<string, DuctDiffuserRow[]>();
+  for (const d of ductDiffusers) {
+    if (!d.room_id) continue;
+    const list = diffusersByRoom.get(d.room_id) ?? [];
+    list.push(d);
+    diffusersByRoom.set(d.room_id, list);
+  }
 
   for (const zone of zones) {
     if (
@@ -582,30 +598,72 @@ export function buildLiveDuctRoutingIllustration(
       if (room.position_x_norm === zone.return_position_x_norm && room.position_y_norm === zone.return_position_y_norm) {
         continue;
       }
-      sheet.pins.push({
-        kind: "room",
-        label: room.name,
-        xNorm: room.position_x_norm!,
-        yNorm: room.position_y_norm!,
-        zoneId: zone.id,
-        zoneName: zone.name,
-      });
-      const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
-      const sized = run ? sizedByRunId.get(run.id) : undefined;
-      const persistedCfm = run && run.cfm > 0 ? run.cfm : null;
-      sheet.routes.push({
-        roomId: room.id,
-        roomName: room.name,
-        fromXNorm: zone.ahu_position_x_norm,
-        fromYNorm: zone.ahu_position_y_norm,
-        toXNorm: room.position_x_norm!,
-        toYNorm: room.position_y_norm!,
-        lengthFt: run?.length_ft ?? null,
-        diameterIn: sized?.diameterIn ?? run?.calculated_diameter_in ?? null,
-        cfm: sized?.cfm ?? persistedCfm ?? requiredCfmByRoom.get(room.id) ?? null,
-        zoneId: zone.id,
-        zoneName: zone.name,
-      });
+      const roomDiffusers = diffusersByRoom.get(room.id) ?? [];
+      const supplyDiffusers = roomDiffusers.filter((d) => d.airflow_direction === "supply");
+      const extraDiffusers = roomDiffusers.filter((d) => d !== supplyDiffusers[0]);
+      const primarySupply = supplyDiffusers[0];
+      const primaryTagCode = primarySupply ? DIFFUSER_PATTERN_TAG_CODES[primarySupply.pattern_type] : undefined;
+      const drawDefaultSupplyPin = roomDiffusers.length === 0 || primarySupply != null;
+
+      if (drawDefaultSupplyPin) {
+        sheet.pins.push({
+          kind: "room",
+          label: room.name,
+          xNorm: room.position_x_norm!,
+          yNorm: room.position_y_norm!,
+          zoneId: zone.id,
+          zoneName: zone.name,
+          patternTagCode: primaryTagCode,
+        });
+        const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
+        const sized = run ? sizedByRunId.get(run.id) : undefined;
+        const persistedCfm = run && run.cfm > 0 ? run.cfm : null;
+        sheet.routes.push({
+          roomId: room.id,
+          roomName: room.name,
+          fromXNorm: zone.ahu_position_x_norm,
+          fromYNorm: zone.ahu_position_y_norm,
+          toXNorm: room.position_x_norm!,
+          toYNorm: room.position_y_norm!,
+          lengthFt: run?.length_ft ?? null,
+          diameterIn: primarySupply?.round_diameter_in ?? sized?.diameterIn ?? run?.calculated_diameter_in ?? null,
+          cfm: primarySupply?.cfm ?? sized?.cfm ?? persistedCfm ?? requiredCfmByRoom.get(room.id) ?? null,
+          zoneId: zone.id,
+          zoneName: zone.name,
+          patternTagCode: primaryTagCode,
+        });
+      }
+
+      for (const extra of extraDiffusers) {
+        const tagCode = DIFFUSER_PATTERN_TAG_CODES[extra.pattern_type];
+        const xNorm = extra.position_x_norm ?? room.position_x_norm!;
+        const yNorm = extra.position_y_norm ?? room.position_y_norm!;
+        sheet.pins.push({
+          kind: extra.airflow_direction === "return" ? "return" : "room",
+          label: `${room.name} (${extra.pattern_type === "return_grille" ? "additional return" : "additional supply"})`,
+          xNorm,
+          yNorm,
+          zoneId: zone.id,
+          zoneName: zone.name,
+          patternTagCode: tagCode,
+        });
+        if (extra.airflow_direction === "supply") {
+          sheet.routes.push({
+            roomId: room.id,
+            roomName: room.name,
+            fromXNorm: zone.ahu_position_x_norm,
+            fromYNorm: zone.ahu_position_y_norm,
+            toXNorm: xNorm,
+            toYNorm: yNorm,
+            lengthFt: null,
+            diameterIn: extra.round_diameter_in,
+            cfm: extra.cfm,
+            zoneId: zone.id,
+            zoneName: zone.name,
+            patternTagCode: tagCode,
+          });
+        }
+      }
     }
   }
   return [...bySheet.values()];
@@ -653,12 +711,14 @@ export type DuctRoutingLayoutPin = {
   yNorm: number;
   trunkDiameterIn?: number | null;
   trunkCfm?: number | null;
+  patternTagCode?: string;
 };
 export type DuctRoutingLayoutRoute = {
   toXNorm: number;
   toYNorm: number;
   diameterIn: number | null;
   cfm: number | null;
+  patternTagCode?: string;
 };
 export type DuctRoutingLayoutSheet = {
   pins: DuctRoutingLayoutPin[];
@@ -684,16 +744,118 @@ export type DuctRoutingLabel = {
   // SIZE-over-CFM block with a divider, not one inline "size / cfm"
   // string. `text` carries the size line, `secondaryText` the CFM line,
   // `typeCode` the circled prefix - renderers draw all three as one
-  // callout group. Always "1W" (one-way supply) here: Summit has no real
-  // per-register throw-pattern data (2/3/4-way), so this is the honest
-  // default that matches what's actually drawn (a one-way register
-  // symbol - see the symbol-drawing code in each renderer), not a
-  // fabricated multi-way claim.
+  // callout group. Pulled from the route's own real duct_diffusers
+  // pattern type when a technician has entered one (see
+  // getDiffuserSymbolSpec below); falls back to DEFAULT_REGISTER_TYPE_CODE
+  // ("1W") only when no diffuser record exists for that room yet - the
+  // same honest default this app always used before diffuser pattern
+  // types were tracked, never a fabricated multi-way claim.
   secondaryText?: string;
   typeCode?: string;
 };
 
-const REGISTER_TYPE_CODE = "1W";
+// Fallback only - used when a room has no real duct_diffusers row yet
+// (pre-existing projects, or a room not yet walked in the diffuser
+// entry UI). One-way is the least presumptive default: it's a subset of
+// what a 2/3/4-way symbol implies, never overstates throw coverage.
+const DEFAULT_REGISTER_TYPE_CODE = "1W";
+
+// -----------------------------------------------------------------------
+// Diffuser symbol geometry, by real ACCA Manual D / industry-standard tag
+// code (see the duct_diffuser_pattern_types migration for sourcing).
+// Renderers (lib/reportHtmlV2.ts, components/duct-routing-diagram.tsx)
+// use this shared spec so both draw the identical symbol for a given
+// pattern type instead of two independently-hand-tuned versions
+// drifting apart - same principle as buildDuctNetworkPrimitives/
+// layoutDuctRoutingLabels above.
+// -----------------------------------------------------------------------
+export type DiffuserSymbolSpec = {
+  // "square" = standard ceiling diffuser body (1/2/3/4-way, return);
+  // "wide_rect" = sidewall register (wider than tall, wall-mounted);
+  // "bar" = linear slot diffuser (long, narrow).
+  bodyShape: "square" | "wide_rect" | "bar";
+  // Throw-direction tick marks, in degrees measured from the body's
+  // right edge going counterclockwise (0 = right/east, 90 = up/north,
+  // etc.) - one tick per direction the diffuser actually throws air,
+  // matching the real 1/2/3/4-way classification (a 3-way diffuser has
+  // ticks on 3 of its 4 sides, the missing one facing the wall/
+  // obstruction it's mounted against).
+  tickAngles: number[];
+};
+
+const DIFFUSER_SYMBOL_SPECS: Record<string, DiffuserSymbolSpec> = {
+  "1W": { bodyShape: "square", tickAngles: [0] },
+  "2W": { bodyShape: "square", tickAngles: [0, 180] },
+  "3W": { bodyShape: "square", tickAngles: [0, 90, 270] },
+  "4W": { bodyShape: "square", tickAngles: [0, 90, 180, 270] },
+  SW: { bodyShape: "wide_rect", tickAngles: [0] },
+  LS: { bodyShape: "bar", tickAngles: [] },
+};
+
+export function getDiffuserSymbolSpec(tagCode: string | undefined): DiffuserSymbolSpec {
+  return DIFFUSER_SYMBOL_SPECS[tagCode ?? DEFAULT_REGISTER_TYPE_CODE] ?? DIFFUSER_SYMBOL_SPECS[DEFAULT_REGISTER_TYPE_CODE];
+}
+
+// Mirrors duct_diffuser_pattern_types' seeded rows (see the
+// 20260826010000 migration) - same "two places kept in sync by hand"
+// pattern already used for rooms_duct_location_check /
+// lib/constants/ductLocations.ts's DUCT_LOCATION_VALUES. Kept as a plain
+// map instead of a live query so report generation doesn't pay an extra
+// roundtrip for a fixed, rarely-changing 7-row reference set - changing
+// the pattern-type set means updating both places.
+export const DIFFUSER_PATTERN_TAG_CODES: Record<string, string> = {
+  one_way: "1W",
+  two_way: "2W",
+  three_way: "3W",
+  four_way: "4W",
+  sidewall: "SW",
+  linear_slot: "LS",
+  return_grille: "RA",
+};
+
+// UI dropdown options mirroring the same seeded rows - see the "two
+// places kept in sync by hand" note on DIFFUSER_PATTERN_TAG_CODES above.
+export const DIFFUSER_PATTERN_OPTIONS: {
+  code: string;
+  tagCode: string;
+  label: string;
+  airflowDirection: "supply" | "return";
+}[] = [
+  { code: "one_way", tagCode: "1W", label: "One-way throw", airflowDirection: "supply" },
+  { code: "two_way", tagCode: "2W", label: "Two-way throw", airflowDirection: "supply" },
+  { code: "three_way", tagCode: "3W", label: "Three-way throw", airflowDirection: "supply" },
+  { code: "four_way", tagCode: "4W", label: "Four-way throw", airflowDirection: "supply" },
+  { code: "sidewall", tagCode: "SW", label: "Sidewall register", airflowDirection: "supply" },
+  { code: "linear_slot", tagCode: "LS", label: "Linear slot", airflowDirection: "supply" },
+  { code: "return_grille", tagCode: "RA", label: "Return air grille", airflowDirection: "return" },
+];
+
+// One row per physical diffuser/grille (duct_diffusers table) - a real,
+// project-entered record, distinct from and finer-grained than
+// duct_runs (which sizes the duct feeding a room, not the register
+// itself). Multiple rows can share a room_id (e.g. two supply registers
+// in a great room), or a zone_id with no room_id at all (a hallway
+// central return not tied to one named room).
+export type DuctDiffuserRow = {
+  id: string;
+  project_id: string;
+  zone_id: string;
+  room_id: string | null;
+  airflow_direction: "supply" | "return";
+  pattern_type: string;
+  duct_size: string | null;
+  round_diameter_in: number | null;
+  cfm: number;
+  mounting_height_aff_in: number | null;
+  manufacturer: string | null;
+  model: string | null;
+  description: string | null;
+  position_x_norm: number | null;
+  position_y_norm: number | null;
+  position_source_drawing_id: string | null;
+  position_source_page_number: number | null;
+  source: "ai_extracted" | "manual";
+};
 
 export function formatDuctSizeCfm(diameterIn: number | null | undefined, cfm: number | null | undefined): string {
   const sizeText = diameterIn ? `${diameterIn}"⌀` : null;
@@ -812,7 +974,7 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
       y: fy + 2.6,
       text: sizeText ?? "",
       secondaryText: cfmText ?? undefined,
-      typeCode: REGISTER_TYPE_CODE,
+      typeCode: route.patternTagCode ?? DEFAULT_REGISTER_TYPE_CODE,
       fontSize: 1.5,
       textAnchor: "start",
       rows: sizeText && cfmText ? 2 : 1,

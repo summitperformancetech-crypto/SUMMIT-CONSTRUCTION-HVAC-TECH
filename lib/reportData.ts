@@ -46,7 +46,7 @@ import { latestResolutions, type FieldResolution } from "./fieldResolutions";
 import { resolveCounty, resolveLatLong } from "./countyLookup";
 import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessment";
 import type { CompassDirection } from "./solarIrradiance";
-import type { RoutedDuctSegment } from "./ductRouting";
+import { DIFFUSER_PATTERN_TAG_CODES, type DuctDiffuserRow, type RoutedDuctSegment } from "./ductRouting";
 import type { CorridorGraph } from "./ductCorridorGraph";
 
 export type ReportProject = {
@@ -121,6 +121,13 @@ export type DuctRoutingIllustrationPin = {
   // and drawing one anyway would misrepresent the real sizing basis.
   trunkDiameterIn?: number | null;
   trunkCfm?: number | null;
+  // Real per-diffuser pattern type tag ("4W", "SW", etc.) from a
+  // duct_diffusers row when a technician has entered one - see
+  // lib/ductRouting.ts's getDiffuserSymbolSpec. Undefined (not "1W")
+  // when this room/pin has no diffuser record yet, so renderers fall
+  // back to the pre-existing one-way default rather than this field
+  // asserting a pattern nobody specified.
+  patternTagCode?: string;
 };
 export type DuctRoutingIllustrationRoute = {
   roomId: string;
@@ -134,6 +141,7 @@ export type DuctRoutingIllustrationRoute = {
   cfm: number | null;
   zoneId: string;
   zoneName: string;
+  patternTagCode?: string;
 };
 export type DuctRoutingSheetIllustration = {
   drawingId: string;
@@ -163,9 +171,21 @@ export function buildDuctRoutingIllustrations(
   // itself) isn't set yet - see the caller for why these two are computed
   // independently.
   requiredCfmByRoom: Map<string, number | null>,
+  // Real, project-entered physical diffusers (duct_diffusers table).
+  // Empty on every pre-existing project (Schneider included) until a
+  // technician enters real hardware - the room-pin/one-way-default
+  // behavior below is unchanged for those, by construction.
+  ductDiffusers: DuctDiffuserRow[] = [],
 ): DuctRoutingSheetIllustration[] {
   const bySheet = new Map<string, DuctRoutingSheetIllustration>();
   const sizedByRunId = new Map(ductSchedule.map((r) => [r.runId, r]));
+  const diffusersByRoom = new Map<string, DuctDiffuserRow[]>();
+  for (const d of ductDiffusers) {
+    if (!d.room_id) continue;
+    const list = diffusersByRoom.get(d.room_id) ?? [];
+    list.push(d);
+    diffusersByRoom.set(d.room_id, list);
+  }
 
   for (const zone of zones) {
     if (
@@ -243,29 +263,84 @@ export function buildDuctRoutingIllustrations(
       if (room.position_x_norm === zone.return_position_x_norm && room.position_y_norm === zone.return_position_y_norm) {
         continue;
       }
-      sheet.pins.push({
-        kind: "room",
-        label: room.name,
-        xNorm: room.position_x_norm!,
-        yNorm: room.position_y_norm!,
-        zoneId: zone.id,
-        zoneName: zone.name,
-      });
-      const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
-      const sized = run ? sizedByRunId.get(run.id) : undefined;
-      sheet.routes.push({
-        roomId: room.id,
-        roomName: room.name,
-        fromXNorm: zone.ahu_position_x_norm,
-        fromYNorm: zone.ahu_position_y_norm,
-        toXNorm: room.position_x_norm!,
-        toYNorm: room.position_y_norm!,
-        lengthFt: run?.length_ft ?? null,
-        diameterIn: sized?.diameterIn ?? null,
-        cfm: sized?.cfm ?? requiredCfmByRoom.get(room.id) ?? null,
-        zoneId: zone.id,
-        zoneName: zone.name,
-      });
+      // Real diffusers entered for this room (duct_diffusers), if any -
+      // supply first (the room's "main" pin/route below keeps its
+      // existing single-branch shape, now carrying the real pattern
+      // type instead of an assumed one-way), any additional supply or
+      // return diffusers render as extra pins with their own home-run
+      // route back to the AHU (same disclosed home-run-not-shared-trunk
+      // limitation this diagram already has - see the AHU pin's own
+      // trunkDiameterIn/trunkCfm comment above).
+      const roomDiffusers = diffusersByRoom.get(room.id) ?? [];
+      const supplyDiffusers = roomDiffusers.filter((d) => d.airflow_direction === "supply");
+      const extraDiffusers = roomDiffusers.filter((d) => d !== supplyDiffusers[0]);
+      const primarySupply = supplyDiffusers[0];
+      const primaryTagCode = primarySupply ? DIFFUSER_PATTERN_TAG_CODES[primarySupply.pattern_type] : undefined;
+      // Only draw the room's default synthetic supply pin/route when
+      // there's no explicit diffuser data superseding it - a room whose
+      // only real duct_diffusers row is a return grille (no supply
+      // entered) shouldn't also get a fabricated generic supply symbol
+      // alongside it.
+      const drawDefaultSupplyPin = roomDiffusers.length === 0 || primarySupply != null;
+
+      if (drawDefaultSupplyPin) {
+        sheet.pins.push({
+          kind: "room",
+          label: room.name,
+          xNorm: room.position_x_norm!,
+          yNorm: room.position_y_norm!,
+          zoneId: zone.id,
+          zoneName: zone.name,
+          patternTagCode: primaryTagCode,
+        });
+        const run = ductRuns.find((r) => r.run_type === "branch" && r.room_id === room.id);
+        const sized = run ? sizedByRunId.get(run.id) : undefined;
+        sheet.routes.push({
+          roomId: room.id,
+          roomName: room.name,
+          fromXNorm: zone.ahu_position_x_norm,
+          fromYNorm: zone.ahu_position_y_norm,
+          toXNorm: room.position_x_norm!,
+          toYNorm: room.position_y_norm!,
+          lengthFt: run?.length_ft ?? null,
+          diameterIn: primarySupply?.round_diameter_in ?? sized?.diameterIn ?? null,
+          cfm: primarySupply?.cfm ?? sized?.cfm ?? requiredCfmByRoom.get(room.id) ?? null,
+          zoneId: zone.id,
+          zoneName: zone.name,
+          patternTagCode: primaryTagCode,
+        });
+      }
+
+      for (const extra of extraDiffusers) {
+        const tagCode = DIFFUSER_PATTERN_TAG_CODES[extra.pattern_type];
+        const xNorm = extra.position_x_norm ?? room.position_x_norm!;
+        const yNorm = extra.position_y_norm ?? room.position_y_norm!;
+        sheet.pins.push({
+          kind: extra.airflow_direction === "return" ? "return" : "room",
+          label: `${room.name} (${extra.pattern_type === "return_grille" ? "additional return" : "additional supply"})`,
+          xNorm,
+          yNorm,
+          zoneId: zone.id,
+          zoneName: zone.name,
+          patternTagCode: tagCode,
+        });
+        if (extra.airflow_direction === "supply") {
+          sheet.routes.push({
+            roomId: room.id,
+            roomName: room.name,
+            fromXNorm: zone.ahu_position_x_norm,
+            fromYNorm: zone.ahu_position_y_norm,
+            toXNorm: xNorm,
+            toYNorm: yNorm,
+            lengthFt: null,
+            diameterIn: extra.round_diameter_in,
+            cfm: extra.cfm,
+            zoneId: zone.id,
+            zoneName: zone.name,
+            patternTagCode: tagCode,
+          });
+        }
+      }
     }
   }
   return [...bySheet.values()];
@@ -341,6 +416,8 @@ const ZONE_COLUMNS =
   "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
+const DUCT_DIFFUSER_COLUMNS =
+  "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 const COMMERCIAL_ZONE_COLUMNS =
   "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, ceiling_height_ft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc, cleanroom_class";
 const EQUIPMENT_CATALOG_COLUMNS =
@@ -423,7 +500,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   let commercial: ReportData["commercial"] = null;
 
   if (project.project_type === "residential" && climateZone) {
-    const [{ data: rooms }, { data: zones }, { data: roomTypeDefaults }, { data: ductRuns }] =
+    const [{ data: rooms }, { data: zones }, { data: roomTypeDefaults }, { data: ductRuns }, { data: ductDiffusers }] =
       await Promise.all([
         supabase
           .from("rooms")
@@ -449,6 +526,12 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
           .eq("project_id", projectId)
           .order("created_at", { ascending: true })
           .returns<DuctRunRow[]>(),
+        supabase
+          .from("duct_diffusers")
+          .select(DUCT_DIFFUSER_COLUMNS)
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: true })
+          .returns<DuctDiffuserRow[]>(),
       ]);
 
     const envelope: ManualJEnvelope = {
@@ -741,6 +824,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         ductRuns ?? [],
         ductSchedule,
         illustrationCfmByRoom,
+        ductDiffusers ?? [],
       ),
     };
   } else if (

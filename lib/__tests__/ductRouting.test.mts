@@ -20,6 +20,9 @@ import {
   parseArchitecturalScaleText,
   resolveSheetScale,
   computeSheetCropViewBox,
+  getDiffuserSymbolSpec,
+  DIFFUSER_PATTERN_TAG_CODES,
+  DIFFUSER_PATTERN_OPTIONS,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -823,5 +826,49 @@ describe("buildDuctNetworkPrimitives", () => {
     ]);
     expect(primitives.elbows).toHaveLength(0);
     expect(primitives.tees).toHaveLength(0);
+  });
+});
+
+describe("getDiffuserSymbolSpec", () => {
+  it("gives a one-way tag a single tick, matching the pre-existing default symbol", () => {
+    const spec = getDiffuserSymbolSpec("1W");
+    expect(spec.bodyShape).toBe("square");
+    expect(spec.tickAngles).toEqual([0]);
+  });
+
+  it("gives a four-way tag ticks on all four sides (90 degrees apart)", () => {
+    const spec = getDiffuserSymbolSpec("4W");
+    expect(spec.bodyShape).toBe("square");
+    expect(spec.tickAngles).toHaveLength(4);
+    expect(new Set(spec.tickAngles)).toEqual(new Set([0, 90, 180, 270]));
+  });
+
+  it("gives sidewall a wide_rect body, distinct from a standard ceiling diffuser", () => {
+    expect(getDiffuserSymbolSpec("SW").bodyShape).toBe("wide_rect");
+  });
+
+  it("gives linear slot a bar body with no throw ticks", () => {
+    const spec = getDiffuserSymbolSpec("LS");
+    expect(spec.bodyShape).toBe("bar");
+    expect(spec.tickAngles).toEqual([]);
+  });
+
+  it("falls back to the one-way spec for an unrecognized or undefined tag code, never throwing", () => {
+    expect(getDiffuserSymbolSpec(undefined)).toEqual(getDiffuserSymbolSpec("1W"));
+    expect(getDiffuserSymbolSpec("bogus")).toEqual(getDiffuserSymbolSpec("1W"));
+  });
+});
+
+describe("DIFFUSER_PATTERN_TAG_CODES / DIFFUSER_PATTERN_OPTIONS", () => {
+  it("stay in sync with each other - every option's code/tagCode pair matches the map", () => {
+    for (const option of DIFFUSER_PATTERN_OPTIONS) {
+      expect(DIFFUSER_PATTERN_TAG_CODES[option.code]).toBe(option.tagCode);
+    }
+    expect(DIFFUSER_PATTERN_OPTIONS).toHaveLength(Object.keys(DIFFUSER_PATTERN_TAG_CODES).length);
+  });
+
+  it("has exactly one return-airflow option (return_grille) - every other option is supply", () => {
+    const returnOptions = DIFFUSER_PATTERN_OPTIONS.filter((o) => o.airflowDirection === "return");
+    expect(returnOptions.map((o) => o.code)).toEqual(["return_grille"]);
   });
 });

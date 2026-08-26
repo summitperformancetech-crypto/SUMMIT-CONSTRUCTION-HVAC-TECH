@@ -8,6 +8,31 @@ import { buildDuctRoutingIllustrations } from "../reportData";
 import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 import type { DuctRunRow } from "@/components/duct-design-section";
 import type { DuctSizingResult } from "../manualD";
+import type { DuctDiffuserRow } from "../ductRouting";
+
+function makeDiffuser(overrides: Partial<DuctDiffuserRow>): DuctDiffuserRow {
+  return {
+    id: "diffuser-1",
+    project_id: "project-1",
+    zone_id: "zone-1",
+    room_id: "room-1",
+    airflow_direction: "supply",
+    pattern_type: "four_way",
+    duct_size: null,
+    round_diameter_in: 8,
+    cfm: 120,
+    mounting_height_aff_in: null,
+    manufacturer: null,
+    model: null,
+    description: null,
+    position_x_norm: null,
+    position_y_norm: null,
+    position_source_drawing_id: null,
+    position_source_page_number: null,
+    source: "manual",
+    ...overrides,
+  };
+}
 
 function makeRoom(overrides: Partial<RoomRow>): RoomRow {
   return {
@@ -319,5 +344,82 @@ describe("buildDuctRoutingIllustrations", () => {
     expect(result[0].routes[0].lengthFt).toBeNull();
     expect(result[0].routes[0].diameterIn).toBeNull();
     expect(result[0].routes[0].cfm).toBe(145);
+  });
+
+  describe("real duct_diffusers data (Manual D Schematic Diagram Generator, Section 2)", () => {
+    const rooms = [
+      makeRoom({
+        id: "room-1",
+        position_x_norm: 0.3,
+        position_y_norm: 0.4,
+        position_source_drawing_id: "drawing-1",
+        position_source_page_number: 2,
+      }),
+    ];
+    const zones = [
+      makeZone({
+        ahu_position_x_norm: 0.5,
+        ahu_position_y_norm: 0.5,
+        ahu_position_source_drawing_id: "drawing-1",
+        ahu_position_source_page_number: 2,
+      }),
+    ];
+
+    it("carries a room's real pattern type onto its pin and route instead of the undefined (one-way) default", () => {
+      const diffusers = [makeDiffuser({ pattern_type: "four_way", round_diameter_in: 8, cfm: 130 })];
+      const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map(), diffusers);
+      const roomPin = result[0].pins.find((p) => p.kind === "room");
+      expect(roomPin?.patternTagCode).toBe("4W");
+      expect(result[0].routes[0].patternTagCode).toBe("4W");
+      expect(result[0].routes[0].diameterIn).toBe(8);
+      expect(result[0].routes[0].cfm).toBe(130);
+    });
+
+    it("leaves patternTagCode undefined (falls back to the pre-existing default) when a room has no duct_diffusers row", () => {
+      const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map(), []);
+      const roomPin = result[0].pins.find((p) => p.kind === "room");
+      expect(roomPin?.patternTagCode).toBeUndefined();
+      expect(result[0].routes[0].patternTagCode).toBeUndefined();
+    });
+
+    it("renders a second supply diffuser in the same room as its own extra pin+route, not merged into the first", () => {
+      const diffusers = [
+        makeDiffuser({ id: "d1", pattern_type: "four_way", cfm: 100 }),
+        makeDiffuser({ id: "d2", pattern_type: "linear_slot", cfm: 60, position_x_norm: 0.31, position_y_norm: 0.41 }),
+      ];
+      const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map(), diffusers);
+      const roomPins = result[0].pins.filter((p) => p.kind === "room");
+      expect(roomPins).toHaveLength(2);
+      expect(roomPins.map((p) => p.patternTagCode).sort()).toEqual(["4W", "LS"]);
+      const supplyRoutes = result[0].routes.filter((r) => r.roomId === "room-1");
+      expect(supplyRoutes).toHaveLength(2);
+    });
+
+    it("does not draw the generic default supply pin for a room whose only diffuser is a return grille", () => {
+      const diffusers = [makeDiffuser({ airflow_direction: "return", pattern_type: "return_grille", cfm: -100 })];
+      const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map(), diffusers);
+      const roomKindPins = result[0].pins.filter((p) => p.kind === "room");
+      expect(roomKindPins).toHaveLength(0);
+      const returnPins = result[0].pins.filter((p) => p.kind === "return");
+      expect(returnPins).toHaveLength(1);
+      expect(returnPins[0].patternTagCode).toBe("RA");
+      // A return-only diffuser shouldn't fabricate a supply route either.
+      expect(result[0].routes.filter((r) => r.roomId === "room-1")).toHaveLength(0);
+    });
+
+    it("uses a diffuser's own explicit position when set, instead of the room's single pin position", () => {
+      const diffusers = [
+        makeDiffuser({ pattern_type: "sidewall", position_x_norm: 0.35, position_y_norm: 0.42 }),
+        makeDiffuser({ id: "d2", airflow_direction: "return", pattern_type: "return_grille", position_x_norm: 0.28, position_y_norm: 0.38, cfm: -80 }),
+      ];
+      const result = buildDuctRoutingIllustrations(rooms, zones, [], [], new Map(), diffusers);
+      // Primary supply diffuser drives the room's own pin/route position
+      // (still the room's coordinate, per the existing one-pin-per-room
+      // shape) - only the SECOND (extra) diffuser gets its own explicit
+      // position, since it isn't the one driving the default pin.
+      const returnPin = result[0].pins.find((p) => p.kind === "return");
+      expect(returnPin?.xNorm).toBe(0.28);
+      expect(returnPin?.yNorm).toBe(0.38);
+    });
   });
 });

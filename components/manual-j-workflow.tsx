@@ -31,6 +31,7 @@ import {
   type RoomFormValues,
 } from "@/components/room-form";
 import { DuctDesignSection, type DuctRunRow } from "@/components/duct-design-section";
+import type { DuctDiffuserRow } from "@/lib/ductRouting";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
@@ -466,6 +467,7 @@ export const ManualJWorkflow = forwardRef<
     initialAirFilterLossIwc: number | null;
     initialGrillesRegistersLossIwc: number | null;
     initialDuctRuns: DuctRunRow[];
+    initialDuctDiffusers: DuctDiffuserRow[];
     ductSizingTable: DuctSizingTableRow[];
     summerCoincidentWetbulbF: number | null;
     equipmentCatalog: EquipmentCatalogEntry[];
@@ -499,6 +501,7 @@ export const ManualJWorkflow = forwardRef<
     initialAirFilterLossIwc,
     initialGrillesRegistersLossIwc,
     initialDuctRuns,
+    initialDuctDiffusers,
     ductSizingTable,
     summerCoincidentWetbulbF,
     equipmentCatalog,
@@ -1624,6 +1627,7 @@ export const ManualJWorkflow = forwardRef<
           initialAirFilterLossIwc={initialAirFilterLossIwc}
           initialGrillesRegistersLossIwc={initialGrillesRegistersLossIwc}
           initialDuctRuns={initialDuctRuns}
+          initialDuctDiffusers={initialDuctDiffusers}
           ductSizingTable={ductSizingTable}
           ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         />

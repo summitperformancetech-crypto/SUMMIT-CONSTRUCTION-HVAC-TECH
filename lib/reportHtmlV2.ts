@@ -32,6 +32,7 @@ import {
   layoutDuctRoutingLabels,
   buildDuctNetworkPrimitives,
   computeSheetCropViewBox,
+  getDiffuserSymbolSpec,
   type RoutedDuctSegment,
 } from "./ductRouting";
 
@@ -521,6 +522,44 @@ function renderFloorPlanPage(
 // routing diagram AND the compass on the identical image would be too
 // dense to read.
 // ---------------------------------------------------------------------------
+// Real diffuser body geometry, keyed off getDiffuserSymbolSpec's shared
+// bodyShape/tickAngles (see lib/ductRouting.ts for sourcing) - one
+// implementation per renderer (this string-built one, and duct-routing-
+// diagram.tsx's JSX one) since the two can't share literal markup, but
+// both consume the exact same spec so a 4-way diffuser looks identical
+// in the live in-app view and the frozen PDF. tickColor param lets a
+// return-air-tinted variant reuse this if ever needed; unused for now
+// (return grilles keep their own fixed RA symbol, drawn separately).
+function renderDiffuserBodySvg(tagCode: string | undefined, color: string, paperColor: string): string {
+  const spec = getDiffuserSymbolSpec(tagCode);
+  const ticks = spec.tickAngles
+    .map((deg) => {
+      const rad = (deg * Math.PI) / 180;
+      const r1 = spec.bodyShape === "wide_rect" ? 1.8 : 1.3;
+      const r2 = r1 + 0.8;
+      const x1 = (r1 * Math.cos(rad)).toFixed(3);
+      const y1 = (-r1 * Math.sin(rad)).toFixed(3);
+      const x2 = (r2 * Math.cos(rad)).toFixed(3);
+      const y2 = (-r2 * Math.sin(rad)).toFixed(3);
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="0.26" stroke-linecap="round" />`;
+    })
+    .join("");
+
+  if (spec.bodyShape === "bar") {
+    return `<rect x="-2.6" y="-0.4" width="5.2" height="0.8" fill="${paperColor}" stroke="${color}" stroke-width="0.3" />${ticks}`;
+  }
+  if (spec.bodyShape === "wide_rect") {
+    return `<rect x="-1.8" y="-1" width="3.6" height="2" fill="${paperColor}" stroke="${color}" stroke-width="0.3" />${ticks}`;
+  }
+  // Standard ceiling diffuser body (1/2/3/4-way): square with a
+  // decorative blade cross, matching the original one-way symbol this
+  // replaces, plus one tick per real throw direction.
+  return `<rect x="-1.3" y="-1.3" width="2.6" height="2.6" fill="${paperColor}" stroke="${color}" stroke-width="0.32" />
+    <line x1="-1.05" y1="-1.05" x2="1.05" y2="1.05" stroke="${color}" stroke-width="0.26" />
+    <line x1="-1.05" y1="1.05" x2="1.05" y2="-1.05" stroke="${color}" stroke-width="0.26" />
+    ${ticks}`;
+}
+
 function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
   const sheets = data.residential?.ductRoutingIllustration ?? [];
 
@@ -705,12 +744,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
               <text x="0" y="0.7" font-size="1.4" font-weight="700" text-anchor="middle" fill="${RETURN_COLOR}">RA</text>
             </g>`;
           }
-          return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">
-            <rect x="-1.3" y="-1.3" width="2.6" height="2.6" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="0.32" />
-            <line x1="-1.05" y1="-1.05" x2="1.05" y2="1.05" stroke="${SUPPLY_COLOR}" stroke-width="0.26" />
-            <line x1="-1.05" y1="1.05" x2="1.05" y2="-1.05" stroke="${SUPPLY_COLOR}" stroke-width="0.26" />
-            <line x1="0" y1="-1.3" x2="0" y2="-2.1" stroke="${SUPPLY_COLOR}" stroke-width="0.26" stroke-linecap="round" />
-          </g>`;
+          return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">${renderDiffuserBodySvg(pin.patternTagCode, SUPPLY_COLOR, BRAND.paper)}</g>`;
         })
         .join("");
 

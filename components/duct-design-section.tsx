@@ -20,9 +20,11 @@ import {
   getDuctRoutingGateStatus,
   buildLiveDuctRoutingIllustration,
   DIFFUSER_PATTERN_OPTIONS,
+  DUCT_TERMINATION_TYPE_LABELS,
   type ScaleSampleRoom,
   type DuctDiffuserRow,
   type AhuInstallationDetailRow,
+  type DuctTerminationRow,
 } from "@/lib/ductRouting";
 import { DuctRoutingDiagram } from "@/components/duct-routing-diagram";
 import type { RoomLoadResult } from "@/lib/manualJ";
@@ -62,6 +64,8 @@ export const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 export const AHU_INSTALLATION_DETAIL_COLUMNS =
   "id, project_id, zone_id, plenum_size, supply_takeoff_sizes, fresh_air_duct_size, oda_termination_id, refrigerant_vapor_line_in, refrigerant_liquid_line_in, condensate_routing_note, return_platform_construction, return_platform_insulation_r, filter_backed_return_specs, damper_types";
+export const DUCT_TERMINATION_COLUMNS =
+  "id, project_id, zone_id, termination_type, duct_size, hood_manufacturer, hood_model, screen_or_backdraft_spec, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 
 const MATERIAL_OPTIONS = [
   { value: "flex", label: "Flex" },
@@ -169,6 +173,24 @@ function ahuDetailToForm(detail: AhuInstallationDetailRow | undefined): AhuDetai
   };
 }
 
+type TerminationFormValues = {
+  zone_id: string;
+  termination_type: DuctTerminationRow["termination_type"];
+  duct_size: string;
+  hood_manufacturer: string;
+  hood_model: string;
+  screen_or_backdraft_spec: string;
+};
+
+const EMPTY_TERMINATION_FORM: TerminationFormValues = {
+  zone_id: "",
+  termination_type: "exhaust_fan",
+  duct_size: "",
+  hood_manufacturer: "",
+  hood_model: "",
+  screen_or_backdraft_spec: "",
+};
+
 function splitToArrayOrNull(value: string, separator: string): string[] | null {
   const items = value
     .split(separator)
@@ -193,6 +215,7 @@ export function DuctDesignSection({
   initialDuctRuns,
   initialDuctDiffusers,
   initialAhuInstallationDetails,
+  initialDuctTerminations,
   ductSizingTable,
   ductInsulationCodeMinimums,
 }: {
@@ -211,6 +234,7 @@ export function DuctDesignSection({
   initialDuctRuns: DuctRunRow[];
   initialDuctDiffusers: DuctDiffuserRow[];
   initialAhuInstallationDetails: AhuInstallationDetailRow[];
+  initialDuctTerminations: DuctTerminationRow[];
   ductSizingTable: DuctSizingTableRow[];
   // Data Integrity Addendum, Section 3 - duct_location -> current code
   // minimum R-value, for the compliance badge below. Plain array (not the
@@ -285,6 +309,12 @@ export function DuctDesignSection({
   );
   const [ahuDetailSavingZoneId, setAhuDetailSavingZoneId] = useState<string | null>(null);
   const [ahuDetailError, setAhuDetailError] = useState<string | null>(null);
+
+  const [ductTerminations, setDuctTerminations] = useState<DuctTerminationRow[]>(initialDuctTerminations);
+  const [showAddTerminationForm, setShowAddTerminationForm] = useState(false);
+  const [terminationForm, setTerminationForm] = useState<TerminationFormValues>(EMPTY_TERMINATION_FORM);
+  const [terminationError, setTerminationError] = useState<string | null>(null);
+  const [terminationSaving, setTerminationSaving] = useState(false);
 
   const availableStaticPressureIwc = toNullableNumber(staticPressureForm);
   const supplyAirTempF = toNullableNumber(supplyAirTempForm);
@@ -865,6 +895,58 @@ export function DuctDesignSection({
     }
   }
 
+  async function handleAddTermination() {
+    setTerminationSaving(true);
+    setTerminationError(null);
+    try {
+      const supabase = createClient();
+      const payload = {
+        project_id: projectId,
+        zone_id: terminationForm.zone_id || null,
+        termination_type: terminationForm.termination_type,
+        duct_size: terminationForm.duct_size || null,
+        hood_manufacturer: terminationForm.hood_manufacturer || null,
+        hood_model: terminationForm.hood_model || null,
+        screen_or_backdraft_spec: terminationForm.screen_or_backdraft_spec || null,
+      };
+      const { data, error } = await supabase
+        .from("duct_terminations")
+        .insert(payload)
+        .select(DUCT_TERMINATION_COLUMNS)
+        .single<DuctTerminationRow>();
+      if (error || !data) {
+        setTerminationError(error?.message ?? "Failed to create termination.");
+        return;
+      }
+      setDuctTerminations((prev) => [...prev, data]);
+      setShowAddTerminationForm(false);
+      setTerminationForm(EMPTY_TERMINATION_FORM);
+    } catch (err) {
+      setTerminationError(
+        err instanceof Error ? err.message : "Failed to create termination - check your connection and try again.",
+      );
+    } finally {
+      setTerminationSaving(false);
+    }
+  }
+
+  async function handleDeleteTermination(id: string) {
+    if (!window.confirm("Delete this termination?")) return;
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from("duct_terminations").delete().eq("id", id);
+      if (error) {
+        setTerminationError(error.message);
+        return;
+      }
+      setDuctTerminations((prev) => prev.filter((t) => t.id !== id));
+    } catch (err) {
+      setTerminationError(
+        err instanceof Error ? err.message : "Failed to delete termination - check your connection and try again.",
+      );
+    }
+  }
+
   const readyToSize = availableStaticPressureIwc != null && supplyAirTempF != null;
 
   // The live, in-app version of the exact same schematic the PDF report
@@ -873,8 +955,17 @@ export function DuctDesignSection({
   // fallback comment on the table below), and resultByRunId when static-
   // pressure sizing has run. No PDF generation required to see it.
   const liveIllustrationSheets = useMemo(
-    () => buildLiveDuctRoutingIllustration(rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom, ductDiffusers),
-    [rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom, ductDiffusers],
+    () =>
+      buildLiveDuctRoutingIllustration(
+        rooms,
+        zones,
+        ductRuns,
+        resultByRunId,
+        requiredCfmByRoom,
+        ductDiffusers,
+        ductTerminations,
+      ),
+    [rooms, zones, ductRuns, resultByRunId, requiredCfmByRoom, ductDiffusers, ductTerminations],
   );
 
   return (
@@ -1638,6 +1729,148 @@ export function DuctDesignSection({
           </div>
         );
       })}
+
+      <div className="mb-4 mt-8 flex items-center justify-between border-t border-zinc-800 pt-6">
+        <h3 className="text-sm font-semibold text-brand-silver-highlight">Terminations</h3>
+        {!showAddTerminationForm && (
+          <button
+            onClick={() => setShowAddTerminationForm(true)}
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover"
+          >
+            Add Termination
+          </button>
+        )}
+      </div>
+      <p className="mb-4 text-xs text-brand-grey-text">
+        Non-diffuser airflow terminations - exhaust fan, dryer vent, outdoor air intake, condensate discharge.
+        Position is set separately via the Duct Routing Pins canvas once available; a termination logged here
+        without a plotted point still appears in the report&apos;s equipment list.
+      </p>
+
+      {terminationError && (
+        <p className="mb-4 text-sm text-red-400" role="alert">
+          {terminationError}
+        </p>
+      )}
+
+      {showAddTerminationForm && (
+        <div className="mb-4 space-y-3 rounded-lg border border-brand-gold/50 bg-zinc-900 p-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <SelectField
+              label="Type"
+              value={terminationForm.termination_type}
+              onChange={(v) =>
+                setTerminationForm((prev) => ({ ...prev, termination_type: v as DuctTerminationRow["termination_type"] }))
+              }
+              options={Object.entries(DUCT_TERMINATION_TYPE_LABELS).map(([value, label]) => ({ value, label }))}
+            />
+            <SelectField
+              label="Zone (optional)"
+              value={terminationForm.zone_id}
+              onChange={(v) => setTerminationForm((prev) => ({ ...prev, zone_id: v }))}
+              options={[{ value: "", label: "None / whole-building" }, ...zones.map((z) => ({ value: z.id, label: z.name }))]}
+            />
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">Duct size</label>
+              <input
+                type="text"
+                value={terminationForm.duct_size}
+                onChange={(e) => setTerminationForm((prev) => ({ ...prev, duct_size: e.target.value }))}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">Hood manufacturer</label>
+              <input
+                type="text"
+                value={terminationForm.hood_manufacturer}
+                onChange={(e) => setTerminationForm((prev) => ({ ...prev, hood_manufacturer: e.target.value }))}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">Hood model</label>
+              <input
+                type="text"
+                value={terminationForm.hood_model}
+                onChange={(e) => setTerminationForm((prev) => ({ ...prev, hood_model: e.target.value }))}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-brand-grey-text">Screen / back-draft spec</label>
+              <input
+                type="text"
+                value={terminationForm.screen_or_backdraft_spec}
+                onChange={(e) => setTerminationForm((prev) => ({ ...prev, screen_or_backdraft_spec: e.target.value }))}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleAddTermination}
+              disabled={terminationSaving}
+              className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+            >
+              {terminationSaving ? "Saving..." : "Save Termination"}
+            </button>
+            <button
+              onClick={() => {
+                setShowAddTerminationForm(false);
+                setTerminationForm(EMPTY_TERMINATION_FORM);
+              }}
+              className="rounded-md border border-zinc-700 px-4 py-2 text-sm text-brand-grey-text transition hover:border-brand-gold"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {ductTerminations.length === 0 && !showAddTerminationForm ? (
+        <p className="text-sm text-brand-grey-text">No terminations entered yet.</p>
+      ) : (
+        ductTerminations.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-zinc-800">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-zinc-900 text-xs uppercase text-brand-grey-text">
+                <tr>
+                  <th className="px-3 py-2">Type</th>
+                  <th className="px-3 py-2">Zone</th>
+                  <th className="px-3 py-2">Duct size</th>
+                  <th className="px-3 py-2">Hood</th>
+                  <th className="px-3 py-2">Plotted?</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800">
+                {ductTerminations.map((t) => (
+                  <tr key={t.id}>
+                    <td className="px-3 py-2 text-brand-silver-highlight">{DUCT_TERMINATION_TYPE_LABELS[t.termination_type]}</td>
+                    <td className="px-3 py-2 text-brand-grey-text">{zones.find((z) => z.id === t.zone_id)?.name ?? "—"}</td>
+                    <td className="px-3 py-2 text-brand-grey-text">{t.duct_size ?? "—"}</td>
+                    <td className="px-3 py-2 text-brand-grey-text">
+                      {[t.hood_manufacturer, t.hood_model].filter(Boolean).join(" ") || "—"}
+                    </td>
+                    <td className="px-3 py-2 text-brand-grey-text">
+                      {t.position_x_norm != null ? "Yes" : <span className="text-amber-400">Not yet</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        onClick={() => handleDeleteTermination(t.id)}
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
     </section>
   );
 }

@@ -460,6 +460,13 @@ export type LiveDuctRoutingSheet = {
   pageNumber: number;
   pins: LiveDuctRoutingPin[];
   routes: LiveDuctRoutingRoute[];
+  terminations: LiveDuctRoutingTermination[];
+};
+export type LiveDuctRoutingTermination = {
+  terminationType: DuctTerminationRow["termination_type"];
+  tag: string;
+  xNorm: number;
+  yNorm: number;
 };
 
 // -----------------------------------------------------------------------
@@ -519,6 +526,7 @@ export function buildLiveDuctRoutingIllustration(
   sizedByRunId: Map<string, Pick<DuctSizingResult, "diameterIn" | "cfm">>,
   requiredCfmByRoom: Map<string, number | null>,
   ductDiffusers: DuctDiffuserRow[] = [],
+  ductTerminations: DuctTerminationRow[] = [],
 ): LiveDuctRoutingSheet[] {
   const bySheet = new Map<string, LiveDuctRoutingSheet>();
   const diffusersByRoom = new Map<string, DuctDiffuserRow[]>();
@@ -551,7 +559,26 @@ export function buildLiveDuctRoutingIllustration(
     const sheetKey = `${zone.ahu_position_source_drawing_id}:${zone.ahu_position_source_page_number}`;
     let sheet = bySheet.get(sheetKey);
     if (!sheet) {
-      sheet = { drawingId: zone.ahu_position_source_drawing_id, pageNumber: zone.ahu_position_source_page_number, pins: [], routes: [] };
+      sheet = {
+        drawingId: zone.ahu_position_source_drawing_id,
+        pageNumber: zone.ahu_position_source_page_number,
+        pins: [],
+        routes: [],
+        terminations: ductTerminations
+          .filter(
+            (t) =>
+              t.position_x_norm != null &&
+              t.position_y_norm != null &&
+              t.position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+              t.position_source_page_number === zone.ahu_position_source_page_number,
+          )
+          .map((t) => ({
+            terminationType: t.termination_type,
+            tag: DUCT_TERMINATION_TYPE_TAGS[t.termination_type],
+            xNorm: t.position_x_norm!,
+            yNorm: t.position_y_norm!,
+          })),
+      };
       bySheet.set(sheetKey, sheet);
       const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
       const trunkSized = trunkRun ? sizedByRunId.get(trunkRun.id) : undefined;
@@ -928,6 +955,43 @@ export const DUCT_ROUTING_MODE_BASIS_LABELS: Record<DuctRoutingModeBasis, string
   exposed_ceiling: "Exposed / dropped ceiling grid",
   mixed: "Mixed (varies by room/level)",
   unknown: "Not yet determinable from entered data",
+};
+
+// One row per non-diffuser airflow termination (duct_terminations table) -
+// exhaust fan, dryer vent, ODA intake, condensate discharge. Real,
+// technician-entered; position is optional (a termination can be logged
+// without a plotted point, e.g. before the sheet has been walked) - it
+// only appears on the plan once position_x_norm/y_norm and the matching
+// drawing/page are set, same "only render what's actually resolved"
+// convention as every other pin type.
+export type DuctTerminationRow = {
+  id: string;
+  project_id: string;
+  zone_id: string | null;
+  termination_type: "exhaust_fan" | "dryer_vent" | "oda_intake" | "condensate_discharge";
+  duct_size: string | null;
+  hood_manufacturer: string | null;
+  hood_model: string | null;
+  screen_or_backdraft_spec: string | null;
+  position_x_norm: number | null;
+  position_y_norm: number | null;
+  position_source_drawing_id: string | null;
+  position_source_page_number: number | null;
+};
+
+export const DUCT_TERMINATION_TYPE_LABELS: Record<DuctTerminationRow["termination_type"], string> = {
+  exhaust_fan: "Exhaust Fan",
+  dryer_vent: "Dryer Vent",
+  oda_intake: "Outdoor Air Intake",
+  condensate_discharge: "Condensate Discharge",
+};
+
+// Short tag drawn inside each termination's plan symbol.
+export const DUCT_TERMINATION_TYPE_TAGS: Record<DuctTerminationRow["termination_type"], string> = {
+  exhaust_fan: "EF",
+  dryer_vent: "DV",
+  oda_intake: "OA",
+  condensate_discharge: "CD",
 };
 
 export type AhuInstallationDetailRow = {

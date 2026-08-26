@@ -456,6 +456,19 @@ export function DuctRoutingDiagram({
           );
         });
 
+        const terminationIcons = (sheet.terminations ?? []).map((t, i) => {
+          const cx = t.xNorm * 100;
+          const cy = t.yNorm * 100;
+          return (
+            <g key={`term-${i}`} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
+              <circle r={1.4} fill={PAPER} stroke={SYMBOL_INK} strokeWidth={0.3} />
+              <text x={0} y={0.5} fontSize={1.2} fontWeight={700} textAnchor="middle" fill={SYMBOL_INK}>
+                {t.tag}
+              </text>
+            </g>
+          );
+        });
+
         return (
           <div key={sheetIndex}>
             {sheets.length > 1 && (
@@ -491,6 +504,7 @@ export function DuctRoutingDiagram({
                 {elbowSymbols}
                 {teeSymbols}
                 {pinIcons}
+                {terminationIcons}
                 {labels}
               </svg>
             </div>

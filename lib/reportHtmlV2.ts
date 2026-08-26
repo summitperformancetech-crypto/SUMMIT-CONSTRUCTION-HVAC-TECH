@@ -751,6 +751,21 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         })
         .join("");
 
+      // Non-diffuser terminations (exhaust fan/dryer vent/ODA intake/
+      // condensate discharge) - a plain outlined circle with a short tag,
+      // distinct from every duct/register symbol above since these sit
+      // outside the supply/return network entirely.
+      const terminationIcons = (sheet.terminations ?? [])
+        .map((t) => {
+          const cx = t.xNorm * 100;
+          const cy = t.yNorm * 100;
+          return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">
+            <circle r="1.4" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="0.3" />
+            <text x="0" y="0.5" font-size="1.2" font-weight="700" text-anchor="middle" fill="${SYMBOL_INK}">${esc(t.tag)}</text>
+          </g>`;
+        })
+        .join("");
+
       // Crop container: overflow:hidden clips the image once it's zoomed
       // (via the CSS transform below) past the visible frame. The image
       // gets a CSS scale+translate that maps crop.minX/minY/size onto
@@ -769,6 +784,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
             ${elbowSymbols}
             ${teeSymbols}
             ${pinIcons}
+            ${terminationIcons}
             ${labels}
           </svg>
         </div>`;
@@ -789,6 +805,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="1.4" /><line x1="2" y1="2" x2="12" y2="12" stroke="${SUPPLY_COLOR}" stroke-width="1" /><line x1="2" y1="12" x2="12" y2="2" stroke="${SUPPLY_COLOR}" stroke-width="1" /></svg> Supply register (one-way)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="4" y="4" width="6" height="6" fill="${SYMBOL_INK}" /></svg> Branch takeoff (tee)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="22" height="14"><circle cx="7" cy="7" r="4.2" fill="none" stroke="${SUPPLY_COLOR}" stroke-width="1" /><text x="7" y="9.5" font-size="5" font-weight="700" text-anchor="middle" fill="${SUPPLY_COLOR}">1W</text><text x="16" y="6" font-size="4.2" font-weight="700" fill="${SUPPLY_COLOR}">6"⌀</text><line x1="12" y1="7" x2="20" y2="7" stroke="${SUPPLY_COLOR}" stroke-width="0.6" /><text x="16" y="13" font-size="4.2" font-weight="700" fill="${SUPPLY_COLOR}">80</text></svg> Register callout (type / size / CFM)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="1" /><text x="7" y="9.5" font-size="5" font-weight="700" text-anchor="middle" fill="${SYMBOL_INK}">EF</text></svg> Termination (EF/DV/OA/CD)</span>
      </div>
      <p class="muted" style="margin-top:8px;">
        Routed paths follow real orthogonal geometry through the open space between rooms - a shared trunk near

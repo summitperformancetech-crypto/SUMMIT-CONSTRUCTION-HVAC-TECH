@@ -48,9 +48,11 @@ import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessmen
 import type { CompassDirection } from "./solarIrradiance";
 import {
   DIFFUSER_PATTERN_TAG_CODES,
+  DUCT_TERMINATION_TYPE_TAGS,
   deriveDuctRoutingModeBasis,
   type DuctDiffuserRow,
   type AhuInstallationDetailRow,
+  type DuctTerminationRow,
   type DuctRoutingModeBasis,
   type RoutedDuctSegment,
 } from "./ductRouting";
@@ -163,6 +165,19 @@ export type DuctRoutingSheetIllustration = {
   // deferred past this cheap aggregation pass" reason imageDataUri is
   // null here too (see that field's own comment above).
   routedSegments: RoutedDuctSegment[] | null;
+  // Real non-diffuser terminations (exhaust fan/dryer vent/ODA intake/
+  // condensate discharge) placed on this same sheet - only ones with a
+  // real position matching this drawing+page appear; a termination
+  // logged without a position simply doesn't plot yet (see
+  // DuctTerminationRow's own comment).
+  terminations: DuctRoutingIllustrationTermination[];
+};
+export type DuctRoutingIllustrationTermination = {
+  terminationType: DuctTerminationRow["termination_type"];
+  tag: string;
+  label: string;
+  xNorm: number;
+  yNorm: number;
 };
 
 export function buildDuctRoutingIllustrations(
@@ -183,6 +198,9 @@ export function buildDuctRoutingIllustrations(
   // technician enters real hardware - the room-pin/one-way-default
   // behavior below is unchanged for those, by construction.
   ductDiffusers: DuctDiffuserRow[] = [],
+  // Real, project-entered terminations (duct_terminations table). Empty
+  // on every pre-existing project until a technician logs one.
+  ductTerminations: DuctTerminationRow[] = [],
 ): DuctRoutingSheetIllustration[] {
   const bySheet = new Map<string, DuctRoutingSheetIllustration>();
   const sizedByRunId = new Map(ductSchedule.map((r) => [r.runId, r]));
@@ -223,6 +241,21 @@ export function buildDuctRoutingIllustrations(
         pins: [],
         routes: [],
         routedSegments: null,
+        terminations: ductTerminations
+          .filter(
+            (t) =>
+              t.position_x_norm != null &&
+              t.position_y_norm != null &&
+              t.position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+              t.position_source_page_number === zone.ahu_position_source_page_number,
+          )
+          .map((t) => ({
+            terminationType: t.termination_type,
+            tag: DUCT_TERMINATION_TYPE_TAGS[t.termination_type],
+            label: `${DUCT_TERMINATION_TYPE_TAGS[t.termination_type]}${t.duct_size ? ` — ${t.duct_size}` : ""}`,
+            xNorm: t.position_x_norm!,
+            yNorm: t.position_y_norm!,
+          })),
       };
       bySheet.set(sheetKey, sheet);
       const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
@@ -439,6 +472,8 @@ const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 const AHU_INSTALLATION_DETAIL_COLUMNS =
   "id, project_id, zone_id, plenum_size, supply_takeoff_sizes, fresh_air_duct_size, oda_termination_id, refrigerant_vapor_line_in, refrigerant_liquid_line_in, condensate_routing_note, return_platform_construction, return_platform_insulation_r, filter_backed_return_specs, damper_types";
+const DUCT_TERMINATION_COLUMNS =
+  "id, project_id, zone_id, termination_type, duct_size, hood_manufacturer, hood_model, screen_or_backdraft_spec, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 const COMMERCIAL_ZONE_COLUMNS =
   "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, ceiling_height_ft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc, cleanroom_class";
 const EQUIPMENT_CATALOG_COLUMNS =
@@ -528,6 +563,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       { data: ductRuns },
       { data: ductDiffusers },
       { data: ahuInstallationDetails },
+      { data: ductTerminations },
     ] = await Promise.all([
         supabase
           .from("rooms")
@@ -564,6 +600,11 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
           .select(AHU_INSTALLATION_DETAIL_COLUMNS)
           .eq("project_id", projectId)
           .returns<AhuInstallationDetailRow[]>(),
+        supabase
+          .from("duct_terminations")
+          .select(DUCT_TERMINATION_COLUMNS)
+          .eq("project_id", projectId)
+          .returns<DuctTerminationRow[]>(),
       ]);
 
     const envelope: ManualJEnvelope = {
@@ -857,6 +898,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         ductSchedule,
         illustrationCfmByRoom,
         ductDiffusers ?? [],
+        ductTerminations ?? [],
       ),
       ahuInstallationDetails: ahuInstallationDetails ?? [],
       ductRoutingModeByZone: (zones ?? []).map((zone) => {

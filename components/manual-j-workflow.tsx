@@ -31,7 +31,7 @@ import {
   type RoomFormValues,
 } from "@/components/room-form";
 import { DuctDesignSection, type DuctRunRow } from "@/components/duct-design-section";
-import type { DuctDiffuserRow, AhuInstallationDetailRow } from "@/lib/ductRouting";
+import type { DuctDiffuserRow, AhuInstallationDetailRow, DuctTerminationRow } from "@/lib/ductRouting";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
@@ -469,6 +469,7 @@ export const ManualJWorkflow = forwardRef<
     initialDuctRuns: DuctRunRow[];
     initialDuctDiffusers: DuctDiffuserRow[];
     initialAhuInstallationDetails: AhuInstallationDetailRow[];
+    initialDuctTerminations: DuctTerminationRow[];
     ductSizingTable: DuctSizingTableRow[];
     summerCoincidentWetbulbF: number | null;
     equipmentCatalog: EquipmentCatalogEntry[];
@@ -504,6 +505,7 @@ export const ManualJWorkflow = forwardRef<
     initialDuctRuns,
     initialDuctDiffusers,
     initialAhuInstallationDetails,
+    initialDuctTerminations,
     ductSizingTable,
     summerCoincidentWetbulbF,
     equipmentCatalog,
@@ -1631,6 +1633,7 @@ export const ManualJWorkflow = forwardRef<
           initialDuctRuns={initialDuctRuns}
           initialDuctDiffusers={initialDuctDiffusers}
           initialAhuInstallationDetails={initialAhuInstallationDetails}
+          initialDuctTerminations={initialDuctTerminations}
           ductSizingTable={ductSizingTable}
           ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         />

@@ -19,6 +19,7 @@ import {
   buildDuctNetworkPrimitives,
   parseArchitecturalScaleText,
   resolveSheetScale,
+  computeSheetCropViewBox,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -114,6 +115,60 @@ describe("resolveSheetScale", () => {
     const result = resolveSheetScale(null, [], 1000, 800);
     expect(result.source).toBe("none");
     expect(result.feetPerPagePoint).toBeNull();
+  });
+});
+
+describe("computeSheetCropViewBox", () => {
+  it("returns the full uncropped page when there are no points", () => {
+    const result = computeSheetCropViewBox([]);
+    expect(result).toEqual({ minX: 0, minY: 0, size: 100, zoomFactor: 1 });
+  });
+
+  it("doesn't crop (zoomFactor 1) when pins already span most of the page - e.g. a sheet whose floor plan fills the sheet", () => {
+    const points = [
+      { xNorm: 0.05, yNorm: 0.05 },
+      { xNorm: 0.95, yNorm: 0.95 },
+    ];
+    const result = computeSheetCropViewBox(points);
+    expect(result.size).toBe(100);
+    expect(result.zoomFactor).toBe(1);
+  });
+
+  it("crops to a square region centered on a tight cluster of pins, with margin, when they occupy a small corner of the page - the Schneider A3.1 case", () => {
+    // Pins clustered in roughly the same small region actually seen on
+    // Schneider's real A3.1 sheet (2nd floor, a small drawing on a
+    // mostly-blank full page) - real coordinates from this session's
+    // room-position corrections, normalized.
+    const points = [
+      { xNorm: 0.48, yNorm: 0.46 },
+      { xNorm: 0.7, yNorm: 0.56 },
+      { xNorm: 0.57, yNorm: 0.74 },
+    ];
+    const result = computeSheetCropViewBox(points);
+    expect(result.size).toBeLessThan(100);
+    expect(result.zoomFactor).toBeGreaterThan(1);
+    // Every point (in viewBox 0-100 units) must fall inside the crop.
+    for (const p of points) {
+      const x = p.xNorm * 100;
+      const y = p.yNorm * 100;
+      expect(x).toBeGreaterThanOrEqual(result.minX);
+      expect(x).toBeLessThanOrEqual(result.minX + result.size);
+      expect(y).toBeGreaterThanOrEqual(result.minY);
+      expect(y).toBeLessThanOrEqual(result.minY + result.size);
+    }
+  });
+
+  it("never zooms in tighter than the minimum crop size, even for a single pin or a tight cluster", () => {
+    const result = computeSheetCropViewBox([{ xNorm: 0.5, yNorm: 0.5 }]);
+    expect(result.size).toBeGreaterThanOrEqual(35);
+  });
+
+  it("clamps the crop rectangle to stay within the page bounds when a pin sits near an edge", () => {
+    const result = computeSheetCropViewBox([{ xNorm: 0.02, yNorm: 0.02 }]);
+    expect(result.minX).toBeGreaterThanOrEqual(0);
+    expect(result.minY).toBeGreaterThanOrEqual(0);
+    expect(result.minX + result.size).toBeLessThanOrEqual(100 + 1e-9);
+    expect(result.minY + result.size).toBeLessThanOrEqual(100 + 1e-9);
   });
 });
 

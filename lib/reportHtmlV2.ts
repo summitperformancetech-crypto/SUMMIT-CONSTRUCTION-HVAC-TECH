@@ -28,7 +28,12 @@ import { computeRequiredCfmForRooms } from "./manualD";
 import type { Compass8 } from "./constants/compass";
 import type { DrawingExtraction } from "./drawingExtraction";
 import { getEmbeddedFontFaces } from "./reportFonts";
-import { layoutDuctRoutingLabels, buildDuctNetworkPrimitives, type RoutedDuctSegment } from "./ductRouting";
+import {
+  layoutDuctRoutingLabels,
+  buildDuctNetworkPrimitives,
+  computeSheetCropViewBox,
+  type RoutedDuctSegment,
+} from "./ductRouting";
 
 export type OrgBranding = {
   name: string;
@@ -563,8 +568,19 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
       const sheetZoneIds = [...new Set(sheet.pins.map((p) => p.zoneId))];
       const zoneTint =
         sheetZoneIds.length === 1 ? ZONE_TINTS[allZoneIds.indexOf(sheetZoneIds[0]) % ZONE_TINTS.length] : null;
+
+      // Crop/zoom this sheet's viewBox to its own real pin extents (see
+      // computeSheetCropViewBox's own comment - fixes register/label
+      // symbols looking oversized on a sheet like A3.1 where the real
+      // floor plan is a small drawing on a mostly-blank full sheet).
+      // `s()` shrinks every fixed-size symbol/label constant below by
+      // the resulting zoom so they render at their original absolute
+      // size once the viewBox zooms everything in - only position
+      // values (already real xNorm/yNorm * 100) are left unscaled.
+      const crop = computeSheetCropViewBox(sheet.pins);
+      const s = (v: number) => v / crop.zoomFactor;
       const zoneTintRect = zoneTint
-        ? `<rect x="0" y="0" width="100" height="100" fill="${zoneTint}" opacity="0.22" />`
+        ? `<rect x="${crop.minX.toFixed(3)}" y="${crop.minY.toFixed(3)}" width="${crop.size.toFixed(3)}" height="${crop.size.toFixed(3)}" fill="${zoneTint}" opacity="0.22" />`
         : "";
 
       const primitives = buildDuctNetworkPrimitives(sheet.routedSegments ?? []);
@@ -596,7 +612,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
       const routeLines = primitives.segments
         .map(
           (seg) =>
-            `<line x1="${(seg.fromXNorm * 100).toFixed(3)}" y1="${(seg.fromYNorm * 100).toFixed(3)}" x2="${(seg.toXNorm * 100).toFixed(3)}" y2="${(seg.toYNorm * 100).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="${SEGMENT_WIDTH[seg.cls]}" stroke-linecap="round"${seg.cls === "trunk" ? "" : ' stroke-dasharray="0.55,0.4"'} />`,
+            `<line x1="${(seg.fromXNorm * 100).toFixed(3)}" y1="${(seg.fromYNorm * 100).toFixed(3)}" x2="${(seg.toXNorm * 100).toFixed(3)}" y2="${(seg.toYNorm * 100).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="${s(SEGMENT_WIDTH[seg.cls]).toFixed(3)}" stroke-linecap="round"${seg.cls === "trunk" ? "" : ` stroke-dasharray="${s(0.55).toFixed(3)},${s(0.4).toFixed(3)}"`} />`,
         )
         .join("");
 
@@ -605,12 +621,12 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
       // elbow, a filled square at a branch takeoff (3-way tee), matching
       // the reference sheets' own fitting convention.
       const elbowSymbols = primitives.elbows
-        .map((p) => `<circle cx="${(p.xNorm * 100).toFixed(3)}" cy="${(p.yNorm * 100).toFixed(3)}" r="0.4" fill="${SUPPLY_COLOR}" />`)
+        .map((p) => `<circle cx="${(p.xNorm * 100).toFixed(3)}" cy="${(p.yNorm * 100).toFixed(3)}" r="${s(0.4).toFixed(3)}" fill="${SUPPLY_COLOR}" />`)
         .join("");
       const teeSymbols = primitives.tees
         .map(
           (p) =>
-            `<rect x="${(p.xNorm * 100 - 0.5).toFixed(3)}" y="${(p.yNorm * 100 - 0.5).toFixed(3)}" width="1" height="1" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="0.15" />`,
+            `<rect x="${(p.xNorm * 100 - s(0.5)).toFixed(3)}" y="${(p.yNorm * 100 - s(0.5)).toFixed(3)}" width="${s(1).toFixed(3)}" height="${s(1).toFixed(3)}" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="${s(0.15).toFixed(3)}" />`,
         )
         .join("");
 
@@ -624,13 +640,16 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
       // whenever decluttering pushed a label meaningfully away from it.
       const labels = layoutDuctRoutingLabels(sheet)
         .map((label) => {
-          const fontSize = label.kind === "room" ? 1.7 : label.kind === "trunk" ? 1.5 : 1.6;
+          const fontSize = s(label.kind === "room" ? 1.7 : label.kind === "trunk" ? 1.5 : 1.6);
           const fontWeight = label.kind === "room" ? 600 : 700;
           const fill = label.kind === "room" ? "#1f3a5f" : SUPPLY_COLOR;
+          // Real position-space distance (unscaled - label.x/y/anchorX/
+          // anchorY are already real page positions, not sizes), used
+          // only to decide whether a leader line is needed at all.
           const leaderDistance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
           const leader =
             leaderDistance > 3.5
-              ? `<line x1="${label.anchorX.toFixed(3)}" y1="${label.anchorY.toFixed(3)}" x2="${(label.textAnchor === "middle" ? label.x : label.x - 0.6).toFixed(3)}" y2="${(label.y - fontSize * 0.35).toFixed(3)}" stroke="${fill}" stroke-width="0.18" stroke-dasharray="0.6,0.5" />`
+              ? `<line x1="${label.anchorX.toFixed(3)}" y1="${label.anchorY.toFixed(3)}" x2="${(label.textAnchor === "middle" ? label.x : label.x - s(0.6)).toFixed(3)}" y2="${(label.y - fontSize * 0.35).toFixed(3)}" stroke="${fill}" stroke-width="${s(0.18).toFixed(3)}" stroke-dasharray="${s(0.6).toFixed(3)},${s(0.5).toFixed(3)}" />`
               : "";
 
           // Real register callout: a circled type code beside a stacked
@@ -638,15 +657,15 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           // REFERENCE-DOCS/IMG_3916.JPG's "STANDARD AIR DISTRIBUTION"
           // key exactly, not an inline "size / cfm" string.
           if (label.kind === "run" && label.secondaryText != null) {
-            const runFontSize = 1.5;
+            const runFontSize = s(1.5);
             const lineGap = runFontSize * 1.25;
             const dividerWidth = Math.max(label.text.length, label.secondaryText.length) * runFontSize * 0.62;
-            const circleCx = label.x - 1.9;
+            const circleCx = label.x - s(1.9);
             const circleCy = label.y + lineGap / 2 - runFontSize * 0.32;
-            return `${leader}<circle cx="${circleCx.toFixed(3)}" cy="${circleCy.toFixed(3)}" r="0.95" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="0.22" /><text x="${circleCx.toFixed(3)}" y="${(circleCy + 0.4).toFixed(3)}" font-size="1" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="middle">${esc(label.typeCode ?? "")}</text><text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${runFontSize}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="start" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text><line x1="${label.x.toFixed(3)}" y1="${(label.y + runFontSize * 0.32).toFixed(3)}" x2="${(label.x + dividerWidth).toFixed(3)}" y2="${(label.y + runFontSize * 0.32).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="0.15" /><text x="${label.x.toFixed(3)}" y="${(label.y + lineGap).toFixed(3)}" font-size="${runFontSize}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="start" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.secondaryText)}</text>`;
+            return `${leader}<circle cx="${circleCx.toFixed(3)}" cy="${circleCy.toFixed(3)}" r="${s(0.95).toFixed(3)}" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="${s(0.22).toFixed(3)}" /><text x="${circleCx.toFixed(3)}" y="${(circleCy + s(0.4)).toFixed(3)}" font-size="${s(1).toFixed(3)}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="middle">${esc(label.typeCode ?? "")}</text><text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${runFontSize.toFixed(3)}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="start" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text><line x1="${label.x.toFixed(3)}" y1="${(label.y + runFontSize * 0.32).toFixed(3)}" x2="${(label.x + dividerWidth).toFixed(3)}" y2="${(label.y + runFontSize * 0.32).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="${s(0.15).toFixed(3)}" /><text x="${label.x.toFixed(3)}" y="${(label.y + lineGap).toFixed(3)}" font-size="${runFontSize.toFixed(3)}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="start" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.secondaryText)}</text>`;
           }
 
-          return `${leader}<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}"${label.kind === "room" ? ' text-decoration="underline"' : ""} style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
+          return `${leader}<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize.toFixed(3)}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}"${label.kind === "room" ? ' text-decoration="underline"' : ""} style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
         })
         .join("");
 
@@ -665,7 +684,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           const cx = pin.xNorm * 100;
           const cy = pin.yNorm * 100;
           if (pin.kind === "ahu") {
-            return `<g transform="translate(${cx} ${cy})">
+            return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">
               <line x1="0" y1="0" x2="-4.5" y2="0" stroke="${SUPPLY_COLOR}" stroke-width="0.7" stroke-linecap="round" />
               <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="0.3" />
               <line x1="-1.6" y1="1.6" x2="-0.3" y2="0.3" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
@@ -680,13 +699,13 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
             // diagonal, per REFERENCE-DOCS/IMG_3916.JPG's real return-air
             // grille legend, sized and labeled as its own piece of
             // equipment rather than a small attached swatch.
-            return `<g transform="translate(${cx} ${cy})">
+            return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">
               <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${BRAND.paper}" stroke="${RETURN_COLOR}" stroke-width="0.35" />
               <line x1="-1.6" y1="1.6" x2="1.6" y2="-1.6" stroke="${RETURN_COLOR}" stroke-width="0.28" />
               <text x="0" y="0.7" font-size="1.4" font-weight="700" text-anchor="middle" fill="${RETURN_COLOR}">RA</text>
             </g>`;
           }
-          return `<g transform="translate(${cx} ${cy})">
+          return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">
             <rect x="-1.3" y="-1.3" width="2.6" height="2.6" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="0.32" />
             <line x1="-1.05" y1="-1.05" x2="1.05" y2="1.05" stroke="${SUPPLY_COLOR}" stroke-width="0.26" />
             <line x1="-1.05" y1="1.05" x2="1.05" y2="-1.05" stroke="${SUPPLY_COLOR}" stroke-width="0.26" />
@@ -695,11 +714,19 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
         })
         .join("");
 
+      // Crop container: overflow:hidden clips the image once it's zoomed
+      // (via the CSS transform below) past the visible frame. The image
+      // gets a CSS scale+translate that maps crop.minX/minY/size onto
+      // the frame identically to how the SVG's own viewBox does for the
+      // overlay above - both derived from the exact same crop rect, so
+      // the raster floor plan and the vector overlay stay in lockstep.
+      const imgTransform = `scale(${crop.zoomFactor.toFixed(4)}) translate(${(-crop.minX).toFixed(3)}%, ${(-crop.minY).toFixed(3)}%)`;
+
       return `<div class="section-title">Duct Routing${sheets.length > 1 ? ` — Sheet ${sheetIndex + 1}` : ""}</div>
         ${routingNotice}
-        <div style="position:relative;display:inline-block;">
-          <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="max-width:100%;display:block;border:1px solid ${BRAND.grid};filter:grayscale(1) brightness(1.55) contrast(0.82);" />
-          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
+        <div style="position:relative;display:inline-block;width:100%;overflow:hidden;border:1px solid ${BRAND.grid};">
+          <img src="${sheet.imageDataUri}" alt="Duct routing sheet" style="width:100%;display:block;filter:grayscale(1) brightness(1.55) contrast(0.82);transform-origin:0 0;transform:${imgTransform};" />
+          <svg viewBox="${crop.minX.toFixed(3)} ${crop.minY.toFixed(3)} ${crop.size.toFixed(3)} ${crop.size.toFixed(3)}" preserveAspectRatio="none" style="position:absolute;inset:0;width:100%;height:100%;">
             ${zoneTintRect}
             ${routeLines}
             ${elbowSymbols}

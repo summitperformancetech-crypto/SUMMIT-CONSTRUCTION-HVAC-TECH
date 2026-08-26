@@ -5,6 +5,7 @@ import {
   layoutDuctRoutingLabels,
   computeSheetDuctRouting,
   buildDuctNetworkPrimitives,
+  computeSheetCropViewBox,
   type LiveDuctRoutingSheet,
   type RoutedDuctSegment,
 } from "@/lib/ductRouting";
@@ -201,6 +202,18 @@ export function DuctRoutingDiagram({
         const sheetZoneIds = [...new Set(sheet.pins.map((p) => p.zoneId))];
         const zoneTint = sheetZoneIds.length === 1 ? zoneTintColor(sheetZoneIds[0], allZoneIds) : null;
 
+        // Crop/zoom this sheet's viewBox to its own real pin extents -
+        // see lib/ductRouting.ts's computeSheetCropViewBox for why (a
+        // sheet like A3.1, whose real floor plan is a small drawing on
+        // a mostly-blank full page, was making every fixed-size
+        // register/label symbol look oversized). `s()` shrinks every
+        // fixed-size symbol/label constant below by the resulting zoom
+        // so they render at their original absolute size once the
+        // viewBox zooms everything in - position values (already real
+        // xNorm/yNorm * 100) are left unscaled.
+        const crop = computeSheetCropViewBox(sheet.pins);
+        const s = (v: number) => v / crop.zoomFactor;
+
         // Flex vs. metal duct texture (REFERENCE-DOCS/IMG_3916.JPG's "A/C
         // DUCT SPECIFICATIONS" key: a ribbed/coil texture means flexible
         // duct, a plain line means rigid metal). Keyed off the segment's
@@ -226,9 +239,9 @@ export function DuctRoutingDiagram({
             x2={seg.toXNorm * 100}
             y2={seg.toYNorm * 100}
             stroke={SUPPLY_COLOR}
-            strokeWidth={SEGMENT_WIDTH[seg.cls]}
+            strokeWidth={s(SEGMENT_WIDTH[seg.cls])}
             strokeLinecap="round"
-            strokeDasharray={seg.cls === "trunk" ? undefined : "0.55,0.4"}
+            strokeDasharray={seg.cls === "trunk" ? undefined : `${s(0.55)},${s(0.4)}`}
           />
         ));
 
@@ -238,37 +251,40 @@ export function DuctRoutingDiagram({
         // matching the reference sheets' own fitting convention rather
         // than just two lines crossing with no symbol at all.
         const elbowSymbols = primitives.elbows.map((p, i) => (
-          <circle key={`elbow-${i}`} cx={p.xNorm * 100} cy={p.yNorm * 100} r={0.4} fill={SUPPLY_COLOR} />
+          <circle key={`elbow-${i}`} cx={p.xNorm * 100} cy={p.yNorm * 100} r={s(0.4)} fill={SUPPLY_COLOR} />
         ));
         const teeSymbols = primitives.tees.map((p, i) => (
           <rect
             key={`tee-${i}`}
-            x={p.xNorm * 100 - 0.5}
-            y={p.yNorm * 100 - 0.5}
-            width={1}
-            height={1}
+            x={p.xNorm * 100 - s(0.5)}
+            y={p.yNorm * 100 - s(0.5)}
+            width={s(1)}
+            height={s(1)}
             fill={SYMBOL_INK}
             stroke={PAPER}
-            strokeWidth={0.15}
+            strokeWidth={s(0.15)}
           />
         ));
 
         const labels = layoutDuctRoutingLabels(sheet).map((label, i) => {
           const style =
             label.kind === "room"
-              ? { fontSize: 1.7, fontWeight: 600, fill: "#1f3a5f" }
-              : { fontSize: label.kind === "trunk" ? 1.5 : 1.6, fontWeight: 700, fill: SUPPLY_COLOR };
+              ? { fontSize: s(1.7), fontWeight: 600, fill: "#1f3a5f" }
+              : { fontSize: s(label.kind === "trunk" ? 1.5 : 1.6), fontWeight: 700, fill: SUPPLY_COLOR };
+          // Real position-space distance (unscaled - label.x/y/anchorX/
+          // anchorY are already real page positions, not sizes), used
+          // only to decide whether a leader line is needed at all.
           const leaderDistance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
           const showLeader = leaderDistance > 3.5;
           const leader = showLeader && (
             <line
               x1={label.anchorX}
               y1={label.anchorY}
-              x2={label.textAnchor === "middle" ? label.x : label.x - 0.6}
+              x2={label.textAnchor === "middle" ? label.x : label.x - s(0.6)}
               y2={label.y - style.fontSize * 0.35}
               stroke={style.fill}
-              strokeWidth={0.18}
-              strokeDasharray="0.6,0.5"
+              strokeWidth={s(0.18)}
+              strokeDasharray={`${s(0.6)},${s(0.5)}`}
             />
           );
 
@@ -277,16 +293,16 @@ export function DuctRoutingDiagram({
           // REFERENCE-DOCS/IMG_3916.JPG's "STANDARD AIR DISTRIBUTION"
           // key exactly, not an inline "size / cfm" string.
           if (label.kind === "run" && label.secondaryText != null) {
-            const fontSize = 1.5;
+            const fontSize = s(1.5);
             const lineGap = fontSize * 1.25;
             const dividerWidth = Math.max(label.text.length, label.secondaryText.length) * fontSize * 0.62;
-            const circleCx = label.x - 1.9;
+            const circleCx = label.x - s(1.9);
             const circleCy = label.y + lineGap / 2 - fontSize * 0.32;
             return (
               <g key={i}>
                 {leader}
-                <circle cx={circleCx} cy={circleCy} r={0.95} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={0.22} />
-                <text x={circleCx} y={circleCy + 0.4} fontSize={1} fontWeight={700} fill={SUPPLY_COLOR} textAnchor="middle">
+                <circle cx={circleCx} cy={circleCy} r={s(0.95)} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={s(0.22)} />
+                <text x={circleCx} y={circleCy + s(0.4)} fontSize={s(1)} fontWeight={700} fill={SUPPLY_COLOR} textAnchor="middle">
                   {label.typeCode}
                 </text>
                 <text
@@ -306,7 +322,7 @@ export function DuctRoutingDiagram({
                   x2={label.x + dividerWidth}
                   y2={label.y + fontSize * 0.32}
                   stroke={SUPPLY_COLOR}
-                  strokeWidth={0.15}
+                  strokeWidth={s(0.15)}
                 />
                 <text
                   x={label.x}
@@ -353,7 +369,7 @@ export function DuctRoutingDiagram({
           const cy = pin.yNorm * 100;
           if (pin.kind === "ahu") {
             return (
-              <g key={i} transform={`translate(${cx} ${cy})`}>
+              <g key={i} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
                 <line x1={0} y1={0} x2={-4.5} y2={0} stroke={SUPPLY_COLOR} strokeWidth={0.7} strokeLinecap="round" />
                 <rect x={-2.2} y={-2.2} width={4.4} height={4.4} fill={SYMBOL_INK} stroke={PAPER} strokeWidth={0.3} />
                 <line x1={-1.6} y1={1.6} x2={-0.3} y2={0.3} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
@@ -372,7 +388,7 @@ export function DuctRoutingDiagram({
             // grille legend, sized and labeled as its own piece of
             // equipment rather than a small attached swatch.
             return (
-              <g key={i} transform={`translate(${cx} ${cy})`}>
+              <g key={i} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
                 <rect x={-2.2} y={-2.2} width={4.4} height={4.4} fill={PAPER} stroke={RETURN_COLOR} strokeWidth={0.35} />
                 <line x1={-1.6} y1={1.6} x2={1.6} y2={-1.6} stroke={RETURN_COLOR} strokeWidth={0.28} />
                 <text x={0} y={0.7} fontSize={1.4} fontWeight={700} textAnchor="middle" fill={RETURN_COLOR}>
@@ -382,7 +398,7 @@ export function DuctRoutingDiagram({
             );
           }
           return (
-            <g key={i} transform={`translate(${cx} ${cy})`}>
+            <g key={i} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
               <rect x={-1.3} y={-1.3} width={2.6} height={2.6} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={0.32} />
               <line x1={-1.05} y1={-1.05} x2={1.05} y2={1.05} stroke={SUPPLY_COLOR} strokeWidth={0.26} />
               <line x1={-1.05} y1={1.05} x2={1.05} y2={-1.05} stroke={SUPPLY_COLOR} strokeWidth={0.26} />
@@ -397,16 +413,31 @@ export function DuctRoutingDiagram({
               <p className="mb-2 text-xs font-medium uppercase tracking-wide text-brand-grey-text">Sheet {sheetIndex + 1}</p>
             )}
             {notice && <p className="mb-2 text-xs text-amber-400">{notice}</p>}
-            <div className="relative inline-block max-w-full">
+            {/* overflow-hidden clips the image once it's zoomed past the
+                visible frame by the CSS transform below - see
+                lib/ductRouting.ts's computeSheetCropViewBox comment. The
+                image's transform maps crop.minX/minY/size onto the frame
+                identically to how the SVG's own viewBox does for the
+                overlay, so the raster floor plan and vector overlay stay
+                in lockstep. */}
+            <div className="relative inline-block w-full max-w-full overflow-hidden border border-brand-gold/50">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={imageDataUri}
                 alt="Duct routing sheet"
-                className="block max-w-full border border-brand-gold/50"
-                style={{ filter: "grayscale(1) brightness(1.55) contrast(0.82)" }}
+                className="block w-full"
+                style={{
+                  filter: "grayscale(1) brightness(1.55) contrast(0.82)",
+                  transformOrigin: "0 0",
+                  transform: `scale(${crop.zoomFactor}) translate(${-crop.minX}%, ${-crop.minY}%)`,
+                }}
               />
-              <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 h-full w-full">
-                {zoneTint && <rect x={0} y={0} width={100} height={100} fill={zoneTint} opacity={0.22} />}
+              <svg
+                viewBox={`${crop.minX} ${crop.minY} ${crop.size} ${crop.size}`}
+                preserveAspectRatio="none"
+                className="absolute inset-0 h-full w-full"
+              >
+                {zoneTint && <rect x={crop.minX} y={crop.minY} width={crop.size} height={crop.size} fill={zoneTint} opacity={0.22} />}
                 {routeLines}
                 {elbowSymbols}
                 {teeSymbols}

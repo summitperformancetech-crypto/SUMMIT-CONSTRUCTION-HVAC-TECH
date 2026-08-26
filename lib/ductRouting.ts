@@ -454,6 +454,56 @@ export type LiveDuctRoutingSheet = {
   routes: LiveDuctRoutingRoute[];
 };
 
+// -----------------------------------------------------------------------
+// Per-sheet crop viewBox (fixes the "sheet 2 looks out of scale" bug)
+// -----------------------------------------------------------------------
+
+// Diagnosed 2026-08-26 against real Schneider data: the diagram's
+// register/AHU/label symbols are fixed-size schematic marks (deliberately
+// not true-to-scale, matching REFERENCE-DOCS/IMG_3916.JPG's own
+// convention), drawn in the SAME "0-100 viewBox units = whole page"
+// coordinate space every sheet shares. That's correct on a sheet where
+// the floor plan fills most of the page (A3.0 - 2,350 SF on a 36x24in
+// sheet), but Schneider's A3.1 (2nd floor, only 688 SF) draws its real
+// floor plan into a small corner of the same full sheet, with a large
+// blank door/window-schedule table above it - the underlying feet-per-
+// pixel scale is identical on both sheets (verified: same printed
+// "1/4"=1'-0"" title-block text, same physical page size), so the exact
+// same fixed-size symbols end up looking dramatically oversized relative
+// to the smaller drawing. The fix: crop/zoom each sheet's viewBox to a
+// SQUARE region around that sheet's own real pin extents (with margin),
+// then shrink every fixed-size symbol/label constant by the resulting
+// zoomFactor so they render at their original absolute size - the floor
+// plan gets bigger within the frame, symbols don't, so the ratio between
+// them matches every other sheet again. Square (not a rect matching the
+// content's own aspect) so the crop's px-per-x-unit vs. px-per-y-unit
+// ratio is unchanged from the full 100x100 viewBox's own ratio - the
+// container's existing aspect ratio (driven by the image's natural
+// pixel size) keeps working without any new distortion.
+export type SheetCropViewBox = { minX: number; minY: number; size: number; zoomFactor: number };
+
+const SHEET_CROP_MARGIN_VIEWBOX_UNITS = 6;
+// Never zoom in tighter than this - a sheet with only 1-2 pins clustered
+// together (e.g. a single-room zone) shouldn't produce an absurd close-up
+// with no surrounding context.
+const SHEET_CROP_MIN_SIZE_VIEWBOX_UNITS = 35;
+
+export function computeSheetCropViewBox(points: { xNorm: number; yNorm: number }[]): SheetCropViewBox {
+  if (points.length === 0) return { minX: 0, minY: 0, size: 100, zoomFactor: 1 };
+  const xs = points.map((p) => p.xNorm * 100);
+  const ys = points.map((p) => p.yNorm * 100);
+  const minXRaw = Math.min(...xs) - SHEET_CROP_MARGIN_VIEWBOX_UNITS;
+  const maxXRaw = Math.max(...xs) + SHEET_CROP_MARGIN_VIEWBOX_UNITS;
+  const minYRaw = Math.min(...ys) - SHEET_CROP_MARGIN_VIEWBOX_UNITS;
+  const maxYRaw = Math.max(...ys) + SHEET_CROP_MARGIN_VIEWBOX_UNITS;
+  const size = Math.min(100, Math.max(SHEET_CROP_MIN_SIZE_VIEWBOX_UNITS, maxXRaw - minXRaw, maxYRaw - minYRaw));
+  const centerX = (minXRaw + maxXRaw) / 2;
+  const centerY = (minYRaw + maxYRaw) / 2;
+  const minX = Math.min(Math.max(centerX - size / 2, 0), 100 - size);
+  const minY = Math.min(Math.max(centerY - size / 2, 0), 100 - size);
+  return { minX, minY, size, zoomFactor: 100 / size };
+}
+
 export function buildLiveDuctRoutingIllustration(
   rooms: RoomRow[],
   zones: ZoneRow[],

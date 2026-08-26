@@ -17,6 +17,8 @@ import {
   formatDuctSizeCfm,
   computeSheetDuctRouting,
   buildDuctNetworkPrimitives,
+  parseArchitecturalScaleText,
+  resolveSheetScale,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -57,6 +59,61 @@ describe("pageScaleFromArchitecturalScale", () => {
   it("converts 1/8\" = 1'-0\" (a common smaller scale) correctly", () => {
     const feetPerPt = pageScaleFromArchitecturalScale(0.125, 1);
     expect(feetPerPt * 72).toBeCloseTo(8, 5); // 1 printed inch = 8ft at 1/8"=1'
+  });
+});
+
+describe("parseArchitecturalScaleText", () => {
+  it("parses the real Schneider title-block text exactly (1/4\" = 1'-0\")", () => {
+    // Visually confirmed against the actual rendered A3.0 and A3.1 title
+    // blocks this session, not assumed.
+    expect(parseArchitecturalScaleText('1/4" = 1\'-0"')).toEqual({ numeratorInches: 0.25, denominatorFeet: 1 });
+  });
+
+  it("parses without spaces around the equals sign", () => {
+    expect(parseArchitecturalScaleText('3/16"=1\'-0"')).toEqual({ numeratorInches: 0.1875, denominatorFeet: 1 });
+  });
+
+  it("parses a whole-inch numerator (no fraction)", () => {
+    expect(parseArchitecturalScaleText('1" = 1\'-0"')).toEqual({ numeratorInches: 1, denominatorFeet: 1 });
+  });
+
+  it("parses curly/smart quote variants", () => {
+    expect(parseArchitecturalScaleText("1/4″ = 1′-0″")).toEqual({ numeratorInches: 0.25, denominatorFeet: 1 });
+  });
+
+  it("returns null for text with no real scale pattern", () => {
+    expect(parseArchitecturalScaleText("NOT TO SCALE")).toBeNull();
+    expect(parseArchitecturalScaleText("")).toBeNull();
+  });
+});
+
+describe("resolveSheetScale", () => {
+  it("prefers the printed scale over the room-bounding-box median when both are available", () => {
+    const roomsImplyingADifferentScale = [
+      { wallPageHorizontalLenFt: 999, wallPageVerticalLenFt: 999, widthNorm: 0.1, heightNorm: 0.1 },
+    ];
+    const result = resolveSheetScale('1/4" = 1\'-0"', roomsImplyingADifferentScale, 2592, 1728);
+    expect(result.source).toBe("printed_scale");
+    expect(result.feetPerPagePoint).toBeCloseTo(pageScaleFromArchitecturalScale(0.25, 1), 10);
+  });
+
+  it("falls back to the room-bounding-box median when no printed scale is known", () => {
+    const rooms = [{ wallPageHorizontalLenFt: 10, wallPageVerticalLenFt: 8, widthNorm: 0.1, heightNorm: 0.1 }];
+    const result = resolveSheetScale(null, rooms, 1000, 800);
+    expect(result.source).toBe("room_bounding_box_median");
+    expect(result.feetPerPagePoint).toBeCloseTo(0.1, 10);
+  });
+
+  it("falls back to the room-bounding-box median when the printed text can't be parsed", () => {
+    const rooms = [{ wallPageHorizontalLenFt: 10, wallPageVerticalLenFt: 8, widthNorm: 0.1, heightNorm: 0.1 }];
+    const result = resolveSheetScale("NOT TO SCALE", rooms, 1000, 800);
+    expect(result.source).toBe("room_bounding_box_median");
+  });
+
+  it("reports 'none' when neither a printed scale nor real room samples are available", () => {
+    const result = resolveSheetScale(null, [], 1000, 800);
+    expect(result.source).toBe("none");
+    expect(result.feetPerPagePoint).toBeNull();
   });
 });
 
@@ -156,9 +213,18 @@ describe("computeRoutedBranchRun", () => {
 });
 
 describe("getDuctRoutingGateStatus", () => {
-  const zones = [{ id: "z1", name: "Zone 1", ahu_position_x_norm: 0.5, ahu_position_y_norm: 0.5 }];
+  const zones = [
+    {
+      id: "z1",
+      name: "Zone 1",
+      ahu_position_x_norm: 0.5,
+      ahu_position_y_norm: 0.5,
+      return_position_x_norm: 0.55,
+      return_position_y_norm: 0.55,
+    },
+  ];
 
-  it("is ready when every relevant room and zone has a resolved position", () => {
+  it("is ready when every relevant room and zone has a resolved position (AHU and return both)", () => {
     const rooms = [
       { id: "r1", name: "Bedroom", zone_id: "z1", floor_area_sqft: 150, position_x_norm: 0.2, position_y_norm: 0.2 },
     ];
@@ -166,6 +232,7 @@ describe("getDuctRoutingGateStatus", () => {
     expect(status.ready).toBe(true);
     expect(status.unresolvedRoomIds).toEqual([]);
     expect(status.unresolvedZoneIds).toEqual([]);
+    expect(status.unresolvedReturnZoneIds).toEqual([]);
   });
 
   it("is not ready when a relevant room is missing a position", () => {
@@ -181,10 +248,28 @@ describe("getDuctRoutingGateStatus", () => {
     const rooms = [
       { id: "r1", name: "Bedroom", zone_id: "z1", floor_area_sqft: 150, position_x_norm: 0.2, position_y_norm: 0.2 },
     ];
-    const unresolvedZones = [{ id: "z1", name: "Zone 1", ahu_position_x_norm: null, ahu_position_y_norm: null }];
+    const unresolvedZones = [
+      { id: "z1", name: "Zone 1", ahu_position_x_norm: null, ahu_position_y_norm: null, return_position_x_norm: 0.55, return_position_y_norm: 0.55 },
+    ];
     const status = getDuctRoutingGateStatus(rooms, unresolvedZones);
     expect(status.ready).toBe(false);
     expect(status.unresolvedZoneIds).toEqual(["z1"]);
+  });
+
+  // Per direct instruction: the return-air plenum pin is required, same
+  // workflow as the AHU pin - a zone missing only its return position
+  // must block the gate exactly like a missing AHU position does.
+  it("is not ready when a zone in use is missing its return-plenum position", () => {
+    const rooms = [
+      { id: "r1", name: "Bedroom", zone_id: "z1", floor_area_sqft: 150, position_x_norm: 0.2, position_y_norm: 0.2 },
+    ];
+    const unresolvedZones = [
+      { id: "z1", name: "Zone 1", ahu_position_x_norm: 0.5, ahu_position_y_norm: 0.5, return_position_x_norm: null, return_position_y_norm: null },
+    ];
+    const status = getDuctRoutingGateStatus(rooms, unresolvedZones);
+    expect(status.ready).toBe(false);
+    expect(status.unresolvedReturnZoneIds).toEqual(["z1"]);
+    expect(status.unresolvedZoneIds).toEqual([]); // AHU itself is resolved - only the return is the gap
   });
 
   it("ignores rooms with no zone assignment or no floor area (not part of duct routing)", () => {
@@ -306,6 +391,7 @@ describe("resolveRoomPositionSource", () => {
           revisionNote: null,
           frontAnchorPageEdge: null,
           page_number: 3,
+          printed_scale_text: null,
         },
       ],
     },

@@ -667,13 +667,23 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           if (pin.kind === "ahu") {
             return `<g transform="translate(${cx} ${cy})">
               <line x1="0" y1="0" x2="-4.5" y2="0" stroke="${SUPPLY_COLOR}" stroke-width="0.7" stroke-linecap="round" />
-              <rect x="2" y="2.6" width="2.6" height="2.6" fill="${BRAND.paper}" stroke="${RETURN_COLOR}" stroke-width="0.28" />
-              <line x1="2" y1="2.6" x2="4.6" y2="5.2" stroke="${RETURN_COLOR}" stroke-width="0.22" />
               <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="0.3" />
               <line x1="-1.6" y1="1.6" x2="-0.3" y2="0.3" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
               <line x1="-0.3" y1="1.6" x2="1.6" y2="-0.3" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
               <line x1="-1.6" y1="-0.3" x2="0.3" y2="-1.6" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
               <text x="0" y="0.7" font-size="1.5" font-weight="700" text-anchor="middle" fill="${BRAND.paper}">AHU</text>
+            </g>`;
+          }
+          if (pin.kind === "return") {
+            // A real, independently-placed pin (not assumed co-located
+            // with the AHU) - green outlined square with a single
+            // diagonal, per REFERENCE-DOCS/IMG_3916.JPG's real return-air
+            // grille legend, sized and labeled as its own piece of
+            // equipment rather than a small attached swatch.
+            return `<g transform="translate(${cx} ${cy})">
+              <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${BRAND.paper}" stroke="${RETURN_COLOR}" stroke-width="0.35" />
+              <line x1="-1.6" y1="1.6" x2="1.6" y2="-1.6" stroke="${RETURN_COLOR}" stroke-width="0.28" />
+              <text x="0" y="0.7" font-size="1.4" font-weight="700" text-anchor="middle" fill="${RETURN_COLOR}">RA</text>
             </g>`;
           }
           return `<g transform="translate(${cx} ${cy})">

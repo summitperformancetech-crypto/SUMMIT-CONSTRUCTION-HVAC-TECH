@@ -116,11 +116,66 @@ export function pageScaleFromArchitecturalScale(
   return denominatorFeet / (numeratorInches * 72);
 }
 
+// Parses a real printed architectural scale notation (e.g. `1/4" = 1'-0"`,
+// `3/16"=1'-0"`, `1" = 1'-0"`) into the numerator/denominator
+// pageScaleFromArchitecturalScale needs. Diagnosed 2026-08-26 against the
+// real Schneider set: both A3.0 and A3.1's own title blocks print
+// `1/4" = 1'-0""` directly (visually confirmed against the rendered
+// page, not assumed) - this is a real fact printed on the drawing, exact
+// by construction, not an AI-estimated one. Handles the plain-inch
+// numerator form (`1" = 1'-0"`) and the fraction form (`1/4" = 1'-0"`);
+// the RHS foot value can carry inches too (`1'-6"`) though every real
+// architectural scale in practice is a whole number of feet.
+export function parseArchitecturalScaleText(
+  text: string,
+): { numeratorInches: number; denominatorFeet: number } | null {
+  const normalized = text.replace(/[′’']/g, "'").replace(/[″”]/g, '"');
+  const match = normalized.match(
+    /(\d+)(?:\s*\/\s*(\d+))?\s*"?\s*=\s*(\d+)\s*'-?\s*(\d+)?\s*"?/,
+  );
+  if (!match) return null;
+  const numeratorWhole = Number(match[1]);
+  const numeratorDenominator = match[2] ? Number(match[2]) : 1;
+  if (numeratorDenominator === 0) return null;
+  const numeratorInches = numeratorWhole / numeratorDenominator;
+  const feet = Number(match[3]);
+  const extraInches = match[4] ? Number(match[4]) : 0;
+  const denominatorFeet = feet + extraInches / 12;
+  if (numeratorInches <= 0 || denominatorFeet <= 0) return null;
+  return { numeratorInches, denominatorFeet };
+}
+
 export type PageScaleResult = {
   feetPerPagePoint: number | null;
   sampleCount: number;
   outlierCount: number;
 };
+
+// Real entrypoint both routing call sites use: prefers the sheet's own
+// printed scale notation (exact, see pageScaleFromArchitecturalScale's
+// comment) whenever it's known, falling back to the AI-room-bounding-box
+// median (derivePageScale) only when it isn't - most projects, until
+// more extractions capture ExtractedSheet.printed_scale_text.
+export function resolveSheetScale(
+  printedScaleText: string | null | undefined,
+  rooms: ScaleSampleRoom[],
+  pageWidthPt: number,
+  pageHeightPt: number,
+): PageScaleResult & { source: "printed_scale" | "room_bounding_box_median" | "none" } {
+  if (printedScaleText) {
+    const parsed = parseArchitecturalScaleText(printedScaleText);
+    if (parsed) {
+      return {
+        feetPerPagePoint: pageScaleFromArchitecturalScale(parsed.numeratorInches, parsed.denominatorFeet),
+        sampleCount: 0,
+        outlierCount: 0,
+        source: "printed_scale",
+      };
+    }
+  }
+  const fallback = derivePageScale(rooms, pageWidthPt, pageHeightPt);
+  return { ...fallback, source: fallback.feetPerPagePoint == null ? "none" : "room_bounding_box_median" };
+}
 
 // A room's own two axis-implied scales disagreeing by more than this
 // fraction flags it as an unreliable bounding-box read for scale
@@ -253,12 +308,19 @@ export type DuctRoutingZoneInput = {
   name: string;
   ahu_position_x_norm: number | null;
   ahu_position_y_norm: number | null;
+  // Return-air plenum position - a real, independently-placed pin,
+  // required alongside the AHU pin per direct instruction ("Make it a
+  // required, resolvable pin per zone, same workflow as the AHU pin"),
+  // never assumed to be co-located with it.
+  return_position_x_norm: number | null;
+  return_position_y_norm: number | null;
 };
 
 export type DuctRoutingGateStatus = {
   ready: boolean;
   unresolvedRoomIds: string[];
   unresolvedZoneIds: string[];
+  unresolvedReturnZoneIds: string[];
 };
 
 export function getDuctRoutingGateStatus(
@@ -275,11 +337,19 @@ export function getDuctRoutingGateStatus(
   const unresolvedZoneIds = relevantZones
     .filter((z) => z.ahu_position_x_norm == null || z.ahu_position_y_norm == null)
     .map((z) => z.id);
+  const unresolvedReturnZoneIds = relevantZones
+    .filter((z) => z.return_position_x_norm == null || z.return_position_y_norm == null)
+    .map((z) => z.id);
 
   return {
-    ready: unresolvedRoomIds.length === 0 && unresolvedZoneIds.length === 0 && relevantRooms.length > 0,
+    ready:
+      unresolvedRoomIds.length === 0 &&
+      unresolvedZoneIds.length === 0 &&
+      unresolvedReturnZoneIds.length === 0 &&
+      relevantRooms.length > 0,
     unresolvedRoomIds,
     unresolvedZoneIds,
+    unresolvedReturnZoneIds,
   };
 }
 
@@ -355,7 +425,7 @@ export function resolveRoomPositionSource(
 // to see it.
 // -----------------------------------------------------------------------
 export type LiveDuctRoutingPin = {
-  kind: "room" | "ahu";
+  kind: "room" | "ahu" | "return";
   label: string;
   xNorm: number;
   yNorm: number;
@@ -435,10 +505,31 @@ export function buildLiveDuctRoutingIllustration(
         zoneId: zone.id,
         zoneName: zone.name,
       });
+      // Return-air plenum - a real, independently-placed pin (see the
+      // migration's own comment), only drawn when it's actually resolved
+      // on this same sheet as the AHU. Never assumed co-located.
+      if (
+        zone.return_position_x_norm != null &&
+        zone.return_position_y_norm != null &&
+        zone.return_position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+        zone.return_position_source_page_number === zone.ahu_position_source_page_number
+      ) {
+        sheet.pins.push({
+          kind: "return",
+          label: `${zone.name} (Return)`,
+          xNorm: zone.return_position_x_norm,
+          yNorm: zone.return_position_y_norm,
+          zoneId: zone.id,
+          zoneName: zone.name,
+        });
+      }
     }
 
     for (const room of zoneRooms) {
       if (room.position_x_norm === zone.ahu_position_x_norm && room.position_y_norm === zone.ahu_position_y_norm) {
+        continue;
+      }
+      if (room.position_x_norm === zone.return_position_x_norm && room.position_y_norm === zone.return_position_y_norm) {
         continue;
       }
       sheet.pins.push({
@@ -500,7 +591,13 @@ export function buildLiveDuctRoutingIllustration(
 // -----------------------------------------------------------------------
 
 export type DuctRoutingLayoutPin = {
-  kind: "room" | "ahu";
+  // "return" pins fall through layoutDuctRoutingLabels' else-branch
+  // harmlessly (it only ever produces a label from trunkDiameterIn/
+  // trunkCfm, which a return pin never sets) - the return-plenum's own
+  // small identifying tag is baked directly into its symbol in each
+  // renderer instead, same as the AHU's "AHU" text, not routed through
+  // the collision system.
+  kind: "room" | "ahu" | "return";
   label: string;
   xNorm: number;
   yNorm: number;
@@ -833,7 +930,10 @@ export function extractedRoomBoxesForPage(
 // already uses for the exact same reason) - callers fall back to showing
 // pins/registers without routed lines rather than a fabricated distance.
 export function computeSheetDuctRouting(
-  extractedData: { rooms: ExtractedRoom[]; sheets?: { name: string; page_number: number | null }[] } | null,
+  extractedData: {
+    rooms: ExtractedRoom[];
+    sheets?: { name: string; page_number: number | null; printed_scale_text?: string | null }[];
+  } | null,
   pageNumber: number,
   pageWidthPt: number,
   pageHeightPt: number,
@@ -854,7 +954,9 @@ export function computeSheetDuctRouting(
   }[],
 ): Map<string, RoutedDuctSegment[]> | null {
   const extractedRooms = extractedData?.rooms ?? [];
-  const sheetName = extractedData?.sheets?.find((s) => s.page_number === pageNumber)?.name ?? null;
+  const matchedSheet = extractedData?.sheets?.find((s) => s.page_number === pageNumber) ?? null;
+  const sheetName = matchedSheet?.name ?? null;
+  const printedScaleText = matchedSheet?.printed_scale_text ?? null;
   const roomById = new Map(roomsOnSheet.map((r) => [r.id, r]));
 
   const result = new Map<string, RoutedDuctSegment[]>();
@@ -896,7 +998,7 @@ export function computeSheetDuctRouting(
       heightNorm: er.room_position?.height_norm ?? null,
     }),
   );
-  const scale = derivePageScale(scaleSampleRooms, pageWidthPt, pageHeightPt);
+  const scale = resolveSheetScale(printedScaleText, scaleSampleRooms, pageWidthPt, pageHeightPt);
   if (scale.feetPerPagePoint == null) return result.size > 0 ? result : null;
   const pageWidthFt = scale.feetPerPagePoint * pageWidthPt;
   const pageHeightFt = scale.feetPerPagePoint * pageHeightPt;

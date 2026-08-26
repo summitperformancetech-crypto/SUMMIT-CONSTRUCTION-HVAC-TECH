@@ -355,14 +355,28 @@ export function DuctRoutingDiagram({
             return (
               <g key={i} transform={`translate(${cx} ${cy})`}>
                 <line x1={0} y1={0} x2={-4.5} y2={0} stroke={SUPPLY_COLOR} strokeWidth={0.7} strokeLinecap="round" />
-                <rect x={2} y={2.6} width={2.6} height={2.6} fill={PAPER} stroke={RETURN_COLOR} strokeWidth={0.28} />
-                <line x1={2} y1={2.6} x2={4.6} y2={5.2} stroke={RETURN_COLOR} strokeWidth={0.22} />
                 <rect x={-2.2} y={-2.2} width={4.4} height={4.4} fill={SYMBOL_INK} stroke={PAPER} strokeWidth={0.3} />
                 <line x1={-1.6} y1={1.6} x2={-0.3} y2={0.3} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
                 <line x1={-0.3} y1={1.6} x2={1.6} y2={-0.3} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
                 <line x1={-1.6} y1={-0.3} x2={0.3} y2={-1.6} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
                 <text x={0} y={0.7} fontSize={1.5} fontWeight={700} textAnchor="middle" fill={PAPER}>
                   AHU
+                </text>
+              </g>
+            );
+          }
+          if (pin.kind === "return") {
+            // A real, independently-placed pin (not assumed co-located
+            // with the AHU) - green outlined square with a single
+            // diagonal, per REFERENCE-DOCS/IMG_3916.JPG's real return-air
+            // grille legend, sized and labeled as its own piece of
+            // equipment rather than a small attached swatch.
+            return (
+              <g key={i} transform={`translate(${cx} ${cy})`}>
+                <rect x={-2.2} y={-2.2} width={4.4} height={4.4} fill={PAPER} stroke={RETURN_COLOR} strokeWidth={0.35} />
+                <line x1={-1.6} y1={1.6} x2={1.6} y2={-1.6} stroke={RETURN_COLOR} strokeWidth={0.28} />
+                <text x={0} y={0.7} fontSize={1.4} fontWeight={700} textAnchor="middle" fill={RETURN_COLOR}>
+                  RA
                 </text>
               </g>
             );

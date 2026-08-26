@@ -20,7 +20,7 @@ import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 
 type SheetOption = { drawingId: string; pageNumber: number; label: string };
 
-type PinKind = "room" | "zone";
+type PinKind = "room" | "zone" | "return";
 
 type PinState = {
   key: string;
@@ -44,6 +44,7 @@ export function DuctRoutingCanvas({
   drawings,
   onRoomPositionSaved,
   onZonePositionSaved,
+  onReturnPositionSaved,
 }: {
   projectId: string;
   rooms: RoomRow[];
@@ -65,6 +66,15 @@ export function DuctRoutingCanvas({
       ahu_position_y_norm: number;
       ahu_position_source_drawing_id: string;
       ahu_position_source_page_number: number;
+    },
+  ) => void;
+  onReturnPositionSaved: (
+    zoneId: string,
+    update: {
+      return_position_x_norm: number;
+      return_position_y_norm: number;
+      return_position_source_drawing_id: string;
+      return_position_source_page_number: number;
     },
   ) => void;
 }) {
@@ -245,6 +255,31 @@ export function DuctRoutingCanvas({
         hasAiSuggestion: false,
       });
     }
+    // Return-air plenum position - a real, independently-placed pin per
+    // zone, same required workflow as the AHU pin above (never assumed
+    // to be co-located with it - see the migration's own comment).
+    for (const zone of relevantZones) {
+      const resolved =
+        zone.return_position_x_norm != null &&
+        zone.return_position_y_norm != null &&
+        zone.return_position_source_drawing_id === selectedSheet.drawingId &&
+        zone.return_position_source_page_number === selectedSheet.pageNumber;
+      if (!resolved) continue;
+      next.push({
+        key: `return:${zone.id}`,
+        kind: "return",
+        id: zone.id,
+        label: `${zone.name} (Return)`,
+        drawingId: selectedSheet.drawingId,
+        pageNumber: selectedSheet.pageNumber,
+        xNorm: zone.return_position_x_norm!,
+        yNorm: zone.return_position_y_norm!,
+        startXNorm: zone.return_position_x_norm!,
+        startYNorm: zone.return_position_y_norm!,
+        resolved: true,
+        hasAiSuggestion: false,
+      });
+    }
     setPins(next);
   }, [selectedSheet, relevantRooms, relevantZones, roomAssignments]);
 
@@ -381,7 +416,7 @@ export function DuctRoutingCanvas({
           position_source_drawing_id: pin.drawingId,
           position_source_page_number: pin.pageNumber,
         });
-      } else {
+      } else if (pin.kind === "zone") {
         const { error: updateError } = await supabase
           .from("zones")
           .update({
@@ -416,6 +451,41 @@ export function DuctRoutingCanvas({
           ahu_position_source_drawing_id: pin.drawingId,
           ahu_position_source_page_number: pin.pageNumber,
         });
+      } else {
+        const { error: updateError } = await supabase
+          .from("zones")
+          .update({
+            return_position_x_norm: pin.xNorm,
+            return_position_y_norm: pin.yNorm,
+            return_position_source_drawing_id: pin.drawingId,
+            return_position_source_page_number: pin.pageNumber,
+          })
+          .eq("id", pin.id);
+        if (updateError) {
+          setSaveError(updateError.message);
+          return;
+        }
+        const { error: resolutionError } = await supabase.from("field_resolutions").insert({
+          project_id: projectId,
+          table_name: "zones",
+          record_id: pin.id,
+          field_name: "return_position",
+          ai_extracted_value: null,
+          final_value: finalValue,
+          resolution_type: "accepted",
+          override_reason: null,
+          resolved_by: user.id,
+        });
+        if (resolutionError) {
+          setSaveError(resolutionError.message);
+          return;
+        }
+        onReturnPositionSaved(pin.id, {
+          return_position_x_norm: pin.xNorm,
+          return_position_y_norm: pin.yNorm,
+          return_position_source_drawing_id: pin.drawingId,
+          return_position_source_page_number: pin.pageNumber,
+        });
       }
       setPins((prev) =>
         prev.map((p) => (p.key === pin.key ? { ...p, resolved: true, startXNorm: p.xNorm, startYNorm: p.yNorm } : p)),
@@ -435,6 +505,7 @@ export function DuctRoutingCanvas({
     return assignment.drawingId !== selectedSheet.drawingId || assignment.pageNumber !== selectedSheet.pageNumber;
   });
   const unplacedZones = relevantZones.filter((z) => !pins.some((p) => p.kind === "zone" && p.id === z.id));
+  const unplacedReturns = relevantZones.filter((z) => !pins.some((p) => p.kind === "return" && p.id === z.id));
 
   if (sheetOptions.length === 0) {
     return (
@@ -495,30 +566,53 @@ export function DuctRoutingCanvas({
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={imageState.dataUri} alt="Floor plan sheet" className="block max-w-full border border-brand-gold/50" draggable={false} />
-              {pins.map((pin) => (
-                <button
-                  key={pin.key}
-                  type="button"
-                  onPointerDown={handlePointerDown(pin.key)}
-                  onClick={() => setActiveKey(pin.key)}
-                  title={pin.label}
-                  style={{
-                    left: `${pin.xNorm * 100}%`,
-                    top: `${pin.yNorm * 100}%`,
-                  }}
-                  className={`absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-grab rounded-full border-2 px-2 py-1 text-[10px] font-semibold shadow active:cursor-grabbing ${
-                    pin.key === activeKey
-                      ? "border-brand-gold bg-brand-gold text-black"
-                      : pin.resolved
-                        ? "border-brand-success bg-brand-success/90 text-black"
-                        : pin.hasAiSuggestion
-                          ? "border-sky-400 bg-sky-400/90 text-black"
-                          : "border-zinc-300 bg-zinc-300/90 text-black"
-                  }`}
-                >
-                  {pin.kind === "zone" ? "AHU" : pin.label}
-                </button>
-              ))}
+              {/* Small precise crosshair/dot markers, not pill-shaped name
+                  bubbles - a pin needs to show exactly where its own
+                  center sits on the real drawing, which a large label
+                  badge obscures. Identification comes from the native
+                  hover tooltip (title=) plus a small floating label that
+                  only appears for the currently-active pin, not all of
+                  them at once. */}
+              {pins.map((pin) => {
+                const isActive = pin.key === activeKey;
+                const color = isActive
+                  ? "#d4a94a" // brand gold
+                  : pin.resolved
+                    ? "#3ba55c" // brand success
+                    : pin.hasAiSuggestion
+                      ? "#38bdf8" // sky-400
+                      : "#d4d4d8"; // zinc-300
+                const size = isActive ? 20 : 13;
+                return (
+                  <button
+                    key={pin.key}
+                    type="button"
+                    onPointerDown={handlePointerDown(pin.key)}
+                    onClick={() => setActiveKey(pin.key)}
+                    title={pin.label}
+                    style={{ left: `${pin.xNorm * 100}%`, top: `${pin.yNorm * 100}%` }}
+                    className="absolute z-10 -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing"
+                  >
+                    <svg width={size} height={size} viewBox="0 0 14 14" className="block drop-shadow">
+                      {pin.kind === "return" ? (
+                        // Square, not circle - a distinct shape from every
+                        // supply-side pin (room register, AHU), matching
+                        // the routed diagram's own return-plenum symbol.
+                        <rect x={2} y={2} width={10} height={10} fill={color} fillOpacity={0.28} stroke={color} strokeWidth={1.6} />
+                      ) : (
+                        <circle cx={7} cy={7} r={5} fill={color} fillOpacity={0.28} stroke={color} strokeWidth={1.6} />
+                      )}
+                      <line x1={7} y1={1.5} x2={7} y2={12.5} stroke={color} strokeWidth={1.3} />
+                      <line x1={1.5} y1={7} x2={12.5} y2={7} stroke={color} strokeWidth={1.3} />
+                    </svg>
+                    {isActive && (
+                      <span className="pointer-events-none absolute left-1/2 top-full mt-1 -translate-x-1/2 whitespace-nowrap rounded bg-black/85 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow">
+                        {pin.kind === "zone" ? "AHU" : pin.label}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -580,7 +674,7 @@ export function DuctRoutingCanvas({
             </ul>
           </div>
 
-          {(unplacedRooms.length > 0 || unplacedZones.length > 0) && (
+          {(unplacedRooms.length > 0 || unplacedZones.length > 0 || unplacedReturns.length > 0) && (
             <div>
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
                 Needs placement on this sheet
@@ -598,10 +692,21 @@ export function DuctRoutingCanvas({
                   </li>
                 ))}
                 {unplacedZones.map((z) => (
-                  <li key={z.id} className="flex items-center justify-between">
+                  <li key={`zone-${z.id}`} className="flex items-center justify-between">
                     <span className="text-brand-grey-text">{z.name} (AHU)</span>
                     <button
                       onClick={() => handlePlaceOnCurrentSheet("zone", z.id, `${z.name} (AHU)`)}
+                      className="rounded-md border border-brand-gold/50 px-2 py-0.5 text-xs text-brand-gold hover:border-brand-gold"
+                    >
+                      Place here
+                    </button>
+                  </li>
+                ))}
+                {unplacedReturns.map((z) => (
+                  <li key={`return-${z.id}`} className="flex items-center justify-between">
+                    <span className="text-brand-grey-text">{z.name} (Return)</span>
+                    <button
+                      onClick={() => handlePlaceOnCurrentSheet("return", z.id, `${z.name} (Return)`)}
                       className="rounded-md border border-brand-gold/50 px-2 py-0.5 text-xs text-brand-gold hover:border-brand-gold"
                     >
                       Place here

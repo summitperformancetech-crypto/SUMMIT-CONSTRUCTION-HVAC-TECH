@@ -289,6 +289,10 @@ function baseReportDataWithDuctDesign(overrides: {
     ahu_position_y_norm: null,
     ahu_position_source_drawing_id: null,
     ahu_position_source_page_number: null,
+    return_position_x_norm: null,
+    return_position_y_norm: null,
+    return_position_source_drawing_id: null,
+    return_position_source_page_number: null,
     corridor_graph: null,
   }));
   data.residential!.ductRuns = overrides.ductRuns;

@@ -81,6 +81,13 @@ type ZoneDbRow = ManualJZone & {
   ahu_position_y_norm: number | null;
   ahu_position_source_drawing_id: string | null;
   ahu_position_source_page_number: number | null;
+  // Return-air plenum position - a real, independently-placed pin, same
+  // tech-confirmed workflow as the AHU pin above, never assumed to be
+  // co-located with it (see components/duct-routing-canvas.tsx).
+  return_position_x_norm: number | null;
+  return_position_y_norm: number | null;
+  return_position_source_drawing_id: string | null;
+  return_position_source_page_number: number | null;
   // Real, human-digitized corridor topology (lib/ductCorridorGraph.ts) -
   // the routing source of truth for this zone when present, consumed by
   // lib/reportImages.ts's attachFrozenImages once it has real page
@@ -97,7 +104,7 @@ type ZoneDbRow = ManualJZone & {
 // function, which lib/reportGate.ts's status-check route also calls on
 // every page load).
 export type DuctRoutingIllustrationPin = {
-  kind: "room" | "ahu";
+  kind: "room" | "ahu" | "return";
   label: string;
   xNorm: number;
   yNorm: number;
@@ -204,6 +211,24 @@ export function buildDuctRoutingIllustrations(
         zoneId: zone.id,
         zoneName: zone.name,
       });
+      // Return-air plenum - a real, independently-placed pin (see the
+      // migration's own comment), only drawn when it's actually resolved
+      // on this same sheet as the AHU. Never assumed co-located.
+      if (
+        zone.return_position_x_norm != null &&
+        zone.return_position_y_norm != null &&
+        zone.return_position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+        zone.return_position_source_page_number === zone.ahu_position_source_page_number
+      ) {
+        sheet.pins.push({
+          kind: "return",
+          label: `${zone.name} (Return)`,
+          xNorm: zone.return_position_x_norm,
+          yNorm: zone.return_position_y_norm,
+          zoneId: zone.id,
+          zoneName: zone.name,
+        });
+      }
     }
 
     for (const room of zoneRooms) {
@@ -213,6 +238,9 @@ export function buildDuctRoutingIllustrations(
       // caught via an actual screenshot, not just reasoned about) and a
       // zero-length "run" isn't a real branch to begin with.
       if (room.position_x_norm === zone.ahu_position_x_norm && room.position_y_norm === zone.ahu_position_y_norm) {
+        continue;
+      }
+      if (room.position_x_norm === zone.return_position_x_norm && room.position_y_norm === zone.return_position_y_norm) {
         continue;
       }
       sheet.pins.push({
@@ -310,7 +338,7 @@ export type ReportData = {
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
 const ZONE_COLUMNS =
-  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, corridor_graph";
+  "id, project_id, name, ahu_label, created_at, selected_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
 const DUCT_RUN_COLUMNS =
   "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in";
 const COMMERCIAL_ZONE_COLUMNS =

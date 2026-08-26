@@ -15,7 +15,7 @@ import {
   type DuctSizingTableRow,
 } from "@/lib/manualD";
 import {
-  derivePageScale,
+  resolveSheetScale,
   computeRoutedBranchRun,
   getDuctRoutingGateStatus,
   buildLiveDuctRoutingIllustration,
@@ -312,6 +312,8 @@ export function DuctDesignSection({
           name: z.name,
           ahu_position_x_norm: z.ahu_position_x_norm,
           ahu_position_y_norm: z.ahu_position_y_norm,
+          return_position_x_norm: z.return_position_x_norm,
+          return_position_y_norm: z.return_position_y_norm,
         })),
       ),
     [rooms, zones],
@@ -406,7 +408,8 @@ export function DuctDesignSection({
             widthNorm: er.room_position?.width_norm ?? null,
             heightNorm: er.room_position?.height_norm ?? null,
           }));
-        const scale = derivePageScale(scaleSampleRooms, pageDims.pageWidthPt, pageDims.pageHeightPt);
+        const printedScaleText = sheets.find((s) => s.page_number === ahuPageNumber)?.printed_scale_text ?? null;
+        const scale = resolveSheetScale(printedScaleText, scaleSampleRooms, pageDims.pageWidthPt, pageDims.pageHeightPt);
         if (scale.feetPerPagePoint == null) {
           setAutoGenerateError(
             (prev) =>
@@ -720,8 +723,11 @@ export function DuctDesignSection({
           </button>
         ) : (
           <p className="text-sm text-brand-grey-text">
-            {ductRoutingGate.unresolvedRoomIds.length + ductRoutingGate.unresolvedZoneIds.length > 0
-              ? `${ductRoutingGate.unresolvedRoomIds.length} room(s) and ${ductRoutingGate.unresolvedZoneIds.length} zone AHU(s) still need a resolved pin in the Duct Routing Pins section above before real run lengths can be computed.`
+            {ductRoutingGate.unresolvedRoomIds.length +
+              ductRoutingGate.unresolvedZoneIds.length +
+              ductRoutingGate.unresolvedReturnZoneIds.length >
+            0
+              ? `${ductRoutingGate.unresolvedRoomIds.length} room(s), ${ductRoutingGate.unresolvedZoneIds.length} zone AHU(s), and ${ductRoutingGate.unresolvedReturnZoneIds.length} zone return plenum(s) still need a resolved pin in the Duct Routing Pins section above before real run lengths can be computed.`
               : "Place and resolve pins in the Duct Routing Pins section above to auto-generate real run lengths."}
           </p>
         )}

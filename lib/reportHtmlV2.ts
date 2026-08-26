@@ -33,8 +33,10 @@ import {
   buildDuctNetworkPrimitives,
   computeSheetCropViewBox,
   getDiffuserSymbolSpec,
+  DUCT_ROUTING_MODE_BASIS_LABELS,
   type RoutedDuctSegment,
   type AhuInstallationDetailRow,
+  type DuctRoutingModeBasis,
 } from "./ductRouting";
 
 export type OrgBranding = {
@@ -802,7 +804,16 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
        technician against the actual source drawing - never AI-inferred without confirmation (see the Audit Trail
        page for who resolved each one and when).
      </p>
-     ${data.residential!.zones.map((zone) => renderAhuInstallationDetailBlock(zone, data.residential!.ahuInstallationDetails.find((d) => d.zone_id === zone.id) ?? null, org)).join("")}`,
+     ${data.residential!.zones
+       .map((zone) =>
+         renderAhuInstallationDetailBlock(
+           zone,
+           data.residential!.ahuInstallationDetails.find((d) => d.zone_id === zone.id) ?? null,
+           data.residential!.ductRoutingModeByZone.find((m) => m.zoneId === zone.id) ?? null,
+           org,
+         ),
+       )
+       .join("")}`,
     projectAddress(data),
   );
 }
@@ -815,6 +826,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
 function renderAhuInstallationDetailBlock(
   zone: { id: string; name: string; ahu_label: string | null },
   detail: AhuInstallationDetailRow | null,
+  routingMode: { basis: DuctRoutingModeBasis; source: string } | null,
   org: OrgBranding,
 ): string {
   const field = (label: string, value: string | number | null | undefined, unit = "") =>
@@ -826,8 +838,20 @@ function renderAhuInstallationDetailBlock(
   const filterReturns = detail?.filter_backed_return_specs?.length ? detail.filter_backed_return_specs.join("; ") : null;
   const dampers = detail?.damper_types?.length ? detail.damper_types.join("; ") : null;
 
+  const routingBasisLabel = routingMode ? DUCT_ROUTING_MODE_BASIS_LABELS[routingMode.basis] : null;
+  const routingBasisSourceNote =
+    routingMode?.source === "room_duct_location"
+      ? "derived from this zone's rooms' own entered duct location - not a new question asked of the technician"
+      : routingMode?.source === "project_fallback"
+        ? "derived from the project's foundation type / attic construction (no room duct_location entered yet)"
+        : "not enough entered data yet to determine";
+
   return `<div style="page-break-before:always;"></div>
     <div class="section-title">AHU Installation Detail — ${esc(zone.ahu_label ?? zone.name)}</div>
+    <p class="muted" style="font-size:11px;">
+      Duct routing basis: <strong style="color:${BRAND.ink};">${esc(routingBasisLabel ?? "Unknown")}</strong>
+      (${esc(routingBasisSourceNote)})
+    </p>
     <div class="panel-grid">
       ${field("Plenum size", detail?.plenum_size)}
       ${field("Supply takeoff sizes", takeoffs)}

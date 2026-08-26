@@ -48,8 +48,10 @@ import { assessAed, type AedZoneInput, type AedZoneResult } from "./aedAssessmen
 import type { CompassDirection } from "./solarIrradiance";
 import {
   DIFFUSER_PATTERN_TAG_CODES,
+  deriveDuctRoutingModeBasis,
   type DuctDiffuserRow,
   type AhuInstallationDetailRow,
+  type DuctRoutingModeBasis,
   type RoutedDuctSegment,
 } from "./ductRouting";
 import type { CorridorGraph } from "./ductCorridorGraph";
@@ -412,6 +414,13 @@ export type ReportData = {
     // has a row; a zone with none renders its report block as "not yet
     // specified" per field, never a fabricated default.
     ahuInstallationDetails: AhuInstallationDetailRow[];
+    // Real, derived-not-asked routing basis per zone (attic/crawlspace/
+    // basement/exposed-ceiling) - see deriveDuctRoutingModeBasis. Sourced
+    // from this zone's own rooms' already-entered duct_location, falling
+    // back to the project's foundation_type/attic_construction_type only
+    // when no room has duct_location set yet - never a new question
+    // asked of the technician.
+    ductRoutingModeByZone: { zoneId: string; zoneName: string; basis: DuctRoutingModeBasis; source: string }[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -446,7 +455,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration",
+      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -850,6 +859,17 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         ductDiffusers ?? [],
       ),
       ahuInstallationDetails: ahuInstallationDetails ?? [],
+      ductRoutingModeByZone: (zones ?? []).map((zone) => {
+        const zoneRoomDuctLocations = (rooms ?? [])
+          .filter((r) => r.zone_id === zone.id)
+          .map((r) => r.duct_location);
+        const { basis, source } = deriveDuctRoutingModeBasis(
+          zoneRoomDuctLocations,
+          project.foundation_type,
+          project.attic_construction_type,
+        );
+        return { zoneId: zone.id, zoneName: zone.name, basis, source };
+      }),
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&

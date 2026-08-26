@@ -142,6 +142,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       aed: [],
       ductRoutingIllustration: [],
       ahuInstallationDetails: [],
+      ductRoutingModeByZone: [],
       ductRuns: [],
       rooms,
       zones: [],

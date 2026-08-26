@@ -142,6 +142,7 @@ describe("validateReportTotals", () => {
       aed: [],
       ductRoutingIllustration: [],
       ahuInstallationDetails: [],
+      ductRoutingModeByZone: [],
     });
 
     const result = validateReportTotals(data);
@@ -183,6 +184,7 @@ describe("validateReportTotals", () => {
       aed: [],
       ductRoutingIllustration: [],
       ahuInstallationDetails: [],
+      ductRoutingModeByZone: [],
     });
 
     const result = validateReportTotals(data);

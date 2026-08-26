@@ -23,6 +23,7 @@ import {
   getDiffuserSymbolSpec,
   DIFFUSER_PATTERN_TAG_CODES,
   DIFFUSER_PATTERN_OPTIONS,
+  deriveDuctRoutingModeBasis,
   ROUND_ELBOW_EL_REFERENCE_FT,
   BRANCH_TAKEOFF_EL_REFERENCE_FT,
   EL_REFERENCE_VELOCITY_FPM,
@@ -870,5 +871,58 @@ describe("DIFFUSER_PATTERN_TAG_CODES / DIFFUSER_PATTERN_OPTIONS", () => {
   it("has exactly one return-airflow option (return_grille) - every other option is supply", () => {
     const returnOptions = DIFFUSER_PATTERN_OPTIONS.filter((o) => o.airflowDirection === "return");
     expect(returnOptions.map((o) => o.code)).toEqual(["return_grille"]);
+  });
+});
+
+describe("deriveDuctRoutingModeBasis", () => {
+  it("derives attic from a zone's own real room duct_location, never asking a new question", () => {
+    const result = deriveDuctRoutingModeBasis(["Attic-Unconditioned", "Attic-Unconditioned", "Attic-Conditioned"], null, null);
+    expect(result).toEqual({ basis: "attic", source: "room_duct_location" });
+  });
+
+  it("derives crawlspace from real room data even when foundation_type would suggest otherwise", () => {
+    // Real per-room data always wins over the project-level fallback -
+    // it's a more direct, already-sourced signal (see the function's own
+    // comment) than a project-wide foundation_type guess.
+    const result = deriveDuctRoutingModeBasis(["Crawlspace", "Crawlspace"], "slab", "vented_unconditioned");
+    expect(result).toEqual({ basis: "crawlspace", source: "room_duct_location" });
+  });
+
+  it("reports a genuine mix rather than silently picking the majority", () => {
+    const result = deriveDuctRoutingModeBasis(
+      ["Attic-Unconditioned", "Attic-Unconditioned", "Crawlspace", "Crawlspace"],
+      null,
+      null,
+    );
+    expect(result.basis).toBe("mixed");
+  });
+
+  it("falls back to foundation_type when no room has duct_location set yet", () => {
+    expect(deriveDuctRoutingModeBasis([], "Crawlspace foundation", null)).toEqual({
+      basis: "crawlspace",
+      source: "project_fallback",
+    });
+    expect(deriveDuctRoutingModeBasis([null, null], "Basement", null)).toEqual({
+      basis: "basement",
+      source: "project_fallback",
+    });
+  });
+
+  it("falls back to attic_construction_type for a slab foundation with an attic", () => {
+    expect(deriveDuctRoutingModeBasis([], "Slab on grade", "vented_unconditioned")).toEqual({
+      basis: "attic",
+      source: "project_fallback",
+    });
+  });
+
+  it("falls back to exposed_ceiling for a slab foundation with no attic construction type known", () => {
+    expect(deriveDuctRoutingModeBasis([], "Slab on grade", null)).toEqual({
+      basis: "exposed_ceiling",
+      source: "project_fallback",
+    });
+  });
+
+  it("returns unknown rather than guessing when nothing has been entered at all", () => {
+    expect(deriveDuctRoutingModeBasis([], null, null)).toEqual({ basis: "unknown", source: "unknown" });
   });
 });

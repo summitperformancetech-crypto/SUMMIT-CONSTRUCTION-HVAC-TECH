@@ -865,6 +865,71 @@ export type DuctDiffuserRow = {
 // convention (see the 20260826010000 migration's own comments for the
 // real, cited code minimums a UI should surface as help text next to
 // condensate_routing_note/damper_types, never as a fabricated pass/fail).
+// -----------------------------------------------------------------------
+// Duct-routing basis (attic/truss vs. crawlspace vs. basement vs.
+// exposed-ceiling routing space) - derived from data this app already
+// captures per project, never a new question asked of the technician.
+// Every room's real duct_location (already read off the drawing/entered
+// by a tech - see lib/constants/ductLocations.ts) is the direct, sourced
+// signal for where that room's own duct actually runs; the project-level
+// foundation_type/attic_construction_type are the fallback only when no
+// room has duct_location set yet. This does not yet change the computed
+// routing geometry itself (lib/ductPathGeometry.ts's box-avoidance is
+// foundation-agnostic) - it's a real, sourced disclosure surfaced next to
+// the diagram, not a construction-type-aware router rewrite.
+// -----------------------------------------------------------------------
+export type DuctRoutingModeBasis = "attic" | "crawlspace" | "basement" | "exposed_ceiling" | "mixed" | "unknown";
+
+const ATTIC_LOCATIONS = new Set(["Attic-Unconditioned", "Attic-Conditioned"]);
+const CRAWLSPACE_LOCATIONS = new Set(["Crawlspace"]);
+const BASEMENT_LOCATIONS = new Set(["Basement-Conditioned", "Basement-Unconditioned"]);
+
+export function deriveDuctRoutingModeBasis(
+  roomDuctLocations: Array<string | null | undefined>,
+  foundationType: string | null | undefined,
+  atticConstructionType: string | null | undefined,
+): { basis: DuctRoutingModeBasis; source: "room_duct_location" | "project_fallback" | "unknown" } {
+  const counts = new Map<DuctRoutingModeBasis, number>();
+  for (const loc of roomDuctLocations) {
+    if (!loc) continue;
+    if (ATTIC_LOCATIONS.has(loc)) counts.set("attic", (counts.get("attic") ?? 0) + 1);
+    else if (CRAWLSPACE_LOCATIONS.has(loc)) counts.set("crawlspace", (counts.get("crawlspace") ?? 0) + 1);
+    else if (BASEMENT_LOCATIONS.has(loc)) counts.set("basement", (counts.get("basement") ?? 0) + 1);
+  }
+  if (counts.size > 0) {
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    const [topBasis, topCount] = sorted[0];
+    // A real, genuine mix (e.g. a slab main floor with an attic-routed
+    // second floor) is reported as "mixed" rather than silently picking
+    // the majority and hiding the rest - both are real facts about the
+    // building, not noise to average away.
+    const basis = sorted.length > 1 && sorted[1][1] > 0 && sorted[1][1] >= topCount * 0.34 ? "mixed" : topBasis;
+    return { basis, source: "room_duct_location" };
+  }
+
+  const foundation = foundationType?.toLowerCase() ?? "";
+  if (foundation.includes("crawlspace")) return { basis: "crawlspace", source: "project_fallback" };
+  if (foundation.includes("basement")) return { basis: "basement", source: "project_fallback" };
+  if (foundation.includes("slab")) {
+    // A slab foundation has no under-floor routing space - ducts run
+    // either through the attic (if one exists) or an exposed/dropped
+    // ceiling grid (common in commercial and some single-story
+    // residential construction) - atticConstructionType is the real,
+    // already-captured signal for which.
+    return atticConstructionType ? { basis: "attic", source: "project_fallback" } : { basis: "exposed_ceiling", source: "project_fallback" };
+  }
+  return { basis: "unknown", source: "unknown" };
+}
+
+export const DUCT_ROUTING_MODE_BASIS_LABELS: Record<DuctRoutingModeBasis, string> = {
+  attic: "Attic / truss space",
+  crawlspace: "Crawlspace / sub-floor",
+  basement: "Basement",
+  exposed_ceiling: "Exposed / dropped ceiling grid",
+  mixed: "Mixed (varies by room/level)",
+  unknown: "Not yet determinable from entered data",
+};
+
 export type AhuInstallationDetailRow = {
   id: string;
   project_id: string;

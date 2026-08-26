@@ -176,6 +176,60 @@ function toNormPoint(p: GridPoint, grid: RoutingGrid): NormPoint {
 const TURN_PENALTY = 3;
 const REUSE_DISCOUNT = 0.35;
 
+type PathNode = { p: GridPoint; dir: number; g: number; f: number; parentKey: string | null };
+
+// Real binary min-heap keyed by f-score, with lazy deletion (a cheaper,
+// standard alternative to true decrease-key: pushing an improved node
+// again rather than mutating its old heap position, and skipping a
+// popped entry whose g no longer matches the current best known g for
+// that key - see the staleness check where this is used below).
+// Diagnosed 2026-08-26 via a real test timeout under full-suite load:
+// the previous open set was a plain Map scanned linearly every
+// iteration to find the minimum f, making the whole search O(n^2) - for
+// a genuinely unreachable target (the exact case that has to explore
+// nearly the full grid before concluding no path exists) that blew past
+// a 5s test timeout. This is O(log n) per push/pop instead.
+class MinHeap {
+  private items: { f: number; key: string; node: PathNode }[] = [];
+
+  push(entry: { f: number; key: string; node: PathNode }) {
+    this.items.push(entry);
+    let i = this.items.length - 1;
+    while (i > 0) {
+      const parent = (i - 1) >> 1;
+      if (this.items[parent].f <= this.items[i].f) break;
+      [this.items[parent], this.items[i]] = [this.items[i], this.items[parent]];
+      i = parent;
+    }
+  }
+
+  pop(): { f: number; key: string; node: PathNode } | undefined {
+    const top = this.items[0];
+    if (top == null) return undefined;
+    const last = this.items.pop()!;
+    if (this.items.length > 0) {
+      this.items[0] = last;
+      let i = 0;
+      const n = this.items.length;
+      for (;;) {
+        const left = i * 2 + 1;
+        const right = i * 2 + 2;
+        let smallest = i;
+        if (left < n && this.items[left].f < this.items[smallest].f) smallest = left;
+        if (right < n && this.items[right].f < this.items[smallest].f) smallest = right;
+        if (smallest === i) break;
+        [this.items[smallest], this.items[i]] = [this.items[i], this.items[smallest]];
+        i = smallest;
+      }
+    }
+    return top;
+  }
+
+  get size() {
+    return this.items.length;
+  }
+}
+
 export function findOrthogonalPath(
   grid: RoutingGrid,
   startPoint: NormPoint,
@@ -192,7 +246,6 @@ export function findOrthogonalPath(
   // (can happen right at grid-resolution boundaries) still works without
   // needing its own special-case here.
 
-  type Node = { p: GridPoint; dir: number; g: number; f: number; parentKey: string | null };
   const heuristic = (p: GridPoint) => Math.abs(p.col - goal.col) + Math.abs(p.row - goal.row);
   const dirs: Array<{ dc: number; dr: number }> = [
     { dc: 1, dr: 0 },
@@ -201,34 +254,33 @@ export function findOrthogonalPath(
     { dc: 0, dr: -1 },
   ];
 
-  const open = new Map<string, Node>();
+  const heap = new MinHeap();
   const closed = new Set<string>();
-  const startNode: Node = { p: start, dir: -1, g: 0, f: heuristic(start), parentKey: null };
-  const nodeByKey = new Map<string, Node>();
+  const nodeByKey = new Map<string, PathNode>();
+  const startNode: PathNode = { p: start, dir: -1, g: 0, f: heuristic(start), parentKey: null };
   const startKey = `${key(start)}|-1`;
-  open.set(startKey, startNode);
   nodeByKey.set(startKey, startNode);
+  heap.push({ f: startNode.f, key: startKey, node: startNode });
 
   let iterations = 0;
   const MAX_ITERATIONS = grid.cols * grid.rows * 4;
 
-  while (open.size > 0 && iterations < MAX_ITERATIONS) {
+  while (heap.size > 0 && iterations < MAX_ITERATIONS) {
     iterations++;
-    let currentKey: string | null = null;
-    let current: Node | null = null;
-    for (const [k, node] of open) {
-      if (current == null || node.f < current.f) {
-        current = node;
-        currentKey = k;
-      }
-    }
-    if (current == null || currentKey == null) break;
-    open.delete(currentKey);
+    const popped = heap.pop();
+    if (!popped) break;
+    const { key: currentKey, node: current } = popped;
+    if (closed.has(currentKey)) continue;
+    // A stale heap entry: a better g for this same key was found and
+    // pushed again after this entry, so this one is outdated - skip it
+    // rather than reprocessing (the lazy-deletion half of this scheme).
+    const best = nodeByKey.get(currentKey);
+    if (best && best.g < current.g) continue;
     closed.add(currentKey);
 
     if (current.p.col === goal.col && current.p.row === goal.row) {
       const path: GridPoint[] = [];
-      let cursor: Node | null = current;
+      let cursor: PathNode | null = current;
       while (cursor) {
         path.push(cursor.p);
         cursor = cursor.parentKey ? nodeByKey.get(cursor.parentKey) ?? null : null;
@@ -256,9 +308,9 @@ export function findOrthogonalPath(
       const existing = nodeByKey.get(nextKey);
       if (existing && existing.g <= g) continue;
 
-      const node: Node = { p: next, dir: dirIndex, g, f: g + heuristic(next), parentKey: currentKey };
-      open.set(nextKey, node);
+      const node: PathNode = { p: next, dir: dirIndex, g, f: g + heuristic(next), parentKey: currentKey };
       nodeByKey.set(nextKey, node);
+      heap.push({ f: node.f, key: nextKey, node });
     }
   }
   return null;

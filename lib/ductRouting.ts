@@ -531,7 +531,22 @@ export type DuctRoutingLabel = {
   // sheets use for dense clusters of diffuser callouts.
   anchorX: number;
   anchorY: number;
+  // Set only for kind "run" - the real Wrightsoft/industry-standard
+  // register callout (see REFERENCE-DOCS/IMG_3916.JPG's "STANDARD AIR
+  // DISTRIBUTION" key) is a circled type code beside a two-row stacked
+  // SIZE-over-CFM block with a divider, not one inline "size / cfm"
+  // string. `text` carries the size line, `secondaryText` the CFM line,
+  // `typeCode` the circled prefix - renderers draw all three as one
+  // callout group. Always "1W" (one-way supply) here: Summit has no real
+  // per-register throw-pattern data (2/3/4-way), so this is the honest
+  // default that matches what's actually drawn (a one-way register
+  // symbol - see the symbol-drawing code in each renderer), not a
+  // fabricated multi-way claim.
+  secondaryText?: string;
+  typeCode?: string;
 };
+
+const REGISTER_TYPE_CODE = "1W";
 
 export function formatDuctSizeCfm(diameterIn: number | null | undefined, cfm: number | null | undefined): string {
   const sizeText = diameterIn ? `${diameterIn}"⌀` : null;
@@ -549,13 +564,35 @@ const LABEL_PADDING = 0.3;
 // widths vary by character), sized to be conservative enough to catch
 // real overlaps without needing full text-measurement, which isn't
 // available in either the server (string-built SVG) or client render path.
-const CHAR_WIDTH_FACTOR = 0.58;
+// Diagnosed 2026-08-26 against a real rendered screenshot: room labels
+// are now uppercase (REFERENCE-DOCS/IMG_3916.JPG's convention) -
+// uppercase glyphs render measurably wider than the same character count
+// in mixed case (no narrow lowercase letters like i/l/r/t pulling the
+// average down), so the OLD factor (tuned against mixed-case text)
+// under-estimated real uppercase width and let a genuine overlap
+// ("Master Bedroom"/"Living Room" running together) through undetected.
+// Bumped for every label kind, not just room - a run/trunk label's
+// mostly-numeric text isn't hurt by a slightly more conservative
+// estimate, and a single shared constant is one real number to keep
+// correct instead of a per-kind guess.
+const CHAR_WIDTH_FACTOR = 0.68;
+// A run label's circled type-code badge sits ~2.85 to ~0.95 units left
+// of its text anchor (see the renderers' circleCx = label.x - 1.9, r =
+// 0.95) - this is that same span, reserved in the collision box.
+const RUN_LABEL_BADGE_WIDTH = 2.85;
 
 type LabelBox = { x0: number; x1: number; y0: number; y1: number };
 
-function estimateBox(x: number, y: number, text: string, fontSize: number, textAnchor: "start" | "middle"): LabelBox {
+function estimateBox(
+  x: number,
+  y: number,
+  text: string,
+  fontSize: number,
+  textAnchor: "start" | "middle",
+  rows: 1 | 2 = 1,
+): LabelBox {
   const width = text.length * fontSize * CHAR_WIDTH_FACTOR;
-  const height = fontSize * 1.15;
+  const height = fontSize * 1.15 * rows;
   const x0 = textAnchor === "middle" ? x - width / 2 : x;
   const x1 = x0 + width;
   return { x0: x0 - LABEL_PADDING, x1: x1 + LABEL_PADDING, y0: y - height / 2 - LABEL_PADDING, y1: y + height / 2 + LABEL_PADDING };
@@ -571,8 +608,15 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
     x: number;
     y: number;
     text: string;
+    secondaryText?: string;
+    typeCode?: string;
     fontSize: number;
     textAnchor: "start" | "middle";
+    // Two-row stacked box (kind "run" register callouts) is roughly
+    // twice a single line's height plus the divider - estimateBox needs
+    // to know this to size the collision box correctly instead of
+    // treating a stacked callout as if it were one line tall.
+    rows: 1 | 2;
     // The real feature (register/AHU/room pin) this label describes - the
     // leader-line endpoint, distinct from the label's own natural offset
     // position above.
@@ -585,20 +629,33 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
     if (pin.kind === "room") {
       const fx = pin.xNorm * 100;
       const fy = pin.yNorm * 100;
-      candidates.push({ kind: "room", x: fx + 2.4, y: fy - 2.2, text: pin.label, fontSize: 1.7, textAnchor: "start", featureX: fx, featureY: fy });
+      // Uppercase, underlined (see the renderer) - matches
+      // REFERENCE-DOCS/IMG_3916.JPG's real room-label convention.
+      candidates.push({
+        kind: "room",
+        x: fx + 2.4,
+        y: fy - 2.2,
+        text: pin.label.toUpperCase(),
+        fontSize: 1.7,
+        textAnchor: "start",
+        rows: 1,
+        featureX: fx,
+        featureY: fy,
+      });
     } else {
       const trunkText = formatDuctSizeCfm(pin.trunkDiameterIn, pin.trunkCfm);
       if (trunkText) {
         const fx = pin.xNorm * 100;
         const fy = pin.yNorm * 100;
-        candidates.push({ kind: "trunk", x: fx - 2.3, y: fy - 0.9, text: trunkText, fontSize: 1.5, textAnchor: "middle", featureX: fx, featureY: fy });
+        candidates.push({ kind: "trunk", x: fx - 2.3, y: fy - 0.9, text: trunkText, fontSize: 1.5, textAnchor: "middle", rows: 1, featureX: fx, featureY: fy });
       }
     }
   }
 
   for (const route of sheet.routes) {
-    const text = formatDuctSizeCfm(route.diameterIn, route.cfm);
-    if (!text) continue;
+    const sizeText = route.diameterIn ? `${route.diameterIn}"⌀` : null;
+    const cfmText = route.cfm != null ? `${Math.round(route.cfm)}` : null;
+    if (!sizeText && !cfmText) continue;
     // Anchored at the register end (not the line's midpoint) - this is
     // what "mark the CFM information at the register" means literally,
     // and it's what spreads these labels apart spatially in the first
@@ -609,7 +666,19 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
     // the cross-register pass even runs.
     const fx = route.toXNorm * 100;
     const fy = route.toYNorm * 100;
-    candidates.push({ kind: "run", x: fx + 2.4, y: fy + 2.6, text, fontSize: 1.6, textAnchor: "start", featureX: fx, featureY: fy });
+    candidates.push({
+      kind: "run",
+      x: fx + 2.4,
+      y: fy + 2.6,
+      text: sizeText ?? "",
+      secondaryText: cfmText ?? undefined,
+      typeCode: REGISTER_TYPE_CODE,
+      fontSize: 1.5,
+      textAnchor: "start",
+      rows: sizeText && cfmText ? 2 : 1,
+      featureX: fx,
+      featureY: fy,
+    });
   }
 
   // Greedy vertical decluttering: process top-to-bottom, push each new
@@ -622,9 +691,17 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
   const results: DuctRoutingLabel[] = [];
 
   for (const candidate of sorted) {
+    const widestLine = Math.max(candidate.text.length, candidate.secondaryText?.length ?? 0);
     let y = candidate.y;
     for (let row = 0; row < LABEL_MAX_PUSH_ROWS; row++) {
-      const box = estimateBox(candidate.x, y, candidate.text, candidate.fontSize, candidate.textAnchor);
+      const box = estimateBox(candidate.x, y, "x".repeat(widestLine), candidate.fontSize, candidate.textAnchor, candidate.rows);
+      // Run labels also draw a circled type-code badge to the LEFT of
+      // the stacked text (see the renderers) - estimateBox only knows
+      // about the text itself, so extend the box's own left edge to
+      // reserve real room for the badge too, rather than letting
+      // another label's collision box overlap where the badge actually
+      // gets drawn.
+      if (candidate.kind === "run") box.x0 -= RUN_LABEL_BADGE_WIDTH;
       if (!placed.some((p) => boxesOverlap(box, p))) {
         placed.push(box);
         break;
@@ -644,6 +721,8 @@ export function layoutDuctRoutingLabels(sheet: DuctRoutingLayoutSheet): DuctRout
       x: candidate.x,
       y,
       text: candidate.text,
+      secondaryText: candidate.secondaryText,
+      typeCode: candidate.typeCode,
       textAnchor: candidate.textAnchor,
       anchorX: candidate.featureX,
       anchorY: candidate.featureY,

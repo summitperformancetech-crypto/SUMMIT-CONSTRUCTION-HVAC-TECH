@@ -583,10 +583,20 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
       // stroke width immune to the SVG's own viewBox scale, which for a
       // 0-100 viewBox stretched over a ~1700px image renders as a
       // hairline under 1 real pixel wide - effectively invisible.
+      // Flex vs. metal duct texture (REFERENCE-DOCS/IMG_3916.JPG's "A/C
+      // DUCT SPECIFICATIONS" key: ribbed/coil = flexible duct, plain
+      // line = rigid metal) - keyed off classification (trunk = solid
+      // metal, branch/run-out = dashed flex), not a per-run material
+      // lookup, since a rendered segment can be shared by runs with
+      // different real materials once merged into the network graph
+      // (buildDuctNetworkPrimitives). This also matches Summit's own
+      // existing default (components/duct-design-section.tsx inserts
+      // trunk rows as sheet_metal, branches default to flex) - a
+      // disclosed classification-based approximation, not fabricated.
       const routeLines = primitives.segments
         .map(
           (seg) =>
-            `<line x1="${(seg.fromXNorm * 100).toFixed(3)}" y1="${(seg.fromYNorm * 100).toFixed(3)}" x2="${(seg.toXNorm * 100).toFixed(3)}" y2="${(seg.toYNorm * 100).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="${SEGMENT_WIDTH[seg.cls]}" stroke-linecap="round" />`,
+            `<line x1="${(seg.fromXNorm * 100).toFixed(3)}" y1="${(seg.fromYNorm * 100).toFixed(3)}" x2="${(seg.toXNorm * 100).toFixed(3)}" y2="${(seg.toYNorm * 100).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="${SEGMENT_WIDTH[seg.cls]}" stroke-linecap="round"${seg.cls === "trunk" ? "" : ' stroke-dasharray="0.55,0.4"'} />`,
         )
         .join("");
 
@@ -622,16 +632,34 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
             leaderDistance > 3.5
               ? `<line x1="${label.anchorX.toFixed(3)}" y1="${label.anchorY.toFixed(3)}" x2="${(label.textAnchor === "middle" ? label.x : label.x - 0.6).toFixed(3)}" y2="${(label.y - fontSize * 0.35).toFixed(3)}" stroke="${fill}" stroke-width="0.18" stroke-dasharray="0.6,0.5" />`
               : "";
-          return `${leader}<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
+
+          // Real register callout: a circled type code beside a stacked
+          // size-over-CFM block with a divider line - matches
+          // REFERENCE-DOCS/IMG_3916.JPG's "STANDARD AIR DISTRIBUTION"
+          // key exactly, not an inline "size / cfm" string.
+          if (label.kind === "run" && label.secondaryText != null) {
+            const runFontSize = 1.5;
+            const lineGap = runFontSize * 1.25;
+            const dividerWidth = Math.max(label.text.length, label.secondaryText.length) * runFontSize * 0.62;
+            const circleCx = label.x - 1.9;
+            const circleCy = label.y + lineGap / 2 - runFontSize * 0.32;
+            return `${leader}<circle cx="${circleCx.toFixed(3)}" cy="${circleCy.toFixed(3)}" r="0.95" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="0.22" /><text x="${circleCx.toFixed(3)}" y="${(circleCy + 0.4).toFixed(3)}" font-size="1" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="middle">${esc(label.typeCode ?? "")}</text><text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${runFontSize}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="start" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text><line x1="${label.x.toFixed(3)}" y1="${(label.y + runFontSize * 0.32).toFixed(3)}" x2="${(label.x + dividerWidth).toFixed(3)}" y2="${(label.y + runFontSize * 0.32).toFixed(3)}" stroke="${SUPPLY_COLOR}" stroke-width="0.15" /><text x="${label.x.toFixed(3)}" y="${(label.y + lineGap).toFixed(3)}" font-size="${runFontSize}" font-weight="700" fill="${SUPPLY_COLOR}" text-anchor="start" style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.secondaryText)}</text>`;
+          }
+
+          return `${leader}<text x="${label.x.toFixed(3)}" y="${label.y.toFixed(3)}" font-size="${fontSize}" font-weight="${fontWeight}" fill="${fill}" text-anchor="${label.textAnchor}"${label.kind === "room" ? ' text-decoration="underline"' : ""} style="paint-order:stroke;stroke:${BRAND.paper};stroke-width:0.6px;stroke-linejoin:round;">${esc(label.text)}</text>`;
         })
         .join("");
 
-      // Register: the standard one-way supply diffuser symbol (circle
-      // with an X, per the reference legend). AHU: a filled equipment
-      // square with a short red trunk/plenum stub (real computed size,
-      // not a fabricated backbone path - see module comment above) and
-      // a green return-grille swatch offset to the side, matching the
-      // reference's supply/return color convention.
+      // Register/return symbols per REFERENCE-DOCS/IMG_3916.JPG's real
+      // legend: supply = red SQUARE + X with a one-way throw tick
+      // (Summit has no real per-register throw-pattern data, so
+      // one-way - matching the "1W" callout - is the honest default,
+      // not a guessed 2/3/4-way claim); return = green OUTLINED square
+      // with a single diagonal, not a filled swatch. AHU: an equipment
+      // square with a light diagonal hatch (matching the reference's
+      // hatched equipment convention) and a short red trunk/plenum stub
+      // (real computed size, not a fabricated backbone path - see module
+      // comment above).
       const pinIcons = sheet.pins
         .map((pin) => {
           const cx = pin.xNorm * 100;
@@ -639,17 +667,20 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
           if (pin.kind === "ahu") {
             return `<g transform="translate(${cx} ${cy})">
               <line x1="0" y1="0" x2="-4.5" y2="0" stroke="${SUPPLY_COLOR}" stroke-width="0.7" stroke-linecap="round" />
-              <rect x="2" y="2.6" width="2.6" height="2.6" fill="${RETURN_COLOR}" stroke="${BRAND.paper}" stroke-width="0.25" />
-              <line x1="2" y1="2.6" x2="4.6" y2="5.2" stroke="${BRAND.paper}" stroke-width="0.2" />
-              <line x1="4.6" y1="2.6" x2="2" y2="5.2" stroke="${BRAND.paper}" stroke-width="0.2" />
+              <rect x="2" y="2.6" width="2.6" height="2.6" fill="${BRAND.paper}" stroke="${RETURN_COLOR}" stroke-width="0.28" />
+              <line x1="2" y1="2.6" x2="4.6" y2="5.2" stroke="${RETURN_COLOR}" stroke-width="0.22" />
               <rect x="-2.2" y="-2.2" width="4.4" height="4.4" fill="${SYMBOL_INK}" stroke="${BRAND.paper}" stroke-width="0.3" />
+              <line x1="-1.6" y1="1.6" x2="-0.3" y2="0.3" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
+              <line x1="-0.3" y1="1.6" x2="1.6" y2="-0.3" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
+              <line x1="-1.6" y1="-0.3" x2="0.3" y2="-1.6" stroke="${BRAND.paper}" stroke-width="0.18" opacity="0.55" />
               <text x="0" y="0.7" font-size="1.5" font-weight="700" text-anchor="middle" fill="${BRAND.paper}">AHU</text>
             </g>`;
           }
           return `<g transform="translate(${cx} ${cy})">
-            <circle r="1.5" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="0.4" />
-            <line x1="-1.2" y1="-1.2" x2="1.2" y2="1.2" stroke="${SYMBOL_INK}" stroke-width="0.28" />
-            <line x1="-1.2" y1="1.2" x2="1.2" y2="-1.2" stroke="${SYMBOL_INK}" stroke-width="0.28" />
+            <rect x="-1.3" y="-1.3" width="2.6" height="2.6" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="0.32" />
+            <line x1="-1.05" y1="-1.05" x2="1.05" y2="1.05" stroke="${SUPPLY_COLOR}" stroke-width="0.26" />
+            <line x1="-1.05" y1="1.05" x2="1.05" y2="-1.05" stroke="${SUPPLY_COLOR}" stroke-width="0.26" />
+            <line x1="0" y1="-1.3" x2="0" y2="-2.1" stroke="${SUPPLY_COLOR}" stroke-width="0.26" stroke-linecap="round" />
           </g>`;
         })
         .join("");
@@ -676,13 +707,14 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
     `${body}
      <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:18px;align-items:center;border:1px solid ${BRAND.grid};border-radius:6px;padding:10px 14px;font-size:11px;color:${BRAND.inkSoft};">
        <strong style="color:${BRAND.ink};">Legend</strong>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="3" /></svg> Trunk</span>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1.8" /></svg> Branch</span>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1" /></svg> Run-out (size / CFM at the register)</span>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${RETURN_COLOR}" /></svg> Return air (single central return)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="3" /></svg> Trunk (metal)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1.8" stroke-dasharray="2.5,2" /></svg> Branch (flex)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1" stroke-dasharray="2.5,2" /></svg> Run-out (flex)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.paper}" stroke="${RETURN_COLOR}" stroke-width="1.4" /><line x1="2" y1="12" x2="12" y2="2" stroke="${RETURN_COLOR}" stroke-width="1" /></svg> Return air grille</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="1" y="1" width="12" height="12" fill="${SYMBOL_INK}" /></svg> AHU / mechanical equipment</span>
-       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><circle cx="7" cy="7" r="5" fill="${BRAND.paper}" stroke="${SYMBOL_INK}" stroke-width="1.2" /></svg> Supply register (one-way)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="1.4" /><line x1="2" y1="2" x2="12" y2="12" stroke="${SUPPLY_COLOR}" stroke-width="1" /><line x1="2" y1="12" x2="12" y2="2" stroke="${SUPPLY_COLOR}" stroke-width="1" /></svg> Supply register (one-way)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="4" y="4" width="6" height="6" fill="${SYMBOL_INK}" /></svg> Branch takeoff (tee)</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="22" height="14"><circle cx="7" cy="7" r="4.2" fill="none" stroke="${SUPPLY_COLOR}" stroke-width="1" /><text x="7" y="9.5" font-size="5" font-weight="700" text-anchor="middle" fill="${SUPPLY_COLOR}">1W</text><text x="16" y="6" font-size="4.2" font-weight="700" fill="${SUPPLY_COLOR}">6"⌀</text><line x1="12" y1="7" x2="20" y2="7" stroke="${SUPPLY_COLOR}" stroke-width="0.6" /><text x="16" y="13" font-size="4.2" font-weight="700" fill="${SUPPLY_COLOR}">80</text></svg> Register callout (type / size / CFM)</span>
      </div>
      <p class="muted" style="margin-top:8px;">
        Routed paths follow real orthogonal geometry through the open space between rooms - a shared trunk near

@@ -201,6 +201,23 @@ export function DuctRoutingDiagram({
         const sheetZoneIds = [...new Set(sheet.pins.map((p) => p.zoneId))];
         const zoneTint = sheetZoneIds.length === 1 ? zoneTintColor(sheetZoneIds[0], allZoneIds) : null;
 
+        // Flex vs. metal duct texture (REFERENCE-DOCS/IMG_3916.JPG's "A/C
+        // DUCT SPECIFICATIONS" key: a ribbed/coil texture means flexible
+        // duct, a plain line means rigid metal). Keyed off the segment's
+        // trunk/branch classification, not a per-run material lookup -
+        // once branches/run-outs merge into a shared trunk network
+        // (buildDuctNetworkPrimitives), a single rendered segment can be
+        // shared by runs with different real materials, so there's no
+        // single real material left to trace back per segment. Trunk =
+        // solid (metal is the near-universal real convention for a
+        // rigid trunk backbone); branch/run-out = ribbed dashes (flex is
+        // the near-universal real convention for a branch run to a
+        // register) - this is also literally Summit's own existing
+        // default (components/duct-design-section.tsx's
+        // handleAutoGenerateFromPins inserts trunk rows as
+        // material:"sheet_metal", branch rows default to "flex" in the
+        // Add Duct Run form) - a disclosed classification-based
+        // approximation, not a fabricated one.
         const routeLines = primitives.segments.map((seg, i) => (
           <line
             key={i}
@@ -211,6 +228,7 @@ export function DuctRoutingDiagram({
             stroke={SUPPLY_COLOR}
             strokeWidth={SEGMENT_WIDTH[seg.cls]}
             strokeLinecap="round"
+            strokeDasharray={seg.cls === "trunk" ? undefined : "0.55,0.4"}
           />
         ));
 
@@ -242,19 +260,72 @@ export function DuctRoutingDiagram({
               : { fontSize: label.kind === "trunk" ? 1.5 : 1.6, fontWeight: 700, fill: SUPPLY_COLOR };
           const leaderDistance = Math.hypot(label.x - label.anchorX, label.y - label.anchorY);
           const showLeader = leaderDistance > 3.5;
+          const leader = showLeader && (
+            <line
+              x1={label.anchorX}
+              y1={label.anchorY}
+              x2={label.textAnchor === "middle" ? label.x : label.x - 0.6}
+              y2={label.y - style.fontSize * 0.35}
+              stroke={style.fill}
+              strokeWidth={0.18}
+              strokeDasharray="0.6,0.5"
+            />
+          );
+
+          // Real register callout: a circled type code beside a stacked
+          // size-over-CFM block with a divider line - matches
+          // REFERENCE-DOCS/IMG_3916.JPG's "STANDARD AIR DISTRIBUTION"
+          // key exactly, not an inline "size / cfm" string.
+          if (label.kind === "run" && label.secondaryText != null) {
+            const fontSize = 1.5;
+            const lineGap = fontSize * 1.25;
+            const dividerWidth = Math.max(label.text.length, label.secondaryText.length) * fontSize * 0.62;
+            const circleCx = label.x - 1.9;
+            const circleCy = label.y + lineGap / 2 - fontSize * 0.32;
+            return (
+              <g key={i}>
+                {leader}
+                <circle cx={circleCx} cy={circleCy} r={0.95} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={0.22} />
+                <text x={circleCx} y={circleCy + 0.4} fontSize={1} fontWeight={700} fill={SUPPLY_COLOR} textAnchor="middle">
+                  {label.typeCode}
+                </text>
+                <text
+                  x={label.x}
+                  y={label.y}
+                  fontSize={fontSize}
+                  fontWeight={700}
+                  fill={SUPPLY_COLOR}
+                  textAnchor="start"
+                  style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
+                >
+                  {label.text}
+                </text>
+                <line
+                  x1={label.x}
+                  y1={label.y + fontSize * 0.32}
+                  x2={label.x + dividerWidth}
+                  y2={label.y + fontSize * 0.32}
+                  stroke={SUPPLY_COLOR}
+                  strokeWidth={0.15}
+                />
+                <text
+                  x={label.x}
+                  y={label.y + lineGap}
+                  fontSize={fontSize}
+                  fontWeight={700}
+                  fill={SUPPLY_COLOR}
+                  textAnchor="start"
+                  style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
+                >
+                  {label.secondaryText}
+                </text>
+              </g>
+            );
+          }
+
           return (
             <g key={i}>
-              {showLeader && (
-                <line
-                  x1={label.anchorX}
-                  y1={label.anchorY}
-                  x2={label.textAnchor === "middle" ? label.x : label.x - 0.6}
-                  y2={label.y - style.fontSize * 0.35}
-                  stroke={style.fill}
-                  strokeWidth={0.18}
-                  strokeDasharray="0.6,0.5"
-                />
-              )}
+              {leader}
               <text
                 x={label.x}
                 y={label.y}
@@ -262,6 +333,7 @@ export function DuctRoutingDiagram({
                 fontWeight={style.fontWeight}
                 fill={style.fill}
                 textAnchor={label.textAnchor}
+                textDecoration={label.kind === "room" ? "underline" : undefined}
                 style={{ paintOrder: "stroke", stroke: PAPER, strokeWidth: 0.6, strokeLinejoin: "round" }}
               >
                 {label.text}
@@ -270,6 +342,12 @@ export function DuctRoutingDiagram({
           );
         });
 
+        // Register/return symbols per REFERENCE-DOCS/IMG_3916.JPG's real
+        // legend: supply = red SQUARE + X with a one-way throw tick
+        // (Summit has no real per-register throw-pattern data, so
+        // one-way - matching the "1W" callout - is the honest default,
+        // not a guessed 2/3/4-way claim); return = green OUTLINED
+        // square with a single diagonal, not a filled swatch.
         const pinIcons = sheet.pins.map((pin, i) => {
           const cx = pin.xNorm * 100;
           const cy = pin.yNorm * 100;
@@ -277,10 +355,12 @@ export function DuctRoutingDiagram({
             return (
               <g key={i} transform={`translate(${cx} ${cy})`}>
                 <line x1={0} y1={0} x2={-4.5} y2={0} stroke={SUPPLY_COLOR} strokeWidth={0.7} strokeLinecap="round" />
-                <rect x={2} y={2.6} width={2.6} height={2.6} fill={RETURN_COLOR} stroke={PAPER} strokeWidth={0.25} />
-                <line x1={2} y1={2.6} x2={4.6} y2={5.2} stroke={PAPER} strokeWidth={0.2} />
-                <line x1={4.6} y1={2.6} x2={2} y2={5.2} stroke={PAPER} strokeWidth={0.2} />
+                <rect x={2} y={2.6} width={2.6} height={2.6} fill={PAPER} stroke={RETURN_COLOR} strokeWidth={0.28} />
+                <line x1={2} y1={2.6} x2={4.6} y2={5.2} stroke={RETURN_COLOR} strokeWidth={0.22} />
                 <rect x={-2.2} y={-2.2} width={4.4} height={4.4} fill={SYMBOL_INK} stroke={PAPER} strokeWidth={0.3} />
+                <line x1={-1.6} y1={1.6} x2={-0.3} y2={0.3} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
+                <line x1={-0.3} y1={1.6} x2={1.6} y2={-0.3} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
+                <line x1={-1.6} y1={-0.3} x2={0.3} y2={-1.6} stroke={PAPER} strokeWidth={0.18} opacity={0.55} />
                 <text x={0} y={0.7} fontSize={1.5} fontWeight={700} textAnchor="middle" fill={PAPER}>
                   AHU
                 </text>
@@ -289,9 +369,10 @@ export function DuctRoutingDiagram({
           }
           return (
             <g key={i} transform={`translate(${cx} ${cy})`}>
-              <circle r={1.5} fill={PAPER} stroke={SYMBOL_INK} strokeWidth={0.4} />
-              <line x1={-1.2} y1={-1.2} x2={1.2} y2={1.2} stroke={SYMBOL_INK} strokeWidth={0.28} />
-              <line x1={-1.2} y1={1.2} x2={1.2} y2={-1.2} stroke={SYMBOL_INK} strokeWidth={0.28} />
+              <rect x={-1.3} y={-1.3} width={2.6} height={2.6} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={0.32} />
+              <line x1={-1.05} y1={-1.05} x2={1.05} y2={1.05} stroke={SUPPLY_COLOR} strokeWidth={0.26} />
+              <line x1={-1.05} y1={1.05} x2={1.05} y2={-1.05} stroke={SUPPLY_COLOR} strokeWidth={0.26} />
+              <line x1={0} y1={-1.3} x2={0} y2={-2.1} stroke={SUPPLY_COLOR} strokeWidth={0.26} strokeLinecap="round" />
             </g>
           );
         });
@@ -329,25 +410,26 @@ export function DuctRoutingDiagram({
           <svg width={20} height={6}>
             <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={3} />
           </svg>
-          Trunk
+          Trunk (metal)
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={20} height={6}>
-            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={1.8} />
+            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={1.8} strokeDasharray="2.5,2" />
           </svg>
-          Branch
+          Branch (flex)
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={20} height={6}>
-            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={1} />
+            <line x1={1} y1={3} x2={19} y2={3} stroke={SUPPLY_COLOR} strokeWidth={1} strokeDasharray="2.5,2" />
           </svg>
-          Run-out (size / CFM at the register)
+          Run-out (flex)
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={14} height={14}>
-            <rect x={2} y={2} width={10} height={10} fill={RETURN_COLOR} />
+            <rect x={2} y={2} width={10} height={10} fill={PAPER} stroke={RETURN_COLOR} strokeWidth={1.4} />
+            <line x1={2} y1={12} x2={12} y2={2} stroke={RETURN_COLOR} strokeWidth={1} />
           </svg>
-          Return air (single central return)
+          Return air grille
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={14} height={14}>
@@ -357,7 +439,9 @@ export function DuctRoutingDiagram({
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={14} height={14}>
-            <circle cx={7} cy={7} r={5} fill={PAPER} stroke={SYMBOL_INK} strokeWidth={1.2} />
+            <rect x={2} y={2} width={10} height={10} fill={PAPER} stroke={SUPPLY_COLOR} strokeWidth={1.4} />
+            <line x1={2} y1={2} x2={12} y2={12} stroke={SUPPLY_COLOR} strokeWidth={1} />
+            <line x1={2} y1={12} x2={12} y2={2} stroke={SUPPLY_COLOR} strokeWidth={1} />
           </svg>
           Supply register (one-way)
         </span>
@@ -366,6 +450,22 @@ export function DuctRoutingDiagram({
             <rect x={4} y={4} width={6} height={6} fill={SYMBOL_INK} />
           </svg>
           Branch takeoff (tee)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={22} height={14}>
+            <circle cx={7} cy={7} r={4.2} fill="none" stroke={SUPPLY_COLOR} strokeWidth={1} />
+            <text x={7} y={9.5} fontSize={5} fontWeight={700} textAnchor="middle" fill={SUPPLY_COLOR}>
+              1W
+            </text>
+            <text x={16} y={6} fontSize={4.2} fontWeight={700} fill={SUPPLY_COLOR}>
+              6&quot;⌀
+            </text>
+            <line x1={12} y1={7} x2={20} y2={7} stroke={SUPPLY_COLOR} strokeWidth={0.6} />
+            <text x={16} y={13} fontSize={4.2} fontWeight={700} fill={SUPPLY_COLOR}>
+              80
+            </text>
+          </svg>
+          Register callout (type / size / CFM)
         </span>
       </div>
     </div>

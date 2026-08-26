@@ -367,8 +367,10 @@ describe("layoutDuctRoutingLabels", () => {
       routes: [],
     });
     expect(labels).toHaveLength(2);
-    const kitchen = labels.find((l) => l.text === "Kitchen")!;
-    const bedroom = labels.find((l) => l.text === "Bedroom 5")!;
+    // Room labels render uppercase (see REFERENCE-DOCS/IMG_3916.JPG's
+    // real room-label convention).
+    const kitchen = labels.find((l) => l.text === "KITCHEN")!;
+    const bedroom = labels.find((l) => l.text === "BEDROOM 5")!;
     expect(kitchen.x).toBeCloseTo(0.1 * 100 + 2.4);
     expect(kitchen.y).toBeCloseTo(0.1 * 100 - 2.2);
     expect(bedroom.x).toBeCloseTo(0.9 * 100 + 2.4);
@@ -402,7 +404,12 @@ describe("layoutDuctRoutingLabels", () => {
       routes: [{ toXNorm: 0.8, toYNorm: 0.2, diameterIn: 7, cfm: 200 }],
     });
     const runLabel = labels.find((l) => l.kind === "run")!;
-    expect(runLabel.text).toBe('7"⌀ / 200 cfm');
+    // Real Wrightsoft/industry-standard register callout: circled type
+    // code + stacked size-over-CFM (see REFERENCE-DOCS/IMG_3916.JPG),
+    // not one inline string.
+    expect(runLabel.typeCode).toBe("1W");
+    expect(runLabel.text).toBe('7"⌀');
+    expect(runLabel.secondaryText).toBe("200");
     expect(runLabel.x).toBeCloseTo(0.8 * 100 + 2.4);
     expect(runLabel.y).toBeCloseTo(0.2 * 100 + 2.6);
     // Leader-line anchor points at the TRUE register location, not the

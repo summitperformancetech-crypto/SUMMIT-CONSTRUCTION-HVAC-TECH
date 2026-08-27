@@ -149,6 +149,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       espCapacityCheckByZone: [],
       trunkTopologyByZone: [],
       balancingDamperCheckByZone: [],
+      installPackagesByZone: [],
       ductRuns: [],
       rooms,
       zones: [],

@@ -149,6 +149,7 @@ describe("validateReportTotals", () => {
       espCapacityCheckByZone: [],
       trunkTopologyByZone: [],
       balancingDamperCheckByZone: [],
+      installPackagesByZone: [],
     });
 
     const result = validateReportTotals(data);
@@ -196,6 +197,7 @@ describe("validateReportTotals", () => {
       espCapacityCheckByZone: [],
       trunkTopologyByZone: [],
       balancingDamperCheckByZone: [],
+      installPackagesByZone: [],
     });
 
     const result = validateReportTotals(data);

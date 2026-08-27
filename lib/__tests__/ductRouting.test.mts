@@ -9,6 +9,7 @@ import {
   derivePageScale,
   computeManhattanDistanceFt,
   computeRealDistanceBetweenPinsFt,
+  deriveAhuInstallationDetail,
   countManhattanTurns,
   computeRoutedBranchRun,
   getDuctRoutingGateStatus,
@@ -274,6 +275,82 @@ describe("computeRealDistanceBetweenPinsFt (Catalog Expansion, Section 5 - real 
       { xNorm: 0.5, yNorm: 0.3 },
     );
     expect(dist).toBeNull();
+  });
+});
+
+describe("deriveAhuInstallationDetail (Catalog Expansion, Gap 06 - real AHU detail as install-package byproduct)", () => {
+  it("formats a real rectangular trunk plenum size", () => {
+    const result = deriveAhuInstallationDetail({
+      trunkDuctShape: "rectangular",
+      trunkDiameterIn: null,
+      trunkWidthIn: 20,
+      trunkHeightIn: 8,
+      linesetLiquidLineDiameterIn: null,
+      linesetVaporLineDiameterIn: null,
+      totalBranches: 0,
+      branchesWithDamper: 0,
+    });
+    expect(result.plenum_size).toBe('20"x8" (real trunk sizing)');
+  });
+
+  it("formats a real round trunk plenum size", () => {
+    const result = deriveAhuInstallationDetail({
+      trunkDuctShape: "round",
+      trunkDiameterIn: 14,
+      trunkWidthIn: null,
+      trunkHeightIn: null,
+      linesetLiquidLineDiameterIn: null,
+      linesetVaporLineDiameterIn: null,
+      totalBranches: 0,
+      branchesWithDamper: 0,
+    });
+    expect(result.plenum_size).toBe('14" dia (real trunk sizing)');
+  });
+
+  it("passes through the real refrigerant line diameters unchanged - never fabricated", () => {
+    const result = deriveAhuInstallationDetail({
+      trunkDuctShape: null,
+      trunkDiameterIn: null,
+      trunkWidthIn: null,
+      trunkHeightIn: null,
+      linesetLiquidLineDiameterIn: 0.375,
+      linesetVaporLineDiameterIn: 0.875,
+      totalBranches: 0,
+      branchesWithDamper: 0,
+    });
+    expect(result.refrigerant_liquid_line_in).toBe(0.375);
+    expect(result.refrigerant_vapor_line_in).toBe(0.875);
+  });
+
+  it("summarizes real balancing-damper coverage, not a fabricated pass/fail", () => {
+    const result = deriveAhuInstallationDetail({
+      trunkDuctShape: null,
+      trunkDiameterIn: null,
+      trunkWidthIn: null,
+      trunkHeightIn: null,
+      linesetLiquidLineDiameterIn: null,
+      linesetVaporLineDiameterIn: null,
+      totalBranches: 5,
+      branchesWithDamper: 3,
+    });
+    expect(result.damper_types).toEqual(["manual_balance: 3 of 5 real branch runs confirmed installed (duct_runs.has_balancing_damper)"]);
+  });
+
+  it("returns all nulls when nothing is real yet - never guesses a plenum size or damper count", () => {
+    const result = deriveAhuInstallationDetail({
+      trunkDuctShape: null,
+      trunkDiameterIn: null,
+      trunkWidthIn: null,
+      trunkHeightIn: null,
+      linesetLiquidLineDiameterIn: null,
+      linesetVaporLineDiameterIn: null,
+      totalBranches: 0,
+      branchesWithDamper: 0,
+    });
+    expect(result.plenum_size).toBeNull();
+    expect(result.damper_types).toBeNull();
+    expect(result.refrigerant_liquid_line_in).toBeNull();
+    expect(result.refrigerant_vapor_line_in).toBeNull();
   });
 });
 

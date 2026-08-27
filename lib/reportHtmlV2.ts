@@ -978,7 +978,7 @@ function renderAhuInstallationDetailBlock(
         damper at each branch takeoff is the standard baseline method.
       </span>
     </p>
-    <div class="muted" style="font-size:10px;margin-top:10px;">${esc(org.name)} — real technician-entered installation detail, not calculated.</div>`;
+    <div class="muted" style="font-size:10px;margin-top:10px;">${esc(org.name)} — real installation detail: technician-entered where a technician has confirmed it, otherwise derived from the matched equipment and real trunk sizing (plenum size, refrigerant line diameters, dampers) - a technician's own entry always takes precedence and is never overwritten.</div>`;
 }
 
 // ---------------------------------------------------------------------------

@@ -18,7 +18,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import { renderPdfPageToPngDataUri, getEffectivePageSize } from "./floorPlanRender";
-import { computeSheetDuctRouting, computeRealDistanceBetweenPinsFt, type RoutedDuctSegment } from "./ductRouting";
+import {
+  computeSheetDuctRouting,
+  computeRealDistanceBetweenPinsFt,
+  deriveAhuInstallationDetail,
+  type RoutedDuctSegment,
+  type AhuInstallationDetailRow,
+} from "./ductRouting";
 import { applyRealLineSetLength, type LinesetSpec } from "./installPackage";
 import type { EquipmentCatalogEntry } from "./manualS";
 import { fitCorridorGraphCalibration, resolveCorridorNodePositions, mapGraphRoomIdsToRealRoomIds } from "./ductCorridorGraph";
@@ -34,6 +40,12 @@ import {
 } from "./ductTrunkTopology";
 import type { ReportData, DuctRoutingIllustrationReducer } from "./reportData";
 import type { DrawingExtraction } from "./drawingExtraction";
+
+// Mirrors lib/reportData.ts's own AHU_INSTALLATION_DETAIL_COLUMNS - kept
+// in sync manually (both are short, stable column lists) rather than
+// importing a private const across modules.
+const AHU_INSTALLATION_DETAIL_COLUMNS =
+  "id, project_id, zone_id, plenum_size, supply_takeoff_sizes, fresh_air_duct_size, oda_termination_id, refrigerant_vapor_line_in, refrigerant_liquid_line_in, condensate_routing_note, return_platform_construction, return_platform_insulation_r, filter_backed_return_specs, damper_types";
 
 type DrawingImageSource = {
   id: string;
@@ -287,14 +299,19 @@ export async function attachFrozenImages(
   // Patch every affected zone's install package with the real, now-known
   // line-set length - the only piece of computeInstallPackage's output
   // that depends on real page dimensions this file has and
-  // lib/reportData.ts's cheap pass never does.
+  // lib/reportData.ts's cheap pass never does. Fetched for every zone
+  // with a selected outdoor unit (not just ones with a resolved
+  // condenser pin) since Gap 06's AHU installation-detail derivation
+  // below needs the same real lineset diameters regardless of whether a
+  // real run length is known yet.
   let installPackagesByZone = reportData.residential?.installPackagesByZone ?? [];
-  if (reportData.residential && lineSetLengthFtByZoneId.size > 0) {
+  let ahuInstallationDetails = reportData.residential?.ahuInstallationDetails ?? [];
+  const equipById = new Map<string, EquipmentCatalogEntry>();
+  const linesetByEquip = new Map<string, LinesetSpec>();
+  if (reportData.residential) {
     const outdoorEquipmentIds = [
       ...new Set(
-        reportData.residential.zones
-          .filter((z) => lineSetLengthFtByZoneId.has(z.id) && z.selected_equipment_id != null)
-          .map((z) => z.selected_equipment_id as string),
+        reportData.residential.zones.filter((z) => z.selected_equipment_id != null).map((z) => z.selected_equipment_id as string),
       ),
     ];
     if (outdoorEquipmentIds.length > 0) {
@@ -322,34 +339,28 @@ export async function attachFrozenImages(
           .in("equipment_id", outdoorEquipmentIds)
           .returns<{ equipment_id: string; liquid_line_diameter_in: number; vapor_line_diameter_in: number; max_equivalent_length_ft: number | null; length_derate_notes: string | null }[]>(),
       ]);
-      const equipById = new Map<string, EquipmentCatalogEntry>(
-        (equipRows ?? []).map((r) => [
-          r.id,
-          {
-            id: r.id,
-            manufacturer: r.manufacturer,
-            modelNumber: r.model_number,
-            equipmentType: r.equipment_type,
-            stageType: r.stage_type,
-            nominalCoolingCapacityBtu: r.nominal_cooling_capacity_btu,
-            nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
-            ratedCfm: r.rated_cfm,
-            sourceDocument: r.source_document,
-          },
-        ]),
-      );
-      const linesetByEquip = new Map<string, LinesetSpec>(
-        (linesetRows ?? []).map((r) => [
-          r.equipment_id,
-          {
-            equipmentId: r.equipment_id,
-            liquidLineDiameterIn: r.liquid_line_diameter_in,
-            vaporLineDiameterIn: r.vapor_line_diameter_in,
-            maxEquivalentLengthFt: r.max_equivalent_length_ft,
-            lengthDerateNotes: r.length_derate_notes,
-          },
-        ]),
-      );
+      for (const r of equipRows ?? []) {
+        equipById.set(r.id, {
+          id: r.id,
+          manufacturer: r.manufacturer,
+          modelNumber: r.model_number,
+          equipmentType: r.equipment_type,
+          stageType: r.stage_type,
+          nominalCoolingCapacityBtu: r.nominal_cooling_capacity_btu,
+          nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
+          ratedCfm: r.rated_cfm,
+          sourceDocument: r.source_document,
+        });
+      }
+      for (const r of linesetRows ?? []) {
+        linesetByEquip.set(r.equipment_id, {
+          equipmentId: r.equipment_id,
+          liquidLineDiameterIn: r.liquid_line_diameter_in,
+          vaporLineDiameterIn: r.vapor_line_diameter_in,
+          maxEquivalentLengthFt: r.max_equivalent_length_ft,
+          lengthDerateNotes: r.length_derate_notes,
+        });
+      }
 
       installPackagesByZone = installPackagesByZone.map((pkg) => {
         const lineSetLengthFt = lineSetLengthFtByZoneId.get(pkg.zoneId);
@@ -359,13 +370,74 @@ export async function attachFrozenImages(
         return applyRealLineSetLength(pkg, outdoorUnit, linesetByEquip.get(outdoorUnit.id) ?? null, lineSetLengthFt);
       });
     }
+
+    // Catalog Expansion + Recommended Install Package, Gap 06 - real AHU
+    // installation detail, derived as a byproduct of the matched
+    // equipment and real trunk sizing (see
+    // lib/ductRouting.ts's deriveAhuInstallationDetail's own comment for
+    // exactly which 4 fields are genuinely derivable vs. left null),
+    // filled in ONLY where genuinely blank - components/duct-design-
+    // section.tsx already lets a technician manually enter this same
+    // data (handleSaveAhuDetail), and a real technician-verified value
+    // must never be silently overwritten by a computed one on the next
+    // report generation. Written at snapshot time - the same "real
+    // computed data, written once per snapshot" pattern this file
+    // already uses for images.
+    const sizedByRunId = new Map(reportData.residential.ductSchedule.map((r) => [r.runId, r]));
+    for (const zone of reportData.residential.zones) {
+      const trunkRun = reportData.residential.ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
+      const trunkSized = trunkRun ? sizedByRunId.get(trunkRun.id) : undefined;
+      const branches = reportData.residential.ductRuns.filter((r) => r.run_type === "branch" && r.zone_id === zone.id);
+      const outdoorUnit = zone.selected_equipment_id ? equipById.get(zone.selected_equipment_id) : null;
+      const lineset = outdoorUnit ? (linesetByEquip.get(outdoorUnit.id) ?? null) : null;
+
+      const derived = deriveAhuInstallationDetail({
+        trunkDuctShape: trunkSized?.ductShape ?? trunkRun?.duct_shape ?? null,
+        trunkDiameterIn: trunkSized?.diameterIn ?? trunkRun?.calculated_diameter_in ?? null,
+        trunkWidthIn: trunkSized?.widthIn ?? trunkRun?.calculated_width_in ?? null,
+        trunkHeightIn: trunkSized?.heightIn ?? trunkRun?.calculated_height_in ?? null,
+        linesetLiquidLineDiameterIn: lineset?.liquidLineDiameterIn ?? null,
+        linesetVaporLineDiameterIn: lineset?.vaporLineDiameterIn ?? null,
+        totalBranches: branches.length,
+        branchesWithDamper: branches.filter((r) => r.has_balancing_damper).length,
+      });
+
+      const existing = ahuInstallationDetails.find((d) => d.zone_id === zone.id) ?? null;
+      // Existing (technician-entered) value always wins - derived only
+      // fills in a genuine blank.
+      const merged = {
+        plenum_size: existing?.plenum_size ?? derived.plenum_size,
+        refrigerant_liquid_line_in: existing?.refrigerant_liquid_line_in ?? derived.refrigerant_liquid_line_in,
+        refrigerant_vapor_line_in: existing?.refrigerant_vapor_line_in ?? derived.refrigerant_vapor_line_in,
+        damper_types: existing?.damper_types ?? derived.damper_types,
+      };
+      const changed =
+        merged.plenum_size !== (existing?.plenum_size ?? null) ||
+        merged.refrigerant_liquid_line_in !== (existing?.refrigerant_liquid_line_in ?? null) ||
+        merged.refrigerant_vapor_line_in !== (existing?.refrigerant_vapor_line_in ?? null) ||
+        JSON.stringify(merged.damper_types) !== JSON.stringify(existing?.damper_types ?? null);
+      if (!changed) continue;
+
+      const { data: upserted } = await supabase
+        .from("ahu_installation_detail")
+        .upsert(
+          { project_id: projectId, zone_id: zone.id, ...merged },
+          { onConflict: "zone_id" },
+        )
+        .select(AHU_INSTALLATION_DETAIL_COLUMNS)
+        .single<AhuInstallationDetailRow>();
+
+      if (upserted) {
+        ahuInstallationDetails = [...ahuInstallationDetails.filter((d) => d.zone_id !== zone.id), upserted];
+      }
+    }
   }
 
   return {
     ...reportData,
     floorPlanImageDataUri,
     residential: reportData.residential
-      ? { ...reportData.residential, ductRoutingIllustration, installPackagesByZone }
+      ? { ...reportData.residential, ductRoutingIllustration, installPackagesByZone, ahuInstallationDetails }
       : reportData.residential,
   };
 }

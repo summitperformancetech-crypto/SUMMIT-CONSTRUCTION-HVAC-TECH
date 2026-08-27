@@ -1203,6 +1203,57 @@ export type AhuInstallationDetailRow = {
   damper_types: string[] | null;
 };
 
+// Catalog Expansion + Recommended Install Package, Gap 06 - real AHU
+// installation detail, derived as a byproduct of the matched equipment
+// and real trunk sizing rather than a separate manual-entry screen (per
+// direct instruction). Only the 4 fields genuinely derivable from data
+// this app already computes are populated here - plenum_size (real
+// trunk duct_runs sizing), the two refrigerant line diameters (the same
+// real refrigerant_lineset_specs row the install package's own
+// refrigerant_lineset line item uses), and damper_types (real
+// duct_runs.has_balancing_damper counts). The remaining fields
+// (fresh_air_duct_size, oda_termination_id, condensate_routing_note,
+// return_platform_construction/insulation, supply_takeoff_sizes,
+// filter_backed_return_specs) have no real, non-fabricated source in
+// this app's current data model - left null/UNRESOLVED rather than
+// guessed, a real, disclosed remaining gap, not silently filled in.
+export function deriveAhuInstallationDetail(input: {
+  trunkDuctShape: "round" | "rectangular" | null;
+  trunkDiameterIn: number | null;
+  trunkWidthIn: number | null;
+  trunkHeightIn: number | null;
+  linesetLiquidLineDiameterIn: number | null;
+  linesetVaporLineDiameterIn: number | null;
+  totalBranches: number;
+  branchesWithDamper: number;
+}): {
+  plenum_size: string | null;
+  refrigerant_liquid_line_in: number | null;
+  refrigerant_vapor_line_in: number | null;
+  damper_types: string[] | null;
+} {
+  const plenum_size =
+    input.trunkDuctShape === "round" && input.trunkDiameterIn != null
+      ? `${input.trunkDiameterIn}" dia (real trunk sizing)`
+      : input.trunkDuctShape === "rectangular" && input.trunkWidthIn != null && input.trunkHeightIn != null
+        ? `${input.trunkWidthIn}"x${input.trunkHeightIn}" (real trunk sizing)`
+        : null;
+
+  const damper_types =
+    input.totalBranches > 0
+      ? [
+          `manual_balance: ${input.branchesWithDamper} of ${input.totalBranches} real branch run${input.totalBranches === 1 ? "" : "s"} confirmed installed (duct_runs.has_balancing_damper)`,
+        ]
+      : null;
+
+  return {
+    plenum_size,
+    refrigerant_liquid_line_in: input.linesetLiquidLineDiameterIn,
+    refrigerant_vapor_line_in: input.linesetVaporLineDiameterIn,
+    damper_types,
+  };
+}
+
 export function formatDuctSizeCfm(diameterIn: number | null | undefined, cfm: number | null | undefined): string {
   const sizeText = diameterIn ? `${diameterIn}"⌀` : null;
   const cfmText = cfm != null ? `${Math.round(cfm)} cfm` : null;

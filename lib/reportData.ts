@@ -587,7 +587,7 @@ const DUCT_TERMINATION_COLUMNS =
 const COMMERCIAL_ZONE_COLUMNS =
   "id, project_id, name, ahu_label, occupancy_type, floor_area_sqft, ceiling_height_ft, occupant_density_per_1000sqft, lighting_load_w_per_sqft, equipment_load_w_per_sqft, exterior_wall_area_sqft, roof_area_sqft, wall_u_value, roof_u_value, window_area_sqft, window_u_value, window_shgc, cleanroom_class";
 const EQUIPMENT_CATALOG_COLUMNS =
-  "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document";
+  "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document, direct_vent_capable";
 const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
   "equipment_id, mode, outdoor_temp_f, indoor_entering_temp_f, indoor_entering_wetbulb_f, sensible_capacity_btu, total_capacity_btu, input_power_kw";
 const PROCESS_LOAD_COLUMNS =
@@ -600,7 +600,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, org_id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc",
+      "id, org_id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc, no_vented_attic_or_crawlspace",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -853,6 +853,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
             nominal_heating_capacity_btu: number | null;
             rated_cfm: number | null;
             source_document: string;
+            direct_vent_capable: boolean | null;
           }[]
         >(),
         supabase.from("equipment_performance_points").select(EQUIPMENT_PERFORMANCE_POINT_COLUMNS).returns<
@@ -885,6 +886,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
         ratedCfm: r.rated_cfm,
         sourceDocument: r.source_document,
+        directVentCapable: r.direct_vent_capable,
       }));
       const points: PerformancePoint[] = (pointRows ?? []).map((r) => ({
         equipmentId: r.equipment_id,
@@ -1113,6 +1115,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
                 nominal_heating_capacity_btu: number | null;
                 rated_cfm: number | null;
                 source_document: string;
+                direct_vent_capable: boolean | null;
               }[]
             >(),
             supabase
@@ -1156,6 +1159,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
           nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
           ratedCfm: r.rated_cfm,
           sourceDocument: r.source_document,
+          directVentCapable: r.direct_vent_capable,
         },
       ]),
     );
@@ -1257,6 +1261,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         diffusers: (ductDiffusers ?? []).filter((d) => d.zone_id === zone.id),
         ductMaterialDefault,
         terminations: (ductTerminations ?? []).filter((t) => t.zone_id === zone.id),
+        combustionAirIsolated: project.no_vented_attic_or_crawlspace,
       });
     });
 

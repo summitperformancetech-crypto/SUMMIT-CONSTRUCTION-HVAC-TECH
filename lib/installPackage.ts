@@ -15,6 +15,7 @@ export type InstallPackageLineItemCategory =
   | "electrical"
   | "refrigerant_lineset"
   | "heat_kit"
+  | "combustion_air_source"
   | "filter"
   | "diffuser"
   | "duct_material"
@@ -103,6 +104,12 @@ export type InstallPackageInputs = {
   diffusers: DuctDiffuserRow[];
   ductMaterialDefault: { manufacturer: string; productLine: string | null } | null;
   terminations: DuctTerminationRow[];
+  // Real project attribute (projects.no_vented_attic_or_crawlspace) -
+  // true when a spray-foam sealed attic and an encapsulated crawlspace
+  // leave no outside-vented buffer space for a Category I furnace to
+  // source combustion air from. See this module's own
+  // combustion_air_source line item.
+  combustionAirIsolated: boolean;
 };
 
 function equipmentLabel(equipment: EquipmentCatalogEntry): string {
@@ -282,7 +289,40 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
     }
   }
 
-  // Step 5 - filter.
+  // Step 5 - combustion air source. Only applies to equipment with a
+  // real gas-fired heat section (directVentCapable is non-null) - a
+  // furnace lives in indoorUnit, a self-contained gas/electric or
+  // hybrid package unit lives in outdoorUnit; a pure heat-pump/AC-only
+  // selection has directVentCapable === null on both slots and adds no
+  // line item here at all, same as heat_kit only appearing when a
+  // deficit exists.
+  const combustionUnit =
+    inputs.indoorUnit?.directVentCapable != null
+      ? inputs.indoorUnit
+      : inputs.outdoorUnit?.directVentCapable != null
+        ? inputs.outdoorUnit
+        : null;
+  if (combustionUnit) {
+    const isolated = inputs.combustionAirIsolated;
+    const capable = combustionUnit.directVentCapable === true;
+    lineItems.push({
+      category: "combustion_air_source",
+      status: isolated && !capable ? "flagged" : "resolved",
+      summary:
+        isolated && !capable
+          ? `${equipmentLabel(combustionUnit)}: not direct-vent capable, but this project has no vented attic/crawlspace to source combustion air from`
+          : capable
+            ? `${equipmentLabel(combustionUnit)}: sealed-combustion/direct-vent capable (draws combustion air from outdoors)`
+            : `${equipmentLabel(combustionUnit)}: draws combustion air from the surrounding space (not direct-vent capable) - fine, this project has a vented attic/crawlspace available`,
+      detail:
+        isolated && !capable
+          ? "This is a real, non-condensing (Category I) furnace/gas-package unit - it needs a vented, outdoor-connected attic or crawlspace to source combustion air from safely, and this project's envelope (projects.no_vented_attic_or_crawlspace) has neither. Re-select a condensing (90%+ AFUE) direct-vent model, or confirm a real outside-air path exists before installing this one."
+          : "Real equipment_catalog.direct_vent_capable, sourced from the manufacturer's own venting-configuration spec (ANSI Z21.47 Category I vs Category IV).",
+      sourceEquipmentId: combustionUnit.id,
+    });
+  }
+
+  // Step 6 - filter.
   if (inputs.indoorUnit) {
     const filter = inputs.filterSpecByEquipmentId.get(inputs.indoorUnit.id);
     lineItems.push({
@@ -298,7 +338,7 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
     });
   }
 
-  // Step 6 - diffusers + duct material, inherited from the project's own
+  // Step 7 - diffusers + duct material, inherited from the project's own
   // already-resolved Manual D diagram data, never re-asked here.
   lineItems.push({
     category: "diffuser",
@@ -325,7 +365,7 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
     sourceEquipmentId: null,
   });
 
-  // Step 7 - terminations.
+  // Step 8 - terminations.
   lineItems.push({
     category: "termination",
     status: inputs.terminations.length > 0 ? "resolved" : "unresolved",
@@ -340,7 +380,7 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
     sourceEquipmentId: null,
   });
 
-  // Step 8 - completeness score. A 'flagged' item counts as incomplete,
+  // Step 9 - completeness score. A 'flagged' item counts as incomplete,
   // same as 'unresolved' - see this module's own header comment.
   return {
     zoneId: inputs.zoneId,

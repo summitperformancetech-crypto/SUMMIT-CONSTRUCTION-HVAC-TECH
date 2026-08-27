@@ -23,6 +23,15 @@ export type EquipmentCatalogEntry = {
   nominalHeatingCapacityBtu: number | null;
   ratedCfm: number | null;
   sourceDocument: string;
+  // Real, sourced per row - whether the manufacturer's own spec sheet
+  // publishes a sealed-combustion/direct-vent (2-pipe, outdoor
+  // combustion air) installation option. Null for any equipment_type
+  // with no combustion appliance at all (heat_pump, split_ac,
+  // air_handler, coil, and heat-pump-only/AC-only package_unit rows) -
+  // "combustion air source" simply doesn't apply there, so null means
+  // not applicable, never false. See lib/installPackage.ts's
+  // combustion_air_source line item.
+  directVentCapable: boolean | null;
 };
 
 export type PerformancePoint = {

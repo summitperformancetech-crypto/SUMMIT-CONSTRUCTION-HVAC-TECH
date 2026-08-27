@@ -68,6 +68,7 @@ type Project = {
   building_front_faces: Compass8 | null;
   preferred_manufacturer: string | null;
   hvac_system_configuration: HvacSystemConfiguration;
+  no_vented_attic_or_crawlspace: boolean;
 };
 
 type DuctSizingTableDbRow = {
@@ -87,6 +88,7 @@ type EquipmentCatalogDbRow = {
   nominal_heating_capacity_btu: number | null;
   rated_cfm: number | null;
   source_document: string;
+  direct_vent_capable: boolean | null;
 };
 
 type EquipmentOrgPreferenceDbRow = {
@@ -110,7 +112,7 @@ type EquipmentPerformancePointDbRow = {
 // same "use client" runtime-value-across-the-boundary issue documented on
 // DUCT_RUN_COLUMNS above.
 const EQUIPMENT_CATALOG_COLUMNS =
-  "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document";
+  "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document, direct_vent_capable";
 const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
   "equipment_id, mode, outdoor_temp_f, indoor_entering_temp_f, indoor_entering_wetbulb_f, sensible_capacity_btu, total_capacity_btu, input_power_kw";
 
@@ -248,7 +250,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, blower_tesp_iwc, evaporator_coil_loss_iwc, air_filter_loss_iwc, grilles_registers_loss_iwc, building_front_faces, preferred_manufacturer, hvac_system_configuration",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, blower_tesp_iwc, evaporator_coil_loss_iwc, air_filter_loss_iwc, grilles_registers_loss_iwc, building_front_faces, preferred_manufacturer, hvac_system_configuration, no_vented_attic_or_crawlspace",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -650,6 +652,7 @@ export default async function ProjectDetailPage({
     nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
     ratedCfm: r.rated_cfm,
     sourceDocument: r.source_document,
+    directVentCapable: r.direct_vent_capable,
   }));
 
   const equipmentPerformancePoints: PerformancePoint[] = (equipmentPerformancePointRows ?? []).map(
@@ -773,6 +776,7 @@ export default async function ProjectDetailPage({
         initialFoundationType={project.foundation_type}
         initialWindowType={project.window_type}
         initialWindowCount={project.window_count}
+        initialNoVentedAtticOrCrawlspace={project.no_vented_attic_or_crawlspace}
         initialRooms={rooms ?? []}
         initialDrawings={drawings ?? []}
         winterDesignTempF={climateZone?.winter_design_temp_f ?? null}

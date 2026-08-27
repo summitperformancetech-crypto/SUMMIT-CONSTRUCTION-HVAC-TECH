@@ -33,6 +33,7 @@ function equipment(overrides: Partial<EquipmentCatalogEntry>): EquipmentCatalogE
     nominalHeatingCapacityBtu: null,
     ratedCfm: null,
     sourceDocument: "test fixture",
+    directVentCapable: null,
     ...overrides,
   };
 }

@@ -26,6 +26,7 @@ const outdoorUnit: EquipmentCatalogEntry = {
   nominalHeatingCapacityBtu: 36000,
   ratedCfm: 1150,
   sourceDocument: "SS-DZ4SE",
+  directVentCapable: null,
 };
 
 const indoorUnit: EquipmentCatalogEntry = {
@@ -38,6 +39,7 @@ const indoorUnit: EquipmentCatalogEntry = {
   nominalHeatingCapacityBtu: null,
   ratedCfm: 1150,
   sourceDocument: "SS-DZ4SE",
+  directVentCapable: null,
 };
 
 function baseInputs(overrides: Partial<InstallPackageInputs> = {}): InstallPackageInputs {
@@ -61,6 +63,7 @@ function baseInputs(overrides: Partial<InstallPackageInputs> = {}): InstallPacka
     diffusers: [],
     ductMaterialDefault: null,
     terminations: [],
+    combustionAirIsolated: false,
     ...overrides,
   };
 }
@@ -170,7 +173,54 @@ describe("computeInstallPackage - heat kit (step 4)", () => {
   });
 });
 
-describe("computeInstallPackage - completeness score (step 8)", () => {
+describe("computeInstallPackage - combustion air source (step 5)", () => {
+  const nonCondensingFurnace: EquipmentCatalogEntry = {
+    ...indoorUnit,
+    id: "indoor-furnace-noncondensing",
+    equipmentType: "furnace",
+    directVentCapable: false,
+  };
+  const condensingFurnace: EquipmentCatalogEntry = {
+    ...indoorUnit,
+    id: "indoor-furnace-condensing",
+    equipmentType: "furnace",
+    directVentCapable: true,
+  };
+
+  it("flags a non-direct-vent furnace when the project has no vented attic/crawlspace", () => {
+    const pkg = computeInstallPackage(
+      baseInputs({ indoorUnit: nonCondensingFurnace, combustionAirIsolated: true }),
+    );
+    const item = pkg.lineItems.find((l) => l.category === "combustion_air_source")!;
+    expect(item.status).toBe("flagged");
+    expect(item.summary).toContain("not direct-vent capable");
+  });
+
+  it("resolves a direct-vent (sealed-combustion) furnace even when the project has no vented attic/crawlspace", () => {
+    const pkg = computeInstallPackage(
+      baseInputs({ indoorUnit: condensingFurnace, combustionAirIsolated: true }),
+    );
+    const item = pkg.lineItems.find((l) => l.category === "combustion_air_source")!;
+    expect(item.status).toBe("resolved");
+    expect(item.summary).toContain("direct-vent capable");
+  });
+
+  it("resolves a non-direct-vent furnace when the project has a real vented attic/crawlspace available", () => {
+    const pkg = computeInstallPackage(
+      baseInputs({ indoorUnit: nonCondensingFurnace, combustionAirIsolated: false }),
+    );
+    const item = pkg.lineItems.find((l) => l.category === "combustion_air_source")!;
+    expect(item.status).toBe("resolved");
+    expect(item.summary).toContain("vented attic/crawlspace available");
+  });
+
+  it("adds no line item at all for a pure heat-pump/AC selection (directVentCapable null on both slots)", () => {
+    const pkg = computeInstallPackage(baseInputs({ combustionAirIsolated: true }));
+    expect(pkg.lineItems.find((l) => l.category === "combustion_air_source")).toBeUndefined();
+  });
+});
+
+describe("computeInstallPackage - completeness score (step 9)", () => {
   it("counts a flagged item as incomplete, same as unresolved - never a clean-looking score with a real flag present", () => {
     const pkg = computeInstallPackage(baseInputs({ coilMatchIndoorUnitIds: [] }));
     const flaggedItem = pkg.lineItems.find((l) => l.category === "coil_matching")!;

@@ -153,6 +153,7 @@ type EnvelopeFormValues = {
   foundation_type: string;
   window_type: string;
   window_count: string;
+  no_vented_attic_or_crawlspace: boolean;
 };
 
 export const ROOM_COLUMNS =
@@ -317,6 +318,7 @@ function envelopeToForm(
   foundationType: string | null,
   windowType: string | null,
   windowCount: number | null,
+  noVentedAtticOrCrawlspace: boolean,
 ): EnvelopeFormValues {
   return {
     wall_insulation_r_value: envelope.wall_insulation_r_value?.toString() ?? "",
@@ -335,6 +337,7 @@ function envelopeToForm(
     foundation_type: foundationType ?? "",
     window_type: windowType ?? "",
     window_count: windowCount?.toString() ?? "",
+    no_vented_attic_or_crawlspace: noVentedAtticOrCrawlspace,
   };
 }
 
@@ -467,6 +470,7 @@ export const ManualJWorkflow = forwardRef<
     initialFoundationType: string | null;
     initialWindowType: string | null;
     initialWindowCount: number | null;
+    initialNoVentedAtticOrCrawlspace: boolean;
     winterDesignTempF: number | null;
     summerDesignTempF: number | null;
     roomTypeDefaults: RoomTypeDefault[];
@@ -503,6 +507,7 @@ export const ManualJWorkflow = forwardRef<
     initialFoundationType,
     initialWindowType,
     initialWindowCount,
+    initialNoVentedAtticOrCrawlspace,
     winterDesignTempF,
     summerDesignTempF,
     roomTypeDefaults,
@@ -539,6 +544,7 @@ export const ManualJWorkflow = forwardRef<
       initialFoundationType,
       initialWindowType,
       initialWindowCount,
+      initialNoVentedAtticOrCrawlspace,
     ),
   );
   const [envelopeSaving, setEnvelopeSaving] = useState(false);
@@ -672,6 +678,7 @@ export const ManualJWorkflow = forwardRef<
         foundation_type: toNullableString(envelopeForm.foundation_type),
         window_type: toNullableString(envelopeForm.window_type),
         window_count: toNullableNumber(envelopeForm.window_count),
+        no_vented_attic_or_crawlspace: envelopeForm.no_vented_attic_or_crawlspace,
       })
       .eq("id", projectId);
     setEnvelopeSaving(false);
@@ -1271,6 +1278,22 @@ export const ManualJWorkflow = forwardRef<
             walls — see lib/manualJ.ts.
           </p>
         )}
+
+        <div className="mt-4 flex items-start gap-2">
+          <input
+            id="no-vented-attic-or-crawlspace"
+            type="checkbox"
+            checked={envelopeForm.no_vented_attic_or_crawlspace}
+            onChange={(e) => updateEnvelopeField("no_vented_attic_or_crawlspace", e.target.checked)}
+            className="mt-0.5 h-4 w-4 accent-brand-gold"
+          />
+          <label htmlFor="no-vented-attic-or-crawlspace" className="text-xs text-brand-grey-text">
+            No vented attic or crawlspace available (spray-foam sealed attic + encapsulated
+            crawlspace) — a non-condensing furnace has no outside-vented space to draw
+            combustion air from. The install package will flag any selected furnace/package
+            unit that isn&apos;t sealed-combustion/direct-vent capable.
+          </label>
+        </div>
 
         {envelopeError && (
           <p className="mt-3 text-sm text-red-400" role="alert">

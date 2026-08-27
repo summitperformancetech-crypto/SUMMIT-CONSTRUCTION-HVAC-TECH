@@ -318,7 +318,7 @@ export async function attachFrozenImages(
       const [{ data: equipRows }, { data: linesetRows }] = await Promise.all([
         supabase
           .from("equipment_catalog")
-          .select("id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document")
+          .select("id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document, direct_vent_capable")
           .in("id", outdoorEquipmentIds)
           .returns<
             {
@@ -331,6 +331,7 @@ export async function attachFrozenImages(
               nominal_heating_capacity_btu: number | null;
               rated_cfm: number | null;
               source_document: string;
+              direct_vent_capable: boolean | null;
             }[]
           >(),
         supabase
@@ -350,6 +351,7 @@ export async function attachFrozenImages(
           nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
           ratedCfm: r.rated_cfm,
           sourceDocument: r.source_document,
+          directVentCapable: r.direct_vent_capable,
         });
       }
       for (const r of linesetRows ?? []) {

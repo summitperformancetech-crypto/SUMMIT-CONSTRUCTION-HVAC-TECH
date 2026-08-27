@@ -1338,6 +1338,7 @@ const INSTALL_PACKAGE_CATEGORY_LABEL: Record<string, string> = {
   electrical: "Electrical",
   refrigerant_lineset: "Refrigerant Lineset",
   heat_kit: "Heat Kit",
+  combustion_air_source: "Combustion Air Source",
   filter: "Filter",
   diffuser: "Diffusers",
   duct_material: "Duct Material",

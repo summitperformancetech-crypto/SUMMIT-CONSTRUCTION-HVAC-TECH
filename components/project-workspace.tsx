@@ -28,6 +28,7 @@ export function ProjectWorkspace({
   initialFoundationType,
   initialWindowType,
   initialWindowCount,
+  initialNoVentedAtticOrCrawlspace,
   initialRooms,
   initialDrawings,
   initialFieldResolutions,
@@ -64,6 +65,7 @@ export function ProjectWorkspace({
   initialFoundationType: string | null;
   initialWindowType: string | null;
   initialWindowCount: number | null;
+  initialNoVentedAtticOrCrawlspace: boolean;
   initialRooms: RoomRow[];
   initialDrawings: DrawingRow[];
   initialFieldResolutions: FieldResolution[];
@@ -155,6 +157,7 @@ export function ProjectWorkspace({
         initialFoundationType={initialFoundationType}
         initialWindowType={initialWindowType}
         initialWindowCount={initialWindowCount}
+        initialNoVentedAtticOrCrawlspace={initialNoVentedAtticOrCrawlspace}
         initialRooms={initialRooms}
         winterDesignTempF={winterDesignTempF}
         summerDesignTempF={summerDesignTempF}

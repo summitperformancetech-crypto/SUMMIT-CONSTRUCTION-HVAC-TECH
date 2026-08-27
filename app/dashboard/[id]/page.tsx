@@ -30,7 +30,13 @@ import {
 import { computeStaleItems, type StaleItem } from "@/lib/staleness";
 import type { Compass8 } from "@/lib/constants/compass";
 import type { HvacSystemConfiguration } from "@/components/system-configuration-section";
-import { MakeupAirSection, type ExhaustSourceRow, type MakeupAirCatalogOption } from "@/components/makeup-air-section";
+import {
+  MakeupAirSection,
+  type ExhaustSourceRow,
+  type MakeupAirCatalogOption,
+  type ExhaustFanCatalogOption,
+  type ExhaustRoomLookup,
+} from "@/components/makeup-air-section";
 
 type Project = {
   id: string;
@@ -119,6 +125,17 @@ type ExhaustSourceDbRow = {
   basis: ExhaustSourceRow["basis"];
   review_status: ExhaustSourceRow["reviewStatus"];
   code_citation: string | null;
+  selected_equipment_id: string | null;
+};
+
+type ExhaustFanSpecDbRow = {
+  equipment_id: string;
+  fan_category: "bathroom" | "kitchen_range_hood" | "kitchen_downdraft" | "multi_purpose";
+  min_rated_cfm: number;
+  max_rated_cfm: number;
+  sone_rating: number | null;
+  hvi_certified: boolean;
+  has_backdraft_damper: boolean;
 };
 
 type MakeupAirSpecDbRow = {
@@ -142,9 +159,12 @@ const EQUIPMENT_CATALOG_COLUMNS =
   "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document, direct_vent_capable";
 const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
   "equipment_id, mode, outdoor_temp_f, indoor_entering_temp_f, indoor_entering_wetbulb_f, sensible_capacity_btu, total_capacity_btu, input_power_kw";
-const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm, basis, review_status, code_citation";
+const EXHAUST_SOURCE_COLUMNS =
+  "id, room_id, source_type, description, rated_cfm, basis, review_status, code_citation, selected_equipment_id";
 const MAKEUP_AIR_SPEC_COLUMNS =
   "equipment_id, category, duct_diameter_in, min_rated_cfm, max_rated_cfm, heating_fuel_type, max_heating_capacity_btu, control_type, cooling_capable, min_cooling_tons, max_cooling_tons";
+const EXHAUST_FAN_SPEC_COLUMNS =
+  "equipment_id, fan_category, min_rated_cfm, max_rated_cfm, sone_rating, hvi_certified, has_backdraft_damper";
 
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
@@ -578,6 +598,7 @@ export default async function ProjectDetailPage({
     { data: ductInsulationCodeMinimumRows },
     { data: exhaustSourceRows },
     { data: makeupAirSpecRows },
+    { data: exhaustFanSpecRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -678,6 +699,13 @@ export default async function ProjectDetailPage({
       .from("equipment_makeup_air_specs")
       .select(MAKEUP_AIR_SPEC_COLUMNS)
       .returns<MakeupAirSpecDbRow[]>(),
+    // Global reference data, not project-scoped - one row per real
+    // equipment_catalog row with equipment_type = 'exhaust_fan' (see
+    // migration 20260827280000_add_local_exhaust_fan_tracking.sql).
+    supabase
+      .from("equipment_exhaust_fan_specs")
+      .select(EXHAUST_FAN_SPEC_COLUMNS)
+      .returns<ExhaustFanSpecDbRow[]>(),
   ]);
 
   const preferredEquipmentIds = new Set(
@@ -709,6 +737,7 @@ export default async function ProjectDetailPage({
     basis: r.basis,
     reviewStatus: r.review_status,
     codeCitation: r.code_citation,
+    selectedEquipmentId: r.selected_equipment_id,
   }));
 
   const makeupAirSpecByEquipmentId = new Map((makeupAirSpecRows ?? []).map((r) => [r.equipment_id, r]));
@@ -727,6 +756,33 @@ export default async function ProjectDetailPage({
         controlType: spec?.control_type ?? "",
       };
     });
+
+  const exhaustFanSpecByEquipmentId = new Map((exhaustFanSpecRows ?? []).map((r) => [r.equipment_id, r]));
+  const exhaustFanCatalogOptions: ExhaustFanCatalogOption[] = (equipmentCatalogRows ?? [])
+    .filter((r) => r.equipment_type === "exhaust_fan")
+    .flatMap((r) => {
+      const spec = exhaustFanSpecByEquipmentId.get(r.id);
+      if (!spec) return [];
+      return [
+        {
+          equipmentId: r.id,
+          manufacturer: r.manufacturer,
+          modelNumber: r.model_number,
+          fanCategory: spec.fan_category,
+          minRatedCfm: spec.min_rated_cfm,
+          maxRatedCfm: spec.max_rated_cfm,
+          soneRating: spec.sone_rating,
+          hviCertified: spec.hvi_certified,
+          hasBackdraftDamper: spec.has_backdraft_damper,
+        },
+      ];
+    });
+
+  const roomLookupForExhaust: ExhaustRoomLookup[] = (rooms ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    roomType: r.room_type,
+  }));
 
   const equipmentPerformancePoints: PerformancePoint[] = (equipmentPerformancePointRows ?? []).map(
     (r) => ({
@@ -847,6 +903,8 @@ export default async function ProjectDetailPage({
           initialExhaustSources={initialExhaustSources}
           catalogOptions={makeupAirCatalogOptions}
           initialSelectedMakeupAirEquipmentId={project.selected_makeup_air_equipment_id}
+          exhaustFanCatalogOptions={exhaustFanCatalogOptions}
+          rooms={roomLookupForExhaust}
         />
       </div>
 

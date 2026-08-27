@@ -26,7 +26,22 @@ import {
   type NormBox,
   type SegmentClass,
 } from "./ductPathGeometry";
-import { computeSegmentsFromCorridorGraph, type CorridorGraph } from "./ductCorridorGraph";
+import {
+  computeSegmentsFromCorridorGraph,
+  fitCorridorGraphCalibration,
+  resolveCorridorNodePositions,
+  mapGraphRoomIdsToRealRoomIds,
+  type CorridorGraph,
+} from "./ductCorridorGraph";
+import {
+  extractTrunkArms,
+  extractTakeoffPositions,
+  checkTakeoffSpacing,
+  placePointAlongArm,
+  computeDownstreamCfmAtDistance,
+  computeReductionPointsFt,
+  remapTakeoffPositionsToRealRoomIds,
+} from "./ductTrunkTopology";
 
 // -----------------------------------------------------------------------
 // ACCA Manual D, Third Edition v2.00 (2013), Appendix 3 "Fitting
@@ -461,6 +476,18 @@ export type LiveDuctRoutingSheet = {
   pins: LiveDuctRoutingPin[];
   routes: LiveDuctRoutingRoute[];
   terminations: LiveDuctRoutingTermination[];
+  // Permit-Submittable Manual D Package, Section 4 rendering follow-up -
+  // see lib/reportData.ts's DuctRoutingIllustrationReducer for the same
+  // shape on the frozen-PDF side.
+  reducers: LiveDuctRoutingReducer[];
+  takeoffViolationRoomIds: string[];
+};
+export type LiveDuctRoutingReducer = {
+  xNorm: number;
+  yNorm: number;
+  downstreamCfm: number;
+  zoneId: string;
+  zoneName: string;
 };
 export type LiveDuctRoutingTermination = {
   terminationType: DuctTerminationRow["termination_type"];
@@ -578,6 +605,8 @@ export function buildLiveDuctRoutingIllustration(
             xNorm: t.position_x_norm!,
             yNorm: t.position_y_norm!,
           })),
+        reducers: [],
+        takeoffViolationRoomIds: [],
       };
       bySheet.set(sheetKey, sheet);
       const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
@@ -690,6 +719,56 @@ export function buildLiveDuctRoutingIllustration(
             patternTagCode: tagCode,
           });
         }
+      }
+    }
+
+    // Permit-Submittable Manual D Package, Section 4 rendering follow-up
+    // - same real reducer/violation computation as lib/reportImages.ts's
+    // server-side pass for the frozen PDF, mirrored here so the live
+    // in-app view shows the identical markers without waiting for a
+    // snapshot. Only runs for a zone with a real corridor_graph.
+    if (zone.corridor_graph) {
+      const roomsOnSheetForTopology = rooms
+        .filter(
+          (r) =>
+            r.position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+            r.position_source_page_number === zone.ahu_position_source_page_number &&
+            r.position_x_norm != null &&
+            r.position_y_norm != null,
+        )
+        .map((r) => ({ id: r.id, name: r.name, xNorm: r.position_x_norm!, yNorm: r.position_y_norm! }));
+      const calibration = fitCorridorGraphCalibration(zone.corridor_graph.rooms, roomsOnSheetForTopology);
+      if (calibration) {
+        const positionById = resolveCorridorNodePositions(zone.corridor_graph, calibration, {
+          xNorm: zone.ahu_position_x_norm,
+          yNorm: zone.ahu_position_y_norm,
+        });
+        const arms = extractTrunkArms(zone.corridor_graph);
+        // Bridge the graph's own room-slug ids to this app's real room
+        // UUIDs by name (see lib/ductCorridorGraph.ts's
+        // mapGraphRoomIdsToRealRoomIds) - without it, cfmByRoomId (keyed
+        // by the real UUID sheet.routes uses) and the violation-flag
+        // comparison below never match a graph-space id.
+        const roomIdMap = mapGraphRoomIdsToRealRoomIds(zone.corridor_graph, roomsOnSheetForTopology);
+        const positions = remapTakeoffPositionsToRealRoomIds(
+          extractTakeoffPositions(zone.corridor_graph, arms),
+          roomIdMap,
+        );
+        const cfmByRoomId = new Map(sheet.routes.map((r) => [r.roomId, r.cfm ?? 0]));
+        // Same disclosed simplification as the server-side pass - real
+        // per-run diameter isn't threaded through this live-preview
+        // path, so the flat 4ft post-reduction clearance is used.
+        const violations = checkTakeoffSpacing(positions, arms, new Map());
+        for (const v of violations) sheet.takeoffViolationRoomIds.push(v.roomId);
+
+        arms.forEach((arm, armIndex) => {
+          for (const step of computeReductionPointsFt(arm.totalLengthFt)) {
+            const point = placePointAlongArm(arm, step, positionById);
+            if (!point) continue;
+            const downstreamCfm = computeDownstreamCfmAtDistance(positions, armIndex, step, cfmByRoomId);
+            sheet.reducers.push({ xNorm: point.xNorm, yNorm: point.yNorm, downstreamCfm, zoneId: zone.id, zoneName: zone.name });
+          }
+        });
       }
     }
   }

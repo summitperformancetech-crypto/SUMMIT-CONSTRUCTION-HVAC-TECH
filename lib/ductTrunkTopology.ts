@@ -27,6 +27,7 @@
 // values and the real friction/velocity data already cited in
 // lib/manualD.ts.
 import type { CorridorGraph } from "./ductCorridorGraph";
+import type { NormPoint } from "./ductPathGeometry";
 
 export const EXTENDED_PLENUM_MAX_SINGLE_RUN_FT = 24;
 export const EXTENDED_PLENUM_MAX_DOUBLE_RUN_FT = 48;
@@ -233,6 +234,44 @@ export function checkTrunkDimensions(heightIn: number | null, widthIn: number | 
   return { pass, detail };
 }
 
+// Real page position at a given real distance along an arm - linear
+// interpolation between the two calibrated node positions bracketing
+// that distance. An affine calibration preserves ratios along a line, so
+// interpolating the already-calibrated (normalized) endpoints gives the
+// identical result as calibrating an interpolated feet-space point would
+// - this just reuses positions the caller already has, from
+// lib/ductCorridorGraph.ts's resolveCorridorNodePositions.
+export function placePointAlongArm(arm: TrunkArm, distanceFt: number, positionById: Map<string, NormPoint>): NormPoint | null {
+  for (let i = 0; i < arm.nodeIds.length - 1; i++) {
+    const d0 = arm.cumulativeDistanceFt[i];
+    const d1 = arm.cumulativeDistanceFt[i + 1];
+    if (distanceFt >= d0 && distanceFt <= d1) {
+      const p0 = positionById.get(arm.nodeIds[i]);
+      const p1 = positionById.get(arm.nodeIds[i + 1]);
+      if (!p0 || !p1) return null;
+      const t = d1 === d0 ? 0 : (distanceFt - d0) / (d1 - d0);
+      return { xNorm: p0.xNorm + (p1.xNorm - p0.xNorm) * t, yNorm: p0.yNorm + (p1.yNorm - p0.yNorm) * t };
+    }
+  }
+  return null;
+}
+
+// Real downstream CFM at a point on an arm - the sum of every real
+// take-off beyond that distance (further from the AHU), from each
+// take-off's own already-computed required CFM. Used to label a reducer
+// with the real airflow the downstream (reduced) segment actually
+// carries, rather than a fabricated or unlabeled size step.
+export function computeDownstreamCfmAtDistance(
+  positions: TakeoffPosition[],
+  armIndex: number,
+  distanceFt: number,
+  cfmByRoomId: Map<string, number>,
+): number {
+  return positions
+    .filter((p) => p.armIndex === armIndex && p.distanceFromAhuFt > distanceFt)
+    .reduce((sum, p) => sum + (cfmByRoomId.get(p.roomId) ?? 0), 0);
+}
+
 export type ArmAnalysis = {
   armIndex: number;
   totalLengthFt: number;
@@ -252,9 +291,33 @@ export type TrunkTopologyAnalysis = {
 // determinable: false (never a guessed topology) when the zone has no
 // corridor_graph at all - the only source of truth precise enough for
 // take-off-position math.
+// Remaps every position's roomId through a graph-slug -> real-room-UUID
+// map (see lib/ductCorridorGraph.ts's mapGraphRoomIdsToRealRoomIds) - a
+// position whose graph room has no real-room match is dropped, never left
+// half-translated. Omitting the map (the default) leaves roomId in the
+// graph's own id space, which is what every existing caller/test that
+// predates this real-id bridge still expects.
+export function remapTakeoffPositionsToRealRoomIds(
+  positions: TakeoffPosition[],
+  graphRoomIdToRealRoomId: Map<string, string>,
+): TakeoffPosition[] {
+  return positions
+    .map((p) => {
+      const realRoomId = graphRoomIdToRealRoomId.get(p.roomId);
+      return realRoomId ? { ...p, roomId: realRoomId } : null;
+    })
+    .filter((p): p is TakeoffPosition => p != null);
+}
+
 export function analyzeTrunkTopology(
   graph: CorridorGraph | null,
   ductDiameterInByRoomId: Map<string, number | null>,
+  // Real graph-room-slug -> real-room-UUID map, needed so
+  // ductDiameterInByRoomId (keyed by this app's real room UUIDs) actually
+  // matches a take-off position's roomId - without it, position.roomId
+  // stays in the graph's own id space and every diameter lookup silently
+  // misses. See lib/ductCorridorGraph.ts's mapGraphRoomIdsToRealRoomIds.
+  graphRoomIdToRealRoomId?: Map<string, string>,
 ): TrunkTopologyAnalysis {
   if (!graph) {
     return { determinable: false, arms: [], combinedArmLengthFt: null, exceedsDoublePlenumLimit: false, takeoffSpacingViolations: [] };
@@ -270,7 +333,10 @@ export function analyzeTrunkTopology(
     reductionPointsFt: computeReductionPointsFt(arm.totalLengthFt),
   }));
   const combinedArmLengthFt = arms.reduce((sum, a) => sum + a.totalLengthFt, 0);
-  const positions = extractTakeoffPositions(graph, arms);
+  const rawPositions = extractTakeoffPositions(graph, arms);
+  const positions = graphRoomIdToRealRoomId
+    ? remapTakeoffPositionsToRealRoomIds(rawPositions, graphRoomIdToRealRoomId)
+    : rawPositions;
   const takeoffSpacingViolations = checkTakeoffSpacing(positions, arms, ductDiameterInByRoomId);
 
   return {

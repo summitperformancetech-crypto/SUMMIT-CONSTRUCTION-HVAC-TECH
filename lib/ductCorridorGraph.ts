@@ -33,7 +33,7 @@ export type CorridorGraph = {
   edges: CorridorGraphEdge[];
 };
 
-function normalizeRoomName(s: string): string {
+export function normalizeRoomName(s: string): string {
   return s
     .replace(/#/g, "")
     .replace(/\s+/g, " ")
@@ -108,6 +108,45 @@ export function applyCorridorGraphCalibration(point: { x: number; y: number }, c
   };
 }
 
+// The graph's own room ids are human-readable slugs in the DIGITIZER'S
+// space (e.g. "master_bedroom"), not this app's real room UUIDs - there is
+// no shared id between the two records, only the room name. Anything that
+// needs to compare a graph-derived room reference (e.g.
+// lib/ductTrunkTopology.ts's TakeoffPosition.roomId) against this app's
+// own real per-room data (CFM, duct diameter, the rendered route's own
+// roomId) has to cross this same name-matched bridge - the exact match
+// fitCorridorGraphCalibration already uses for its own anchor points. A
+// graph room whose name doesn't match any real room on the project is
+// simply omitted here, never guessed at.
+export function mapGraphRoomIdsToRealRoomIds(
+  graph: CorridorGraph,
+  summitRooms: { id: string; name: string }[],
+): Map<string, string> {
+  const summitIdByName = new Map(summitRooms.map((r) => [normalizeRoomName(r.name), r.id]));
+  const result = new Map<string, string>();
+  for (const room of graph.rooms) {
+    const realId = summitIdByName.get(normalizeRoomName(room.name));
+    if (realId) result.set(room.id, realId);
+  }
+  return result;
+}
+
+// Factored out of buildSegmentsFromCorridorGraph so callers needing real
+// calibrated node positions for something other than drawing segments -
+// e.g. lib/ductTrunkTopology.ts's reducer/violation marker placement -
+// don't have to duplicate this exact AHU-override + per-node mapping.
+export function resolveCorridorNodePositions(
+  graph: CorridorGraph,
+  calibration: AffineCalibration,
+  realAhuPoint: NormPoint | null,
+): Map<string, NormPoint> {
+  const positionById = new Map<string, NormPoint>();
+  positionById.set(graph.ahu.id, realAhuPoint ?? applyCorridorGraphCalibration(graph.ahu, calibration));
+  for (const room of graph.rooms) positionById.set(room.id, applyCorridorGraphCalibration(room, calibration));
+  for (const node of graph.corridor_nodes) positionById.set(node.id, applyCorridorGraphCalibration(node, calibration));
+  return positionById;
+}
+
 // -----------------------------------------------------------------------
 // Graph -> renderable segments. Every edge the graph declares is drawn,
 // classified by the graph's own "type" field directly (trunk/branch) -
@@ -148,10 +187,7 @@ export function buildSegmentsFromCorridorGraph(
   // complaint was actually seeing.
   realAhuPoint: NormPoint | null,
 ): RoutedDuctSegment[] {
-  const positionById = new Map<string, NormPoint>();
-  positionById.set(graph.ahu.id, realAhuPoint ?? applyCorridorGraphCalibration(graph.ahu, calibration));
-  for (const room of graph.rooms) positionById.set(room.id, applyCorridorGraphCalibration(room, calibration));
-  for (const node of graph.corridor_nodes) positionById.set(node.id, applyCorridorGraphCalibration(node, calibration));
+  const positionById = resolveCorridorNodePositions(graph, calibration, realAhuPoint);
 
   const segments: RoutedDuctSegment[] = [];
   for (const edge of graph.edges) {

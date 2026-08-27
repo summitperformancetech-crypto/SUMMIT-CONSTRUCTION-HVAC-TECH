@@ -19,7 +19,18 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import { renderPdfPageToPngDataUri, getEffectivePageSize } from "./floorPlanRender";
 import { computeSheetDuctRouting, type RoutedDuctSegment } from "./ductRouting";
-import type { ReportData } from "./reportData";
+import { fitCorridorGraphCalibration, resolveCorridorNodePositions, mapGraphRoomIdsToRealRoomIds } from "./ductCorridorGraph";
+import {
+  extractTrunkArms,
+  extractTakeoffPositions,
+  checkTakeoffSpacing,
+  placePointAlongArm,
+  computeDownstreamCfmAtDistance,
+  computeReductionPointsFt,
+  remapTakeoffPositionsToRealRoomIds,
+  type TrunkArm,
+} from "./ductTrunkTopology";
+import type { ReportData, DuctRoutingIllustrationReducer } from "./reportData";
 import type { DrawingExtraction } from "./drawingExtraction";
 
 type DrawingImageSource = {
@@ -162,10 +173,81 @@ export async function attachFrozenImages(
             routedSegments = routedByRoomId ? [...routedByRoomId.values()].flat() : null;
           }
 
+          // Permit-Submittable Manual D Package, Section 4 rendering
+          // follow-up: real tapered-reducer markers and take-off
+          // spacing-violation flags, computed only for a zone with a
+          // real corridor_graph on THIS sheet - same real calibration
+          // fit (fitCorridorGraphCalibration) computeSheetDuctRouting
+          // itself uses internally, refit here since that function
+          // doesn't expose it. A zone using the computed room-box-
+          // avoidance router (no corridor_graph) gets none of this - see
+          // lib/ductTrunkTopology.ts's own comment for why that source
+          // isn't precise enough for a real position-along-trunk figure.
+          const reducers: DuctRoutingIllustrationReducer[] = [];
+          const takeoffViolationRoomIds = new Set<string>();
+          if (dims) {
+            const roomsOnSheetForTopology = residentialRooms
+              .filter(
+                (r) =>
+                  r.position_source_drawing_id === sheet.drawingId &&
+                  r.position_source_page_number === sheet.pageNumber &&
+                  r.position_x_norm != null &&
+                  r.position_y_norm != null,
+              )
+              .map((r) => ({ id: r.id, name: r.name, xNorm: r.position_x_norm!, yNorm: r.position_y_norm! }));
+            const zoneIdsOnSheet = [...new Set(sheet.pins.filter((p) => p.kind === "ahu").map((p) => p.zoneId))];
+            const cfmByRoomId = new Map(sheet.routes.map((r) => [r.roomId, r.cfm ?? 0]));
+
+            for (const zoneId of zoneIdsOnSheet) {
+              const zone = residentialZones.find((z) => z.id === zoneId);
+              const graph = zone?.corridor_graph;
+              if (!graph) continue;
+              const ahuPin = sheet.pins.find((p) => p.kind === "ahu" && p.zoneId === zoneId);
+              const calibration = fitCorridorGraphCalibration(graph.rooms, roomsOnSheetForTopology);
+              if (!calibration) continue;
+              const positionById = resolveCorridorNodePositions(
+                graph,
+                calibration,
+                ahuPin ? { xNorm: ahuPin.xNorm, yNorm: ahuPin.yNorm } : null,
+              );
+
+              const arms: TrunkArm[] = extractTrunkArms(graph);
+              // The graph's own room ids are human-readable slugs in the
+              // digitizer's space, not this app's real room UUIDs (see
+              // lib/ductCorridorGraph.ts's mapGraphRoomIdsToRealRoomIds) -
+              // bridged by name here so cfmByRoomId (keyed by the real
+              // UUID sheet.routes itself uses) and the violation-flag set
+              // (compared against sheet.routes' real UUID below) actually
+              // match instead of silently missing every lookup.
+              const roomIdMap = mapGraphRoomIdsToRealRoomIds(graph, roomsOnSheetForTopology);
+              const positions = remapTakeoffPositionsToRealRoomIds(extractTakeoffPositions(graph, arms), roomIdMap);
+              // Diameter data isn't available in this rendering pass (it
+              // lives in the separately-computed Manual D schedule) -
+              // the flat 4ft post-reduction clearance is used here
+              // rather than the greater-of-4ft-or-1.5x-diameter figure,
+              // a disclosed simplification for the diagram markers only;
+              // the Design Check Summary's own table uses the real
+              // per-run diameter when computing this same check.
+              const violations = checkTakeoffSpacing(positions, arms, new Map());
+              for (const v of violations) takeoffViolationRoomIds.add(v.roomId);
+
+              arms.forEach((arm, armIndex) => {
+                for (const step of computeReductionPointsFt(arm.totalLengthFt)) {
+                  const point = placePointAlongArm(arm, step, positionById);
+                  if (!point) continue;
+                  const downstreamCfm = computeDownstreamCfmAtDistance(positions, armIndex, step, cfmByRoomId);
+                  reducers.push({ xNorm: point.xNorm, yNorm: point.yNorm, downstreamCfm, zoneId, zoneName: zone!.name });
+                }
+              });
+            }
+          }
+
           return {
             ...sheet,
             imageDataUri: await renderPage(sheet.drawingId, sheet.pageNumber),
             routedSegments,
+            reducers,
+            takeoffViolationRoomIds: [...takeoffViolationRoomIds],
           };
         }),
       )

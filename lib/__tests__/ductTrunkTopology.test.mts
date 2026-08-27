@@ -18,6 +18,8 @@ import {
   checkTakeoffSpacing,
   checkTrunkDimensions,
   analyzeTrunkTopology,
+  placePointAlongArm,
+  computeDownstreamCfmAtDistance,
   EXTENDED_PLENUM_MAX_SINGLE_RUN_FT,
   TRUNK_DEFAULT_HEIGHT_IN,
   TRUNK_MAX_WIDTH_TO_HEIGHT_RATIO,
@@ -188,6 +190,90 @@ describe("checkTrunkDimensions", () => {
     expect(checkTrunkDimensions(10, 40)?.pass).toBe(true);
     expect(checkTrunkDimensions(10, 41)?.pass).toBe(false);
     expect(TRUNK_MAX_WIDTH_TO_HEIGHT_RATIO).toBe(4);
+  });
+});
+
+describe("placePointAlongArm (real Schneider C1_west arm, AHU->kitchen->living->west)", () => {
+  const arms = extractTrunkArms(SCHNEIDER_ZONE1_GRAPH);
+  const westArm = arms.find((a) => a.nodeIds[a.nodeIds.length - 1] === "C1_west")!;
+  // Real feet coordinates from the fixture above, used directly as the
+  // "positionById" the function expects (it only does linear
+  // interpolation between whatever positions it's handed - using the raw
+  // real feet coordinates here proves the interpolation math itself
+  // against real, hand-traceable numbers rather than an opaque
+  // calibrated position).
+  const positionById = new Map([
+    ["AHU_1", { xNorm: 31.9, yNorm: 22.3 }],
+    ["C1_kitchen", { xNorm: 31.9, yNorm: 27 }],
+    ["C1_living", { xNorm: 21.6, yNorm: 27 }],
+    ["C1_west", { xNorm: 9, yNorm: 27 }],
+  ]);
+
+  it("places the arm's real 17.5ft reduction point by hand-traced linear interpolation between C1_living (cum 15.0ft) and C1_west (cum 27.6ft)", () => {
+    // C1_living->C1_west is a straight 12.6ft horizontal run (both at
+    // y=27), so the point 2.5ft past C1_living (17.5 - 15.0) lands at
+    // exactly x = 21.6 - 2.5 = 19.1, y = 27 - a directly hand-verifiable
+    // real position, not just a fraction check.
+    const point = placePointAlongArm(westArm, 17.5, positionById);
+    expect(point).not.toBeNull();
+    expect(point!.xNorm).toBeCloseTo(19.1, 3);
+    expect(point!.yNorm).toBeCloseTo(27, 3);
+  });
+
+  it("places a point exactly at a node position when the distance matches that node's cumulative distance", () => {
+    const point = placePointAlongArm(westArm, 4.7, positionById);
+    expect(point!.xNorm).toBeCloseTo(31.9, 3);
+    expect(point!.yNorm).toBeCloseTo(27, 3);
+  });
+
+  it("returns null for a distance past the arm's real total length", () => {
+    expect(placePointAlongArm(westArm, 100, positionById)).toBeNull();
+  });
+
+  it("returns null when a bracketing node has no resolved position", () => {
+    const sparsePositions = new Map([
+      ["AHU_1", { xNorm: 31.9, yNorm: 22.3 }],
+      ["C1_kitchen", { xNorm: 31.9, yNorm: 27 }],
+    ]);
+    expect(placePointAlongArm(westArm, 17.5, sparsePositions)).toBeNull();
+  });
+});
+
+describe("computeDownstreamCfmAtDistance (real Schneider C2_east arm)", () => {
+  const arms = extractTrunkArms(SCHNEIDER_ZONE1_GRAPH);
+  const eastArmIndex = arms.findIndex((a) => a.nodeIds[a.nodeIds.length - 1] === "C2_east");
+  const positions = extractTakeoffPositions(SCHNEIDER_ZONE1_GRAPH, arms);
+  // Real per-room CFM values are arbitrary for this test (Manual J room
+  // CFM isn't part of this fixture) - the point being tested is the real
+  // summation-by-real-distance logic, not a specific project's real CFM
+  // figures.
+  const cfmByRoomId = new Map([
+    ["study", 50],
+    ["foyer", 60],
+    ["bathroom_2", 40],
+    ["bedroom_2", 70],
+    ["stairs_1f", 30],
+  ]);
+
+  it("sums every real take-off downstream of the arm's 17.5ft reduction point (study/foyer/bathroom_2 at ~19.7ft plus bedroom_2/stairs_1f at the ~36.9ft terminal end)", () => {
+    const total = computeDownstreamCfmAtDistance(positions, eastArmIndex, 17.5, cfmByRoomId);
+    expect(total).toBe(250);
+  });
+
+  it("excludes take-offs upstream of the query point once past them (only bedroom_2/stairs_1f remain past ~19.7ft)", () => {
+    const total = computeDownstreamCfmAtDistance(positions, eastArmIndex, 20, cfmByRoomId);
+    expect(total).toBe(100);
+  });
+
+  it("returns 0 past every real take-off on the arm", () => {
+    const total = computeDownstreamCfmAtDistance(positions, eastArmIndex, 36.89, cfmByRoomId);
+    expect(total).toBe(0);
+  });
+
+  it("only counts take-offs on the queried arm, not other real arms sharing the same graph", () => {
+    const otherArmIndex = arms.findIndex((a) => a.nodeIds[a.nodeIds.length - 1] === "C1_east");
+    const total = computeDownstreamCfmAtDistance(positions, otherArmIndex, 0, cfmByRoomId);
+    expect(total).toBe(0);
   });
 });
 

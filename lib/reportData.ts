@@ -59,7 +59,7 @@ import {
   type DuctRoutingModeBasis,
   type RoutedDuctSegment,
 } from "./ductRouting";
-import type { CorridorGraph } from "./ductCorridorGraph";
+import { mapGraphRoomIdsToRealRoomIds, type CorridorGraph } from "./ductCorridorGraph";
 import { analyzeTrunkTopology, type TrunkTopologyAnalysis } from "./ductTrunkTopology";
 
 export type ReportProject = {
@@ -180,6 +180,18 @@ export type DuctRoutingSheetIllustration = {
   // logged without a position simply doesn't plot yet (see
   // DuctTerminationRow's own comment).
   terminations: DuctRoutingIllustrationTermination[];
+  // Permit-Submittable Manual D Package, Section 4 rendering follow-up -
+  // real tapered-reducer markers (lib/ductTrunkTopology.ts), computed
+  // only for a zone with a real corridor_graph on this sheet. Always []
+  // out of buildDuctRoutingIllustrations itself - filled in at snapshot
+  // time by lib/reportImages.ts, same deferred-until-a-real-page-exists
+  // reasoning as routedSegments above.
+  reducers: DuctRoutingIllustrationReducer[];
+  // Real room ids whose take-off position fails a Section 4 spacing rule
+  // on this sheet (lib/ductTrunkTopology.ts's checkTakeoffSpacing) - used
+  // to flag the corresponding register symbol. Same deferred-to-snapshot-
+  // time reasoning as reducers above.
+  takeoffViolationRoomIds: string[];
 };
 export type DuctRoutingIllustrationTermination = {
   terminationType: DuctTerminationRow["termination_type"];
@@ -187,6 +199,16 @@ export type DuctRoutingIllustrationTermination = {
   label: string;
   xNorm: number;
   yNorm: number;
+};
+export type DuctRoutingIllustrationReducer = {
+  xNorm: number;
+  yNorm: number;
+  // Real summed CFM of every take-off downstream of this reduction
+  // point, from each real branch's own already-computed required CFM -
+  // not a fabricated size step.
+  downstreamCfm: number;
+  zoneId: string;
+  zoneName: string;
 };
 
 export function buildDuctRoutingIllustrations(
@@ -265,6 +287,8 @@ export function buildDuctRoutingIllustrations(
             xNorm: t.position_x_norm!,
             yNorm: t.position_y_norm!,
           })),
+        reducers: [],
+        takeoffViolationRoomIds: [],
       };
       bySheet.set(sheetKey, sheet);
       const trunkRun = ductRuns.find((r) => r.run_type === "trunk" && r.zone_id === zone.id);
@@ -997,11 +1021,19 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       if (run.run_type !== "branch" || !run.room_id) continue;
       diameterInByRoomId.set(run.room_id, sizedByRunIdForTopology.get(run.id)?.diameterIn ?? run.calculated_diameter_in ?? null);
     }
-    const trunkTopologyByZone = (zones ?? []).map((zone) => ({
-      zoneId: zone.id,
-      zoneName: zone.name,
-      analysis: analyzeTrunkTopology(zone.corridor_graph, diameterInByRoomId),
-    }));
+    const trunkTopologyByZone = (zones ?? []).map((zone) => {
+      const roomIdMap = zone.corridor_graph
+        ? mapGraphRoomIdsToRealRoomIds(
+            zone.corridor_graph,
+            (rooms ?? []).filter((r) => r.zone_id === zone.id).map((r) => ({ id: r.id, name: r.name })),
+          )
+        : new Map<string, string>();
+      return {
+        zoneId: zone.id,
+        zoneName: zone.name,
+        analysis: analyzeTrunkTopology(zone.corridor_graph, diameterInByRoomId, roomIdMap),
+      };
+    });
     const balancingDamperCheckByZone = (zones ?? []).map((zone) => {
       const branches = (ductRuns ?? []).filter((r) => r.run_type === "branch" && r.zone_id === zone.id);
       return {

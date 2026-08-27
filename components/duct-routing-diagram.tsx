@@ -469,6 +469,39 @@ export function DuctRoutingDiagram({
           );
         });
 
+        // Permit-Submittable Manual D Package, Section 4 rendering
+        // follow-up - real tapered-reducer glyphs (bowtie/hourglass, the
+        // standard schematic transition symbol) at each real reduction
+        // point, labeled with the real downstream CFM.
+        const reducerIcons = (sheet.reducers ?? []).map((r, i) => {
+          const cx = r.xNorm * 100;
+          const cy = r.yNorm * 100;
+          return (
+            <g key={`reducer-${i}`} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
+              <path d="M -1.3 -1 L 1.3 -1 L 0 0 L 1.3 1 L -1.3 1 L 0 0 Z" fill={SYMBOL_INK} stroke={PAPER} strokeWidth={0.15} />
+              <text x={0} y={2.6} fontSize={1.1} fontWeight={700} textAnchor="middle" fill={SYMBOL_INK}>
+                {`↓${Math.round(r.downstreamCfm)}`}
+              </text>
+            </g>
+          );
+        });
+
+        // Real Section 4 take-off spacing violations, flagged at the
+        // real route endpoint whose room failed a check - the same rooms
+        // listed in the Design Check Summary table.
+        const violationRoomIds = new Set(sheet.takeoffViolationRoomIds ?? []);
+        const violationIcons = sheet.routes
+          .filter((route) => violationRoomIds.has(route.roomId))
+          .map((route, i) => {
+            const cx = route.toXNorm * 100;
+            const cy = route.toYNorm * 100;
+            return (
+              <g key={`violation-${i}`} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
+                <circle r={2.1} fill="none" stroke="#b91c1c" strokeWidth={0.35} strokeDasharray="0.6,0.5" />
+              </g>
+            );
+          });
+
         return (
           <div key={sheetIndex}>
             {sheets.length > 1 && (
@@ -505,6 +538,8 @@ export function DuctRoutingDiagram({
                 {teeSymbols}
                 {pinIcons}
                 {terminationIcons}
+                {reducerIcons}
+                {violationIcons}
                 {labels}
               </svg>
             </div>
@@ -574,6 +609,23 @@ export function DuctRoutingDiagram({
             </text>
           </svg>
           Register callout (type / size / CFM)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={14} height={14}>
+            <path
+              d="M 3 3.6 L 11 3.6 L 7 7 L 11 10.4 L 3 10.4 L 7 7 Z"
+              fill={SYMBOL_INK}
+              stroke={PAPER}
+              strokeWidth={0.4}
+            />
+          </svg>
+          Reducer (real downstream CFM)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={14} height={14}>
+            <circle cx={7} cy={7} r={5.4} fill="none" stroke="#b91c1c" strokeWidth={1} strokeDasharray="1.6,1.3" />
+          </svg>
+          Take-off spacing violation
         </span>
       </div>
     </div>

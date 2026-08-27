@@ -1,7 +1,14 @@
-// Direct unit tests for lib/makeupAir.ts - the real, cited IRC M1503.6
-// makeup-air balance check. Run via `npm test` (Vitest).
+// Direct unit tests for lib/makeupAir.ts - the real, cited IRC M1503.5
+// (range hoods, 400 cfm) and M1502.7 (clothes dryers, 200 cfm)
+// per-source-type makeup-air balance check. Run via `npm test` (Vitest).
 import { describe, it, expect } from "vitest";
-import { evaluateMakeupAirBalance, RESIDENTIAL_MAKEUP_AIR_TRIGGER_CFM, type ExhaustSource, type MakeupAirUnitSpec } from "../makeupAir";
+import {
+  evaluateMakeupAirBalance,
+  RESIDENTIAL_MAKEUP_AIR_TRIGGER_CFM,
+  MAKEUP_AIR_TRIGGER_CFM_BY_SOURCE_TYPE,
+  type ExhaustSource,
+  type MakeupAirUnitSpec,
+} from "../makeupAir";
 
 function source(overrides: Partial<ExhaustSource> = {}): ExhaustSource {
   return {
@@ -65,5 +72,28 @@ describe("evaluateMakeupAirBalance", () => {
     const result = evaluateMakeupAirBalance([source({ ratedCfm: 600 })], unit);
     expect(result.status).toBe("resolved");
     expect(result.detail).toContain("duct-diameter");
+  });
+
+  it("flags a clothes dryer over the real, lower 200 cfm IRC M1502.7 threshold even though it's well under a range hood's 400 cfm trigger", () => {
+    // Real gap this test exists to catch: a flat 400 cfm threshold across
+    // every source_type would silently miss a ~250 cfm dryer, which IRC
+    // M1502.7 already requires makeup air for at 200 cfm.
+    const result = evaluateMakeupAirBalance([source({ sourceType: "clothes_dryer", ratedCfm: 250 })], null);
+    expect(result.status).toBe("flagged");
+    expect(result.summary).toContain("200 cfm");
+    expect(result.summary).toContain("M1502.7");
+  });
+
+  it("resolves a clothes dryer at or below its own real 200 cfm threshold", () => {
+    const result = evaluateMakeupAirBalance(
+      [source({ sourceType: "clothes_dryer", ratedCfm: MAKEUP_AIR_TRIGGER_CFM_BY_SOURCE_TYPE.clothes_dryer! })],
+      null,
+    );
+    expect(result.status).toBe("resolved");
+  });
+
+  it("does not flag a bathroom exhaust fan on CFM alone, since no single numeric code trigger has been verified for that source type", () => {
+    const result = evaluateMakeupAirBalance([source({ sourceType: "bathroom_exhaust_fan", ratedCfm: 5000 })], null);
+    expect(result.status).toBe("resolved");
   });
 });

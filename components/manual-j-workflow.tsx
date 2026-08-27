@@ -23,6 +23,7 @@ import { getDuctRoutingGateStatus } from "@/lib/ductRouting";
 import type { CorridorGraph } from "@/lib/ductCorridorGraph";
 import { normalizeDuctLocation, buildCodeMinimumsByLocation } from "@/lib/constants/ductLocations";
 import { normalizeRoomNameForMatch } from "@/lib/fieldResolutions";
+import { inferRoomTypeFromName, computeLocalExhaustRequirement } from "@/lib/localExhaust";
 import {
   RoomForm,
   EMPTY_ROOM_FORM,
@@ -188,7 +189,11 @@ function buildRoomInsertPayload(
     ceiling_exposed: false,
     floor_exposed: false,
     is_bedroom: false,
-    room_type: null,
+    // Real, deterministic name-based classification (lib/localExhaust.ts)
+    // - never invented by the AI extraction call itself, and never
+    // overwrites a human-set value since this only runs at insert time,
+    // when there is no existing value to overwrite yet.
+    room_type: inferRoomTypeFromName(room.name),
     occupant_count: null,
     sensible_gain_override: null,
     latent_gain_override: null,
@@ -214,6 +219,42 @@ function buildRoomInsertPayload(
     window_right_area_sqft: room.window_right_area_sqft,
     door_count: room.door_count ?? 0,
   };
+}
+
+// Real, IRC Table M1507.3-cited local-exhaust CFM draft for any newly
+// created room room_type auto-classified as Bath/Kitchen (lib/
+// localExhaust.ts) - inserted as a pending_review exhaust_sources row,
+// never confirmed automatically, so it counts toward the makeup-air
+// check (lib/makeupAir.ts) only once a human reviews it. Best-effort:
+// failures here are logged, not surfaced as a blocking error, since the
+// room itself was already created successfully - this is a helpful
+// draft, not a required step.
+async function createDraftLocalExhaustSources(
+  supabase: ReturnType<typeof createClient>,
+  projectId: string,
+  newRooms: RoomRow[],
+) {
+  const payloads = newRooms.flatMap((room) => {
+    const requirement = computeLocalExhaustRequirement(room.room_type, room.name);
+    if (!requirement) return [];
+    return [
+      {
+        project_id: projectId,
+        room_id: room.id,
+        source_type: room.room_type === "Kitchen" ? "kitchen_range_hood" : "bathroom_exhaust_fan",
+        description: `Auto-computed from room type (${room.name}) - confirm before this counts toward the makeup-air check.`,
+        rated_cfm: requirement.requiredCfm,
+        basis: "code_minimum",
+        review_status: "pending_review",
+        code_citation: requirement.codeCitation,
+      },
+    ];
+  });
+  if (payloads.length === 0) return;
+  const { error } = await supabase.from("exhaust_sources").insert(payloads);
+  if (error) {
+    console.error("Failed to draft local-exhaust sources for newly created rooms:", error.message);
+  }
 }
 
 // The only Building Envelope fields a drawing extraction is allowed to fill.
@@ -929,6 +970,13 @@ export const ManualJWorkflow = forwardRef<
       let roomsUpdated = 0;
       const unmatchedRoomNotes: string[] = [];
       let applyError: string | null = null;
+      // Every room newly created by this extraction pass, across both
+      // branches below - used once at the end to auto-draft a real,
+      // IRC-cited local-exhaust CFM requirement (lib/localExhaust.ts) for
+      // any room room_type auto-classified as Bath/Kitchen, as a
+      // pending_review exhaust_sources row the tech must still confirm
+      // before it counts toward the makeup-air check.
+      let allCreatedRooms: RoomRow[] = [];
       if (rooms.length === 0 && extractedRooms.length > 0) {
         const supabase = createClient();
         // Rooms created from a drawing extraction default to the project's
@@ -950,6 +998,7 @@ export const ManualJWorkflow = forwardRef<
         } else if (data) {
           setRooms(data);
           roomsCreated = data.length;
+          allCreatedRooms = data;
         }
       } else if (extractedRooms.length > 0) {
         // Project already has rooms - don't duplicate them, but extracted
@@ -1150,6 +1199,11 @@ export const ManualJWorkflow = forwardRef<
             ...createdRooms,
           ]);
         }
+        allCreatedRooms = createdRooms;
+      }
+
+      if (allCreatedRooms.length > 0) {
+        await createDraftLocalExhaustSources(createClient(), projectId, allCreatedRooms);
       }
 
       requestAnimationFrame(() => {

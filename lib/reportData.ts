@@ -601,7 +601,7 @@ const PROCESS_LOAD_COLUMNS =
   "id, project_id, zone_id, load_type, description, sensible_btu_hr, latent_btu_hr, cfm, ach_required, source, notes";
 const FIELD_RESOLUTION_COLUMNS =
   "id, project_id, table_name, record_id, field_name, ai_extracted_value, final_value, resolution_type, override_reason, resolved_by, resolved_at";
-const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm";
+const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm, review_status";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getReportData(supabase: SupabaseClient<any>, projectId: string): Promise<ReportData | null> {
@@ -687,14 +687,23 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     .from("exhaust_sources")
     .select(EXHAUST_SOURCE_COLUMNS)
     .eq("project_id", projectId)
-    .returns<{ id: string; room_id: string | null; source_type: string; description: string | null; rated_cfm: number }[]>();
-  const exhaustSources: ExhaustSource[] = (exhaustSourceRows ?? []).map((r) => ({
-    id: r.id,
-    roomId: r.room_id,
-    sourceType: r.source_type as ExhaustSource["sourceType"],
-    description: r.description,
-    ratedCfm: r.rated_cfm,
-  }));
+    .returns<
+      { id: string; room_id: string | null; source_type: string; description: string | null; rated_cfm: number; review_status: string }[]
+    >();
+  // Only confirmed sources count toward the report's makeup-air check - a
+  // pending_review row is a real, IRC-cited draft this app computed
+  // automatically (lib/localExhaust.ts), but per the standing human-
+  // review-gate rule it must not be treated as final until a tech
+  // confirms it, even at report-generation time.
+  const exhaustSources: ExhaustSource[] = (exhaustSourceRows ?? [])
+    .filter((r) => r.review_status === "confirmed")
+    .map((r) => ({
+      id: r.id,
+      roomId: r.room_id,
+      sourceType: r.source_type as ExhaustSource["sourceType"],
+      description: r.description,
+      ratedCfm: r.rated_cfm,
+    }));
 
   let selectedMakeupAirUnit: MakeupAirUnitSpec | null = null;
   if (project.selected_makeup_air_equipment_id) {

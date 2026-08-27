@@ -1381,13 +1381,14 @@ function renderInstallPackagePage(data: ReportData, org: OrgBranding): string {
 }
 
 // ---------------------------------------------------------------------------
-// Page 10b: Makeup Air Balance (lib/makeupAir.ts) - real, project-entered
+// Page 10b: Makeup Air Balance (lib/makeupAir.ts) - real, confirmed
 // exhaust sources (kitchen range hood, bath/utility fans, dryer, process
-// exhaust) checked against IRC M1503.6's real 400 cfm makeup-air trigger
-// and, when a makeup-air unit is selected, its real published capacity.
-// Whole-project, not per-zone - see lib/makeupAir.ts's own header comment
-// for why the ASHRAE 62.2 Section 6.4 net-exhaust calculation isn't
-// attempted here.
+// exhaust) checked against the real per-source-type IRC makeup-air
+// triggers (M1503.5 range hoods, 400 cfm; M1502.7 clothes dryers, 200
+// cfm) and, when a makeup-air unit is selected, its real published
+// capacity. Whole-project, not per-zone - see lib/makeupAir.ts's own
+// header comment for why the ASHRAE 62.2 Section 6.4 net-exhaust
+// calculation isn't attempted here.
 // ---------------------------------------------------------------------------
 const MAKEUP_AIR_STATUS_BADGE: Record<string, string> = {
   resolved: `<span class="badge badge-pass">Resolved</span>`,

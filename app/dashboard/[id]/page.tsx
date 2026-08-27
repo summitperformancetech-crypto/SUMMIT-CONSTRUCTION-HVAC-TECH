@@ -116,6 +116,9 @@ type ExhaustSourceDbRow = {
   source_type: ExhaustSourceRow["sourceType"];
   description: string | null;
   rated_cfm: number;
+  basis: ExhaustSourceRow["basis"];
+  review_status: ExhaustSourceRow["reviewStatus"];
+  code_citation: string | null;
 };
 
 type MakeupAirSpecDbRow = {
@@ -139,7 +142,7 @@ const EQUIPMENT_CATALOG_COLUMNS =
   "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document, direct_vent_capable";
 const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
   "equipment_id, mode, outdoor_temp_f, indoor_entering_temp_f, indoor_entering_wetbulb_f, sensible_capacity_btu, total_capacity_btu, input_power_kw";
-const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm";
+const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm, basis, review_status, code_citation";
 const MAKEUP_AIR_SPEC_COLUMNS =
   "equipment_id, category, duct_diameter_in, min_rated_cfm, max_rated_cfm, heating_fuel_type, max_heating_capacity_btu, control_type, cooling_capable, min_cooling_tons, max_cooling_tons";
 
@@ -703,6 +706,9 @@ export default async function ProjectDetailPage({
     sourceType: r.source_type,
     description: r.description,
     ratedCfm: r.rated_cfm,
+    basis: r.basis,
+    reviewStatus: r.review_status,
+    codeCitation: r.code_citation,
   }));
 
   const makeupAirSpecByEquipmentId = new Map((makeupAirSpecRows ?? []).map((r) => [r.equipment_id, r]));

@@ -10,6 +10,9 @@ export type ExhaustSourceRow = {
   sourceType: ExhaustSourceType;
   description: string | null;
   ratedCfm: number;
+  basis: "field_measured" | "manufacturer_spec" | "engineering_estimate" | "code_minimum";
+  reviewStatus: "confirmed" | "pending_review";
+  codeCitation: string | null;
 };
 
 export type MakeupAirCatalogOption = {
@@ -43,6 +46,8 @@ const STATUS_LABEL: Record<string, string> = {
   flagged: "Flagged",
   not_applicable: "Not Applicable",
 };
+
+const EXHAUST_SOURCE_SELECT_COLUMNS = "id, room_id, source_type, description, rated_cfm, basis, review_status, code_citation";
 
 function optionLabel(option: MakeupAirCatalogOption): string {
   const range =
@@ -81,21 +86,28 @@ export function MakeupAirSection({
   const [newCfm, setNewCfm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   const selectedUnit = useMemo(() => catalogOptions.find((o) => o.equipmentId === selectedId) ?? null, [catalogOptions, selectedId]);
 
-  // Same real function lib/reportData.ts calls at report-generation time -
-  // this preview can never disagree with what the PDF shows, by
-  // construction.
+  // Only confirmed sources count toward the check - a pending_review row
+  // is a real, IRC-cited draft this app auto-computed from a room's
+  // classified type (lib/localExhaust.ts), but per the standing human-
+  // review-gate rule it isn't treated as final until a tech confirms it.
+  // Same filter lib/reportData.ts applies at report-generation time, so
+  // this live preview can never disagree with what the PDF shows.
+  const confirmedSources = useMemo(() => sources.filter((s) => s.reviewStatus === "confirmed"), [sources]);
+  const pendingSources = useMemo(() => sources.filter((s) => s.reviewStatus === "pending_review"), [sources]);
+
   const result = useMemo(
     () =>
       evaluateMakeupAirBalance(
-        sources.map((s) => ({ id: s.id, roomId: s.roomId, sourceType: s.sourceType, description: s.description, ratedCfm: s.ratedCfm })),
+        confirmedSources.map((s) => ({ id: s.id, roomId: s.roomId, sourceType: s.sourceType, description: s.description, ratedCfm: s.ratedCfm })),
         selectedUnit
           ? { category: selectedUnit.category, minRatedCfm: selectedUnit.minRatedCfm, maxRatedCfm: selectedUnit.maxRatedCfm }
           : null,
       ),
-    [sources, selectedUnit],
+    [confirmedSources, selectedUnit],
   );
 
   async function handleAddSource() {
@@ -110,7 +122,7 @@ export function MakeupAirSection({
     const { data, error: insertError } = await supabase
       .from("exhaust_sources")
       .insert({ project_id: projectId, source_type: newSourceType, description: newDescription || null, rated_cfm: cfm })
-      .select("id, room_id, source_type, description, rated_cfm")
+      .select(EXHAUST_SOURCE_SELECT_COLUMNS)
       .single();
     setAdding(false);
     if (insertError || !data) {
@@ -119,7 +131,16 @@ export function MakeupAirSection({
     }
     setSources((prev) => [
       ...prev,
-      { id: data.id, roomId: data.room_id, sourceType: data.source_type, description: data.description, ratedCfm: data.rated_cfm },
+      {
+        id: data.id,
+        roomId: data.room_id,
+        sourceType: data.source_type,
+        description: data.description,
+        ratedCfm: data.rated_cfm,
+        basis: data.basis,
+        reviewStatus: data.review_status,
+        codeCitation: data.code_citation,
+      },
     ]);
     setNewDescription("");
     setNewCfm("");
@@ -134,6 +155,19 @@ export function MakeupAirSection({
       return;
     }
     setSources((prev) => prev.filter((s) => s.id !== id));
+  }
+
+  async function handleConfirmSource(id: string) {
+    setError(null);
+    setConfirmingId(id);
+    const supabase = createClient();
+    const { error: updateError } = await supabase.from("exhaust_sources").update({ review_status: "confirmed" }).eq("id", id);
+    setConfirmingId(null);
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
+    setSources((prev) => prev.map((s) => (s.id === id ? { ...s, reviewStatus: "confirmed" } : s)));
   }
 
   async function handleSelectUnit(equipmentId: string) {
@@ -157,8 +191,8 @@ export function MakeupAirSection({
       <h2 className="mb-1 text-lg font-semibold text-brand-gold">Makeup Air Balance</h2>
       <p className="mb-4 text-xs text-brand-grey-text">
         Any range hood, bath/utility exhaust fan, dryer, or process exhaust that vents to the exterior pulls the
-        building toward negative pressure. Enter each real exhaust source's rated CFM below - this is checked against
-        IRC M1503.6&apos;s 400 cfm makeup-air trigger.
+        building toward negative pressure. Checked against the real IRC makeup-air triggers - 400 cfm for range hoods
+        (M1503.5), 200 cfm for clothes dryers (M1502.7).
       </p>
 
       {error && (
@@ -167,7 +201,42 @@ export function MakeupAirSection({
         </p>
       )}
 
-      {sources.length > 0 ? (
+      {pendingSources.length > 0 && (
+        <div className="mb-4 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-3">
+          <p className="mb-2 text-xs font-semibold text-brand-gold">
+            Auto-computed from room type - confirm before it counts toward the check
+          </p>
+          {pendingSources.map((s) => (
+            <div key={s.id} className="mb-2 flex items-center justify-between gap-3 border-t border-zinc-800 pt-2 first:border-t-0 first:pt-0">
+              <div>
+                <p className="text-sm text-brand-silver-highlight">
+                  {SOURCE_TYPE_LABEL[s.sourceType]} - {s.ratedCfm} cfm
+                </p>
+                <p className="text-xs text-brand-grey-text">{s.codeCitation ?? s.description}</p>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleConfirmSource(s.id)}
+                  disabled={confirmingId === s.id}
+                  className="rounded-md bg-brand-gold px-3 py-1.5 text-xs font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+                >
+                  {confirmingId === s.id ? "Confirming…" : "Confirm"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveSource(s.id)}
+                  className="rounded-md border border-red-900 px-3 py-1.5 text-xs text-red-400 transition hover:border-red-700 hover:text-red-300"
+                >
+                  Remove
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {confirmedSources.length > 0 ? (
         <table className="mb-4 w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-brand-grey-text">
@@ -178,7 +247,7 @@ export function MakeupAirSection({
             </tr>
           </thead>
           <tbody>
-            {sources.map((s) => (
+            {confirmedSources.map((s) => (
               <tr key={s.id} className="border-t border-zinc-800 text-brand-silver-highlight">
                 <td className="py-2">{SOURCE_TYPE_LABEL[s.sourceType]}</td>
                 <td className="py-2 text-brand-grey-text">{s.description ?? "—"}</td>
@@ -198,7 +267,7 @@ export function MakeupAirSection({
         </table>
       ) : (
         <p className="mb-4 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-4 text-center text-sm text-brand-grey-text">
-          No exhaust sources entered yet.
+          No confirmed exhaust sources yet.
         </p>
       )}
 

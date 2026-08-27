@@ -1,0 +1,74 @@
+-- Catalog Expansion + Recommended Install Package, Gap 03 - coil
+-- matching for the 19 non-Daikin equipment_catalog rows with no
+-- equipment_coil_matching entry (Amana AVPTC37B14B/37C14B + Amana
+-- ASZ160241K/361K/481K/601K; Goodman AVPTC25B14B/35B14B/37B14B/37C14B/
+-- 37D14B + Goodman GSZB401810A/403610A; Trane AM7A0C36H31SA + Trane
+-- 4TWR5024G1/4TWR5036G1; Carrier FB4CNF036 + Carrier 26TPA824W003/
+-- 26VNA124).
+--
+-- This is a no-op migration: no rows are inserted. It exists to record,
+-- as permanent project memory, a real and reasonably thorough sourcing
+-- attempt that came up empty for every one of these 19 rows - so a
+-- future session doesn't re-walk the same dead ends before either (a)
+-- finding a document this pass missed, or (b) confirming the catalog's
+-- outdoor-unit selections for Amana/Goodman need to change to a model
+-- that actually has a published AHRI combination with the stored
+-- indoor air handler.
+--
+-- Real findings, per manufacturer:
+--
+-- Amana: the ASZ16 heat pump line's own combination-rated cooling/
+-- heating data tables (SS-ASZ16, www.amana-hac.com, 8/20, pp.4-17) pair
+-- ASZ160181L*/241L*/301L*/361L*/421L*/481L*/601L* exclusively with
+-- ASPT/CAPF coil models - never with AVPTC. (The trailing revision
+-- letter, e.g. our catalog's "K" vs. this document's "L*", is
+-- immaterial per the nomenclature page itself, p.2: "Engineering
+-- [Major/Minor Revisions] - Not used for order or inventory control" -
+-- that is not the blocker.) AVPTC's own spec sheet (SS-AAVPTC) states
+-- generically that it is "AHRI certified" and "Built-in compatibility
+-- with multi-stage heat pump and cooling applications" but publishes no
+-- outdoor-unit-specific combination table at all. Real-world retail
+-- system listings (e.g. theacoutlet.com's
+-- "aszc160361-avptc42d14-3-ton-16-seer-amana-heat-pump-system") pair
+-- AVPTC with the communicating ASZC16 line, not the base ASZ16 our
+-- catalog stores - suggesting the real manufacturer-intended partner
+-- for AVPTC is a different outdoor-unit family than what is currently
+-- catalogued, not a missing data point for the existing ASZ16 rows.
+--
+-- Goodman: the GSZB4 heat pump line's own combination-rated data (SS-
+-- GSZB4, www.goodmanmfg.com, 10/22, pp.4-17) pairs
+-- GSZB401810A*/02410A*/03010A*/03610A*/04210A*/04810A*/06010A*
+-- exclusively with AMST-series coils - never with AVPTC. Same real
+-- structural mismatch as Amana's case above.
+--
+-- Trane: the 4TWR5-H Product Data document (22-1832-14J-EN, Trane.com,
+-- 8/20) covers 4TWR5024G1/4TWR5036G1's product specifications,
+-- dimensions, sound data, and accessories, but contains no cooling/
+-- heating combination performance table pairing this condenser with
+-- any specific indoor coil model at all - that data is not published
+-- in this literature.
+--
+-- Carrier: FB4CNF036 is a nominal 36,000 BTU/h (3-ton) air handler;
+-- 26TPA824W003 and 26VNA124 are both nominal 24,000 BTU/h (2-ton) split
+-- condensers per their own already-cited catalog rows. A 2-ton
+-- condenser cannot be a real AHRI-certified combination with a 3-ton
+-- air handler, so there is no real pairing to source here - these three
+-- Carrier rows were evidently catalogued independently (e.g. for
+-- different real reference projects), not as a matched trio.
+--
+-- Additional real attempt made before concluding: ahridirectory.org
+-- itself (the authoritative combination-ratings source the manufacturer
+-- product-data sheets both point back to) returned HTTP 402 to an
+-- automated fetch and has no indexed/GET-searchable interface reachable
+-- from this session - the only real way to query it is its own
+-- interactive session-based search form, which is out of reach here.
+--
+-- Per this project's standing "never fabricate - null/UNRESOLVED beats
+-- a guessed number" rule, and the explicit instruction for this gap not
+-- to infer compatibility from matching tonnage: no equipment_coil_matching
+-- rows are inserted for any of these 19 pairs. They remain genuinely
+-- UNRESOLVED pending either a licensed/interactive AHRI Directory
+-- lookup, or a decision to re-catalog the Amana/Goodman outdoor units
+-- to the models their own literature actually documents as AVPTC's
+-- real combination partners.
+select 1;

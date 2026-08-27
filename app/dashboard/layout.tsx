@@ -52,6 +52,14 @@ export default async function DashboardLayout({
           )}
           {isAdmin && (
             <Link
+              href="/dashboard/settings/duct-hardware"
+              className="text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
+            >
+              Duct Hardware
+            </Link>
+          )}
+          {isAdmin && (
+            <Link
               href="/dashboard/settings/branding"
               className="text-sm text-brand-grey-text transition hover:text-brand-gold-hover"
             >

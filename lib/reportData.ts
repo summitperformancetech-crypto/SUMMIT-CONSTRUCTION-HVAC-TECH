@@ -600,7 +600,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc",
+      "id, org_id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -1189,6 +1189,28 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       ]),
     );
 
+    const { data: ductMaterialOrgDefaultRows } = await supabase
+      .from("duct_material_org_defaults")
+      .select("material_code, manufacturer, product_line")
+      .eq("org_id", project.org_id)
+      .returns<{ material_code: string; manufacturer: string; product_line: string | null }[]>();
+    const ductMaterialDefaultByCode = new Map(
+      (ductMaterialOrgDefaultRows ?? []).map((r) => [r.material_code, { manufacturer: r.manufacturer, productLine: r.product_line }]),
+    );
+    // duct_runs.material is the coarse 3-way category ('flex' |
+    // 'sheet_metal' | 'fiberboard'); duct_material_org_defaults is keyed
+    // by the finer-grained duct_material_specs tier codes. Real per-run
+    // R-value/thickness isn't tracked, so each coarse category maps to
+    // one representative real tier code - not a fabricated spec, just
+    // which org-default row a given zone's actual duct_runs rows pull
+    // from. Dominant category per zone = most total length_ft of that
+    // material actually run in that zone.
+    const materialCodeForCoarseCategory: Record<string, string> = {
+      flex: "flex_r6",
+      sheet_metal: "sheet_metal",
+      fiberboard: "duct_board_1in",
+    };
+
     const installPackagesByZone: InstallPackage[] = (zones ?? []).map((zone) => {
       const outdoorUnit = zone.selected_equipment_id ? (installPackageEquipmentById.get(zone.selected_equipment_id) ?? null) : null;
       const indoorUnit = zone.selected_air_handler_equipment_id
@@ -1197,6 +1219,24 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       const zoneCfm = (rooms ?? [])
         .filter((r) => r.zone_id === zone.id)
         .reduce((sum, r) => sum + (illustrationCfmByRoom.get(r.id) ?? 0), 0);
+
+      const zoneDuctRuns = (ductRuns ?? []).filter((r) => r.zone_id === zone.id);
+      const lengthByCategory = new Map<string, number>();
+      for (const run of zoneDuctRuns) {
+        lengthByCategory.set(run.material, (lengthByCategory.get(run.material) ?? 0) + run.length_ft);
+      }
+      let dominantCategory: string | null = null;
+      let dominantLength = 0;
+      for (const [category, length] of lengthByCategory) {
+        if (length > dominantLength) {
+          dominantCategory = category;
+          dominantLength = length;
+        }
+      }
+      const ductMaterialDefault = dominantCategory
+        ? (ductMaterialDefaultByCode.get(materialCodeForCoarseCategory[dominantCategory]) ?? null)
+        : null;
+
       return computeInstallPackage({
         zoneId: zone.id,
         zoneName: zone.name,
@@ -1215,11 +1255,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
         // computed for any project today, only once that pin exists.
         lineSetLengthFt: null,
         diffusers: (ductDiffusers ?? []).filter((d) => d.zone_id === zone.id),
-        // Real, disclosed limitation: diffuser_org_defaults/
-        // duct_material_org_defaults have 0 rows on any org today
-        // (confirmed live during the diagnostic report) - never null-
-        // coalesced into a fabricated default.
-        ductMaterialDefault: null,
+        ductMaterialDefault,
         terminations: (ductTerminations ?? []).filter((t) => t.zone_id === zone.id),
       });
     });

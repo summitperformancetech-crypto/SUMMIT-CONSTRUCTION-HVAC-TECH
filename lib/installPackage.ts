@@ -101,7 +101,7 @@ export type InstallPackageInputs = {
   // resolveSheetScale). Never estimated.
   lineSetLengthFt: number | null;
   diffusers: DuctDiffuserRow[];
-  ductMaterialDefault: { manufacturer: string; productLine: string } | null;
+  ductMaterialDefault: { manufacturer: string; productLine: string | null } | null;
   terminations: DuctTerminationRow[];
 };
 
@@ -317,10 +317,10 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
     category: "duct_material",
     status: inputs.ductMaterialDefault ? "resolved" : "unresolved",
     summary: inputs.ductMaterialDefault
-      ? `${inputs.ductMaterialDefault.manufacturer} ${inputs.ductMaterialDefault.productLine}`
+      ? [inputs.ductMaterialDefault.manufacturer, inputs.ductMaterialDefault.productLine].filter(Boolean).join(" ")
       : "No org default duct material selected",
     detail: inputs.ductMaterialDefault
-      ? "From this org's duct_material_org_defaults, referencing a real cataloged product (duct_material_hardware_catalog)."
+      ? "From this org's duct_material_org_defaults, for the material tier its own duct_runs rows actually use in this zone."
       : "No duct_material_org_defaults row exists for this org yet.",
     sourceEquipmentId: null,
   });

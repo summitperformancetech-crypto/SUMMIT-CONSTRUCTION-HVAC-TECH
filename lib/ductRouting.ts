@@ -263,6 +263,45 @@ export function computeManhattanDistanceFt(
   return dxFt + dyFt;
 }
 
+// Standalone real-distance-between-two-pins entrypoint, factored out of
+// computeSheetDuctRouting's own scale-resolution steps (same real
+// printed-scale-first, room-bounding-box-median-fallback logic, not a
+// second implementation) - used by lib/reportImages.ts to compute the
+// real AHU-to-condenser refrigerant line-set length for the Recommended
+// Install Package generator, a real two-point distance rather than a
+// full room-avoidance route. Returns null when no real-world scale can
+// be derived for this sheet, same "don't guess" gate every other real-
+// distance call site in this app already uses.
+export function computeRealDistanceBetweenPinsFt(
+  extractedData: {
+    rooms: ExtractedRoom[];
+    sheets?: { name: string; page_number: number | null; printed_scale_text?: string | null }[];
+  } | null,
+  pageNumber: number,
+  pageWidthPt: number,
+  pageHeightPt: number,
+  a: ResolvedPin,
+  b: ResolvedPin,
+): number | null {
+  const extractedRooms = extractedData?.rooms ?? [];
+  const matchedSheet = extractedData?.sheets?.find((s) => s.page_number === pageNumber) ?? null;
+  const sheetName = matchedSheet?.name ?? null;
+  const printedScaleText = matchedSheet?.printed_scale_text ?? null;
+  const scaleSampleRooms: ScaleSampleRoom[] = (sheetName != null ? extractedRooms.filter((er) => er.source_sheet === sheetName) : []).map(
+    (er) => ({
+      wallPageHorizontalLenFt: er.wall_page_horizontal_len_ft,
+      wallPageVerticalLenFt: er.wall_page_vertical_len_ft,
+      widthNorm: er.room_position?.width_norm ?? null,
+      heightNorm: er.room_position?.height_norm ?? null,
+    }),
+  );
+  const scale = resolveSheetScale(printedScaleText, scaleSampleRooms, pageWidthPt, pageHeightPt);
+  if (scale.feetPerPagePoint == null) return null;
+  const pageWidthFt = scale.feetPerPagePoint * pageWidthPt;
+  const pageHeightFt = scale.feetPerPagePoint * pageHeightPt;
+  return computeManhattanDistanceFt(a, b, pageWidthFt, pageHeightFt);
+}
+
 // A Manhattan (right-angle) path between two points implies exactly one
 // 90-degree turn, unless the two points already share an axis (a
 // perfectly straight run needs none).
@@ -440,7 +479,7 @@ export function resolveRoomPositionSource(
 // to see it.
 // -----------------------------------------------------------------------
 export type LiveDuctRoutingPin = {
-  kind: "room" | "ahu" | "return";
+  kind: "room" | "ahu" | "return" | "condenser";
   label: string;
   xNorm: number;
   yNorm: number;
@@ -645,6 +684,23 @@ export function buildLiveDuctRoutingIllustration(
           zoneName: zone.name,
         });
       }
+      // Outdoor unit/condenser - a real, independently-placed pin, same
+      // resolved-on-this-sheet treatment as the return pin above.
+      if (
+        zone.condenser_position_x_norm != null &&
+        zone.condenser_position_y_norm != null &&
+        zone.condenser_position_source_drawing_id === zone.ahu_position_source_drawing_id &&
+        zone.condenser_position_source_page_number === zone.ahu_position_source_page_number
+      ) {
+        sheet.pins.push({
+          kind: "condenser",
+          label: `${zone.name} (Condenser)`,
+          xNorm: zone.condenser_position_x_norm,
+          yNorm: zone.condenser_position_y_norm,
+          zoneId: zone.id,
+          zoneName: zone.name,
+        });
+      }
     }
 
     for (const room of zoneRooms) {
@@ -805,13 +861,13 @@ export function buildLiveDuctRoutingIllustration(
 // -----------------------------------------------------------------------
 
 export type DuctRoutingLayoutPin = {
-  // "return" pins fall through layoutDuctRoutingLabels' else-branch
-  // harmlessly (it only ever produces a label from trunkDiameterIn/
-  // trunkCfm, which a return pin never sets) - the return-plenum's own
+  // "return"/"condenser" pins fall through layoutDuctRoutingLabels'
+  // else-branch harmlessly (it only ever produces a label from
+  // trunkDiameterIn/trunkCfm, which neither pin sets) - each one's own
   // small identifying tag is baked directly into its symbol in each
   // renderer instead, same as the AHU's "AHU" text, not routed through
   // the collision system.
-  kind: "room" | "ahu" | "return";
+  kind: "room" | "ahu" | "return" | "condenser";
   label: string;
   xNorm: number;
   yNorm: number;

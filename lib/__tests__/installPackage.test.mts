@@ -6,7 +6,14 @@
 // function unit test, not a DB test - the real ids are exercised by the
 // scratch live-verification script against Schneider, not here).
 import { describe, it, expect } from "vitest";
-import { computeInstallPackage, requiredHeatKitKw, type InstallPackageInputs } from "../installPackage";
+import {
+  computeInstallPackage,
+  requiredHeatKitKw,
+  buildRefrigerantLinesetLineItem,
+  applyRealLineSetLength,
+  completenessPercentFor,
+  type InstallPackageInputs,
+} from "../installPackage";
 import type { EquipmentCatalogEntry } from "../manualS";
 
 const outdoorUnit: EquipmentCatalogEntry = {
@@ -196,5 +203,57 @@ describe("computeInstallPackage - completeness score (step 8)", () => {
     );
     expect(pkg.completenessPercent).toBe(100);
     expect(pkg.lineItems.every((l) => l.status === "resolved")).toBe(true);
+  });
+});
+
+describe("buildRefrigerantLinesetLineItem (Catalog Expansion, Section 5 - real condenser-pin patch)", () => {
+  const lineset = { equipmentId: outdoorUnit.id, liquidLineDiameterIn: 0.375, vaporLineDiameterIn: 0.875, maxEquivalentLengthFt: 80, lengthDerateNotes: null };
+
+  it("is unresolved with a real, specific reason when the length isn't known yet", () => {
+    const item = buildRefrigerantLinesetLineItem(outdoorUnit, lineset, null);
+    expect(item.status).toBe("unresolved");
+    expect(item.summary).toContain("real run length not yet known");
+  });
+
+  it("resolves once a real length is supplied and is within the real max", () => {
+    const item = buildRefrigerantLinesetLineItem(outdoorUnit, lineset, 40);
+    expect(item.status).toBe("resolved");
+    expect(item.summary).toContain("40.0ft");
+  });
+
+  it("flags a real length exceeding the real max", () => {
+    const item = buildRefrigerantLinesetLineItem(outdoorUnit, lineset, 95);
+    expect(item.status).toBe("flagged");
+  });
+});
+
+describe("applyRealLineSetLength (patches an already-computed package, doesn't recompute everything)", () => {
+  it("replaces only the refrigerant_lineset line item and recomputes the score, leaving every other item untouched", () => {
+    const pkg = computeInstallPackage(baseInputs({ lineSetLengthFt: null }));
+    const before = pkg.lineItems.find((l) => l.category === "coil_matching");
+    const lineset = { equipmentId: outdoorUnit.id, liquidLineDiameterIn: 0.375, vaporLineDiameterIn: 0.875, maxEquivalentLengthFt: 80, lengthDerateNotes: null };
+    const patched = applyRealLineSetLength(pkg, outdoorUnit, lineset, 40);
+    const after = patched.lineItems.find((l) => l.category === "coil_matching");
+    const lineItem = patched.lineItems.find((l) => l.category === "refrigerant_lineset")!;
+    expect(lineItem.status).toBe("resolved");
+    expect(after).toEqual(before);
+    expect(patched.completenessPercent).toBeGreaterThan(pkg.completenessPercent);
+  });
+});
+
+describe("completenessPercentFor", () => {
+  it("computes resolved/total exactly, treating flagged and unresolved identically", () => {
+    expect(
+      completenessPercentFor([
+        { category: "electrical", status: "resolved", summary: "", detail: "", sourceEquipmentId: null },
+        { category: "coil_matching", status: "flagged", summary: "", detail: "", sourceEquipmentId: null },
+        { category: "filter", status: "unresolved", summary: "", detail: "", sourceEquipmentId: null },
+        { category: "heat_kit", status: "resolved", summary: "", detail: "", sourceEquipmentId: null },
+      ]),
+    ).toBe(50);
+  });
+
+  it("returns 0 for an empty line-item list rather than dividing by zero", () => {
+    expect(completenessPercentFor([])).toBe(0);
   });
 });

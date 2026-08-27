@@ -116,6 +116,80 @@ export function requiredHeatKitKw(supplementalHeatDeficitBtuh: number): number {
   return supplementalHeatDeficitBtuh / 3412;
 }
 
+// Extracted so lib/reportImages.ts can rebuild just this one line item
+// once it has a real computed line-set length (only available once real
+// page dimensions exist to calibrate the condenser/AHU pin distance
+// against - reportData.ts's cheap pass never has that, see
+// InstallPackageInputs.lineSetLengthFt's own comment) - single source of
+// truth for the real refrigerant-lineset decision logic, not duplicated
+// between the two callers.
+export function buildRefrigerantLinesetLineItem(
+  outdoorUnit: EquipmentCatalogEntry,
+  lineset: LinesetSpec | null,
+  lineSetLengthFt: number | null,
+): InstallPackageLineItem {
+  if (!lineset) {
+    return {
+      category: "refrigerant_lineset",
+      status: "unresolved",
+      summary: `${equipmentLabel(outdoorUnit)}: no refrigerant lineset data on file`,
+      detail: "This model has no refrigerant_lineset_specs row yet - not sourced, not fabricated.",
+      sourceEquipmentId: outdoorUnit.id,
+    };
+  }
+  if (lineSetLengthFt == null) {
+    return {
+      category: "refrigerant_lineset",
+      status: "unresolved",
+      summary: `${equipmentLabel(outdoorUnit)}: liquid ${lineset.liquidLineDiameterIn}in / vapor ${lineset.vaporLineDiameterIn}in - real run length not yet known`,
+      detail: "Line diameters are real, but the actual outdoor-unit-to-AHU run length can't be computed until the condenser/outdoor-unit position is pinned on the drawing (zones.condenser_position_*), the same way the AHU and return-air plenum are.",
+      sourceEquipmentId: outdoorUnit.id,
+    };
+  }
+  if (lineset.maxEquivalentLengthFt != null && lineSetLengthFt > lineset.maxEquivalentLengthFt) {
+    return {
+      category: "refrigerant_lineset",
+      status: "flagged",
+      summary: `${equipmentLabel(outdoorUnit)}: real run ${lineSetLengthFt.toFixed(1)}ft exceeds the manufacturer's ${lineset.maxEquivalentLengthFt}ft max`,
+      detail: lineset.lengthDerateNotes ?? "Longer runs require the manufacturer's own long-line sizing guidance - a flat length limit was exceeded here.",
+      sourceEquipmentId: outdoorUnit.id,
+    };
+  }
+  return {
+    category: "refrigerant_lineset",
+    status: "resolved",
+    summary: `${equipmentLabel(outdoorUnit)}: liquid ${lineset.liquidLineDiameterIn}in / vapor ${lineset.vaporLineDiameterIn}in, real run ${lineSetLengthFt.toFixed(1)}ft`,
+    detail:
+      lineset.maxEquivalentLengthFt != null
+        ? `Within the manufacturer's ${lineset.maxEquivalentLengthFt}ft max equivalent length.`
+        : "No published max-length figure to check against for this model (a real, disclosed gap in the source document, not assumed unlimited) - real diameters and run length are confirmed.",
+    sourceEquipmentId: outdoorUnit.id,
+  };
+}
+
+export function completenessPercentFor(lineItems: InstallPackageLineItem[]): number {
+  const resolvedCount = lineItems.filter((l) => l.status === "resolved").length;
+  return lineItems.length > 0 ? (resolvedCount / lineItems.length) * 100 : 0;
+}
+
+// Replaces an install package's refrigerant_lineset line item with one
+// built from a real, now-known line-set length (see
+// lib/reportImages.ts) and recomputes the overall completeness score -
+// used instead of recomputing the whole package, since every other line
+// item's real inputs (electrical, coil-matching, heat-kit, filter,
+// diffuser/duct-material/termination inheritance) haven't changed.
+export function applyRealLineSetLength(
+  pkg: InstallPackage,
+  outdoorUnit: EquipmentCatalogEntry,
+  lineset: LinesetSpec | null,
+  lineSetLengthFt: number,
+): InstallPackage {
+  const lineItems = pkg.lineItems.map((item) =>
+    item.category === "refrigerant_lineset" ? buildRefrigerantLinesetLineItem(outdoorUnit, lineset, lineSetLengthFt) : item,
+  );
+  return { ...pkg, lineItems, completenessPercent: completenessPercentFor(lineItems) };
+}
+
 export function computeInstallPackage(inputs: InstallPackageInputs): InstallPackage {
   const lineItems: InstallPackageLineItem[] = [];
   let uncertifiedPairing = false;
@@ -168,43 +242,13 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
 
   // Step 3 - refrigerant line-set sizing.
   if (inputs.outdoorUnit) {
-    const lineset = inputs.linesetSpecByEquipmentId.get(inputs.outdoorUnit.id);
-    if (!lineset) {
-      lineItems.push({
-        category: "refrigerant_lineset",
-        status: "unresolved",
-        summary: `${equipmentLabel(inputs.outdoorUnit)}: no refrigerant lineset data on file`,
-        detail: "This model has no refrigerant_lineset_specs row yet - not sourced, not fabricated.",
-        sourceEquipmentId: inputs.outdoorUnit.id,
-      });
-    } else if (inputs.lineSetLengthFt == null) {
-      lineItems.push({
-        category: "refrigerant_lineset",
-        status: "unresolved",
-        summary: `${equipmentLabel(inputs.outdoorUnit)}: liquid ${lineset.liquidLineDiameterIn}in / vapor ${lineset.vaporLineDiameterIn}in - real run length not yet known`,
-        detail: "Line diameters are real, but the actual outdoor-unit-to-AHU run length can't be computed until the condenser/outdoor-unit position is pinned on the drawing (zones.condenser_position_*), the same way the AHU and return-air plenum are.",
-        sourceEquipmentId: inputs.outdoorUnit.id,
-      });
-    } else if (lineset.maxEquivalentLengthFt != null && inputs.lineSetLengthFt > lineset.maxEquivalentLengthFt) {
-      lineItems.push({
-        category: "refrigerant_lineset",
-        status: "flagged",
-        summary: `${equipmentLabel(inputs.outdoorUnit)}: real run ${inputs.lineSetLengthFt.toFixed(1)}ft exceeds the manufacturer's ${lineset.maxEquivalentLengthFt}ft max`,
-        detail: lineset.lengthDerateNotes ?? "Longer runs require the manufacturer's own long-line sizing guidance - a flat length limit was exceeded here.",
-        sourceEquipmentId: inputs.outdoorUnit.id,
-      });
-    } else {
-      lineItems.push({
-        category: "refrigerant_lineset",
-        status: "resolved",
-        summary: `${equipmentLabel(inputs.outdoorUnit)}: liquid ${lineset.liquidLineDiameterIn}in / vapor ${lineset.vaporLineDiameterIn}in, real run ${inputs.lineSetLengthFt.toFixed(1)}ft`,
-        detail:
-          lineset.maxEquivalentLengthFt != null
-            ? `Within the manufacturer's ${lineset.maxEquivalentLengthFt}ft max equivalent length.`
-            : "No published max-length figure to check against for this model (a real, disclosed gap in the source document, not assumed unlimited) - real diameters and run length are confirmed.",
-        sourceEquipmentId: inputs.outdoorUnit.id,
-      });
-    }
+    lineItems.push(
+      buildRefrigerantLinesetLineItem(
+        inputs.outdoorUnit,
+        inputs.linesetSpecByEquipmentId.get(inputs.outdoorUnit.id) ?? null,
+        inputs.lineSetLengthFt,
+      ),
+    );
   }
 
   // Step 4 - heat kit.
@@ -298,14 +342,11 @@ export function computeInstallPackage(inputs: InstallPackageInputs): InstallPack
 
   // Step 8 - completeness score. A 'flagged' item counts as incomplete,
   // same as 'unresolved' - see this module's own header comment.
-  const resolvedCount = lineItems.filter((l) => l.status === "resolved").length;
-  const completenessPercent = lineItems.length > 0 ? (resolvedCount / lineItems.length) * 100 : 0;
-
   return {
     zoneId: inputs.zoneId,
     zoneName: inputs.zoneName,
     lineItems,
-    completenessPercent,
+    completenessPercent: completenessPercentFor(lineItems),
     uncertifiedPairing,
   };
 }

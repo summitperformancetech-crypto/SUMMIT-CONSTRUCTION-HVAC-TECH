@@ -8,6 +8,7 @@ import {
   pageScaleFromArchitecturalScale,
   derivePageScale,
   computeManhattanDistanceFt,
+  computeRealDistanceBetweenPinsFt,
   countManhattanTurns,
   computeRoutedBranchRun,
   getDuctRoutingGateStatus,
@@ -238,6 +239,41 @@ describe("computeManhattanDistanceFt", () => {
     const dist = computeManhattanDistanceFt({ xNorm: 0.1, yNorm: 0.1 }, { xNorm: 0.35, yNorm: 0.6 }, 40, 30);
     // dx = 0.25*40 = 10ft, dy = 0.5*30 = 15ft, total = 25ft (not sqrt(10^2+15^2)).
     expect(dist).toBeCloseTo(25, 5);
+  });
+});
+
+describe("computeRealDistanceBetweenPinsFt (Catalog Expansion, Section 5 - real AHU-to-condenser line-set length)", () => {
+  it("uses the sheet's real printed scale, same as computeSheetDuctRouting's own preference order", () => {
+    // 1/4" = 1'-0" -> pageScaleFromArchitecturalScale(0.25, 1) feet/point,
+    // on a real 2592x1728pt (36x24in) D-size sheet - matches the real
+    // Schneider sheet already established elsewhere in this suite.
+    const extractedData = {
+      rooms: [],
+      sheets: [{ name: "A3.0", page_number: 1, printed_scale_text: "1/4\" = 1'-0\"" }],
+    };
+    const dist = computeRealDistanceBetweenPinsFt(
+      extractedData,
+      1,
+      2592,
+      1728,
+      { xNorm: 0.2, yNorm: 0.3 },
+      { xNorm: 0.5, yNorm: 0.3 },
+    );
+    // pageWidthFt = (1/(0.25*72)) * 2592 = 144ft; dx = 0.3*144 = 43.2ft, dy = 0.
+    expect(dist).not.toBeNull();
+    expect(dist!).toBeCloseTo(43.2, 1);
+  });
+
+  it("returns null when no real scale can be derived (no printed text, no usable room samples)", () => {
+    const dist = computeRealDistanceBetweenPinsFt(
+      { rooms: [], sheets: [{ name: "A3.0", page_number: 1, printed_scale_text: null }] },
+      1,
+      2592,
+      1728,
+      { xNorm: 0.2, yNorm: 0.3 },
+      { xNorm: 0.5, yNorm: 0.3 },
+    );
+    expect(dist).toBeNull();
   });
 });
 

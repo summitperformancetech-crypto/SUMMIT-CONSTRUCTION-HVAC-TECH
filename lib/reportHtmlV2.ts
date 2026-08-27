@@ -626,6 +626,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
   const SUPPLY_COLOR = "#c0392b";
   const RETURN_COLOR = "#2f8f4f";
   const SYMBOL_INK = "#1c2b3a";
+  const CONDENSER_COLOR = "#9c6a24";
   const SEGMENT_WIDTH: Record<RoutedDuctSegment["cls"], number> = { trunk: 1.1, branch: 0.7, runout: 0.42 };
   const ZONE_TINTS = ["#fde68a", "#93c5fd", "#86efac", "#f9a8d4", "#c4b5fd", "#fca5a5"];
   const allZoneIds = [...new Set(sheets.flatMap((s) => s.pins.map((p) => p.zoneId)))];
@@ -777,6 +778,17 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
               <text x="0" y="0.7" font-size="1.4" font-weight="700" text-anchor="middle" fill="${RETURN_COLOR}">RA</text>
             </g>`;
           }
+          if (pin.kind === "condenser") {
+            // Outdoor unit/condenser - a real, independently-placed pin
+            // (Catalog Expansion, Section 5 prerequisite), diamond shape
+            // to stay visually distinct from the AHU (square) and return
+            // (square+diagonal) symbols, matching the same diamond used
+            // in the live pin-placement canvas.
+            return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">
+              <polygon points="0,-2.6 2.6,0 0,2.6 -2.6,0" fill="${BRAND.paper}" stroke="${CONDENSER_COLOR}" stroke-width="0.35" />
+              <text x="0" y="0.7" font-size="1.3" font-weight="700" text-anchor="middle" fill="${CONDENSER_COLOR}">CU</text>
+            </g>`;
+          }
           return `<g transform="translate(${cx} ${cy}) scale(${s(1).toFixed(4)})">${renderDiffuserBodySvg(pin.patternTagCode, SUPPLY_COLOR, BRAND.paper)}</g>`;
         })
         .join("");
@@ -868,6 +880,7 @@ function renderDuctRoutingPage(data: ReportData, org: OrgBranding): string {
        <span style="display:flex;align-items:center;gap:6px;"><svg width="20" height="6"><line x1="1" y1="3" x2="19" y2="3" stroke="${SUPPLY_COLOR}" stroke-width="1" stroke-dasharray="2.5,2" /></svg> Run-out (flex)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.paper}" stroke="${RETURN_COLOR}" stroke-width="1.4" /><line x1="2" y1="12" x2="12" y2="2" stroke="${RETURN_COLOR}" stroke-width="1" /></svg> Return air grille</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="1" y="1" width="12" height="12" fill="${SYMBOL_INK}" /></svg> AHU / mechanical equipment</span>
+       <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><polygon points="7,1.5 12.5,7 7,12.5 1.5,7" fill="${BRAND.paper}" stroke="${CONDENSER_COLOR}" stroke-width="1.3" /></svg> Outdoor unit / condenser</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="2" y="2" width="10" height="10" fill="${BRAND.paper}" stroke="${SUPPLY_COLOR}" stroke-width="1.4" /><line x1="2" y1="2" x2="12" y2="12" stroke="${SUPPLY_COLOR}" stroke-width="1" /><line x1="2" y1="12" x2="12" y2="2" stroke="${SUPPLY_COLOR}" stroke-width="1" /></svg> Supply register (one-way)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14"><rect x="4" y="4" width="6" height="6" fill="${SYMBOL_INK}" /></svg> Branch takeoff (tee)</span>
        <span style="display:flex;align-items:center;gap:6px;"><svg width="22" height="14"><circle cx="7" cy="7" r="4.2" fill="none" stroke="${SUPPLY_COLOR}" stroke-width="1" /><text x="7" y="9.5" font-size="5" font-weight="700" text-anchor="middle" fill="${SUPPLY_COLOR}">1W</text><text x="16" y="6" font-size="4.2" font-weight="700" fill="${SUPPLY_COLOR}">6"⌀</text><line x1="12" y1="7" x2="20" y2="7" stroke="${SUPPLY_COLOR}" stroke-width="0.6" /><text x="16" y="13" font-size="4.2" font-weight="700" fill="${SUPPLY_COLOR}">80</text></svg> Register callout (type / size / CFM)</span>

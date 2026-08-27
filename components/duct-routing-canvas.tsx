@@ -20,7 +20,7 @@ import type { RoomRow, ZoneRow } from "@/components/manual-j-workflow";
 
 type SheetOption = { drawingId: string; pageNumber: number; label: string };
 
-type PinKind = "room" | "zone" | "return";
+type PinKind = "room" | "zone" | "return" | "condenser";
 
 type PinState = {
   key: string;
@@ -45,6 +45,7 @@ export function DuctRoutingCanvas({
   onRoomPositionSaved,
   onZonePositionSaved,
   onReturnPositionSaved,
+  onCondenserPositionSaved,
 }: {
   projectId: string;
   rooms: RoomRow[];
@@ -75,6 +76,20 @@ export function DuctRoutingCanvas({
       return_position_y_norm: number;
       return_position_source_drawing_id: string;
       return_position_source_page_number: number;
+    },
+  ) => void;
+  // Outdoor unit/condenser position - a real, independently-placed pin,
+  // same tech-confirmed workflow as the AHU/return pins above. This is
+  // the prerequisite flagged during the Catalog Expansion diagnostic
+  // report: the Recommended Install Package generator's refrigerant
+  // line-set length can't be computed for any project until this exists.
+  onCondenserPositionSaved: (
+    zoneId: string,
+    update: {
+      condenser_position_x_norm: number;
+      condenser_position_y_norm: number;
+      condenser_position_source_drawing_id: string;
+      condenser_position_source_page_number: number;
     },
   ) => void;
 }) {
@@ -280,6 +295,30 @@ export function DuctRoutingCanvas({
         hasAiSuggestion: false,
       });
     }
+    // Outdoor unit/condenser position - a real, independently-placed pin
+    // per zone, same required workflow as the AHU/return pins above.
+    for (const zone of relevantZones) {
+      const resolved =
+        zone.condenser_position_x_norm != null &&
+        zone.condenser_position_y_norm != null &&
+        zone.condenser_position_source_drawing_id === selectedSheet.drawingId &&
+        zone.condenser_position_source_page_number === selectedSheet.pageNumber;
+      if (!resolved) continue;
+      next.push({
+        key: `condenser:${zone.id}`,
+        kind: "condenser",
+        id: zone.id,
+        label: `${zone.name} (Condenser)`,
+        drawingId: selectedSheet.drawingId,
+        pageNumber: selectedSheet.pageNumber,
+        xNorm: zone.condenser_position_x_norm!,
+        yNorm: zone.condenser_position_y_norm!,
+        startXNorm: zone.condenser_position_x_norm!,
+        startYNorm: zone.condenser_position_y_norm!,
+        resolved: true,
+        hasAiSuggestion: false,
+      });
+    }
     setPins(next);
   }, [selectedSheet, relevantRooms, relevantZones, roomAssignments]);
 
@@ -451,7 +490,7 @@ export function DuctRoutingCanvas({
           ahu_position_source_drawing_id: pin.drawingId,
           ahu_position_source_page_number: pin.pageNumber,
         });
-      } else {
+      } else if (pin.kind === "return") {
         const { error: updateError } = await supabase
           .from("zones")
           .update({
@@ -486,6 +525,41 @@ export function DuctRoutingCanvas({
           return_position_source_drawing_id: pin.drawingId,
           return_position_source_page_number: pin.pageNumber,
         });
+      } else {
+        const { error: updateError } = await supabase
+          .from("zones")
+          .update({
+            condenser_position_x_norm: pin.xNorm,
+            condenser_position_y_norm: pin.yNorm,
+            condenser_position_source_drawing_id: pin.drawingId,
+            condenser_position_source_page_number: pin.pageNumber,
+          })
+          .eq("id", pin.id);
+        if (updateError) {
+          setSaveError(updateError.message);
+          return;
+        }
+        const { error: resolutionError } = await supabase.from("field_resolutions").insert({
+          project_id: projectId,
+          table_name: "zones",
+          record_id: pin.id,
+          field_name: "condenser_position",
+          ai_extracted_value: null,
+          final_value: finalValue,
+          resolution_type: "accepted",
+          override_reason: null,
+          resolved_by: user.id,
+        });
+        if (resolutionError) {
+          setSaveError(resolutionError.message);
+          return;
+        }
+        onCondenserPositionSaved(pin.id, {
+          condenser_position_x_norm: pin.xNorm,
+          condenser_position_y_norm: pin.yNorm,
+          condenser_position_source_drawing_id: pin.drawingId,
+          condenser_position_source_page_number: pin.pageNumber,
+        });
       }
       setPins((prev) =>
         prev.map((p) => (p.key === pin.key ? { ...p, resolved: true, startXNorm: p.xNorm, startYNorm: p.yNorm } : p)),
@@ -506,6 +580,7 @@ export function DuctRoutingCanvas({
   });
   const unplacedZones = relevantZones.filter((z) => !pins.some((p) => p.kind === "zone" && p.id === z.id));
   const unplacedReturns = relevantZones.filter((z) => !pins.some((p) => p.kind === "return" && p.id === z.id));
+  const unplacedCondensers = relevantZones.filter((z) => !pins.some((p) => p.kind === "condenser" && p.id === z.id));
 
   if (sheetOptions.length === 0) {
     return (
@@ -523,9 +598,10 @@ export function DuctRoutingCanvas({
     <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
       <h2 className="mb-1 text-lg font-semibold text-brand-gold">Duct Routing Pins</h2>
       <p className="mb-4 text-sm text-brand-grey-text">
-        Confirm or drag each room&apos;s pin, and place one AHU pin per zone. Moving a pin away from its
-        AI-suggested spot requires a short reason. Once every relevant room and zone has a resolved pin, real
-        run lengths can be computed from the actual routed distance on this drawing.
+        Confirm or drag each room&apos;s pin, and place one AHU, return-air, and outdoor condenser pin per zone.
+        Moving a pin away from its AI-suggested spot requires a short reason. Once every relevant room and zone
+        has a resolved pin, real run lengths - including the real refrigerant line-set length the Recommended
+        Install Package needs - can be computed from the actual routed distance on this drawing.
       </p>
 
       <div className="mb-4">
@@ -599,6 +675,11 @@ export function DuctRoutingCanvas({
                         // supply-side pin (room register, AHU), matching
                         // the routed diagram's own return-plenum symbol.
                         <rect x={2} y={2} width={10} height={10} fill={color} fillOpacity={0.28} stroke={color} strokeWidth={1.6} />
+                      ) : pin.kind === "condenser" ? (
+                        // Diamond - a third distinct shape (circle=AHU,
+                        // square=return, diamond=outdoor condenser), same
+                        // real-shape-per-kind convention.
+                        <polygon points="7,1.5 12.5,7 7,12.5 1.5,7" fill={color} fillOpacity={0.28} stroke={color} strokeWidth={1.6} />
                       ) : (
                         <circle cx={7} cy={7} r={5} fill={color} fillOpacity={0.28} stroke={color} strokeWidth={1.6} />
                       )}
@@ -674,7 +755,7 @@ export function DuctRoutingCanvas({
             </ul>
           </div>
 
-          {(unplacedRooms.length > 0 || unplacedZones.length > 0 || unplacedReturns.length > 0) && (
+          {(unplacedRooms.length > 0 || unplacedZones.length > 0 || unplacedReturns.length > 0 || unplacedCondensers.length > 0) && (
             <div>
               <p className="mb-1 text-xs font-medium uppercase tracking-wide text-brand-grey-text">
                 Needs placement on this sheet
@@ -707,6 +788,17 @@ export function DuctRoutingCanvas({
                     <span className="text-brand-grey-text">{z.name} (Return)</span>
                     <button
                       onClick={() => handlePlaceOnCurrentSheet("return", z.id, `${z.name} (Return)`)}
+                      className="rounded-md border border-brand-gold/50 px-2 py-0.5 text-xs text-brand-gold hover:border-brand-gold"
+                    >
+                      Place here
+                    </button>
+                  </li>
+                ))}
+                {unplacedCondensers.map((z) => (
+                  <li key={`condenser-${z.id}`} className="flex items-center justify-between">
+                    <span className="text-brand-grey-text">{z.name} (Condenser)</span>
+                    <button
+                      onClick={() => handlePlaceOnCurrentSheet("condenser", z.id, `${z.name} (Condenser)`)}
                       className="rounded-md border border-brand-gold/50 px-2 py-0.5 text-xs text-brand-gold hover:border-brand-gold"
                     >
                       Place here

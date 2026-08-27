@@ -33,6 +33,7 @@ import type { DrawingRow } from "@/lib/drawingExtraction";
 const SUPPLY_COLOR = "#c0392b";
 const RETURN_COLOR = "#2f8f4f";
 const SYMBOL_INK = "#1c2b3a";
+const CONDENSER_COLOR = "#9c6a24";
 const PAPER = "#f0efec";
 
 // Real line-weight hierarchy (SVG stroke-width in the diagram's own 0-100
@@ -449,6 +450,20 @@ export function DuctRoutingDiagram({
               </g>
             );
           }
+          if (pin.kind === "condenser") {
+            // Outdoor unit/condenser - a real, independently-placed pin
+            // (Catalog Expansion, Section 5 prerequisite), diamond shape
+            // to stay visually distinct from the AHU/return symbols,
+            // matching the pin-placement canvas's own diamond marker.
+            return (
+              <g key={i} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
+                <polygon points="0,-2.6 2.6,0 0,2.6 -2.6,0" fill={PAPER} stroke={CONDENSER_COLOR} strokeWidth={0.35} />
+                <text x={0} y={0.7} fontSize={1.3} fontWeight={700} textAnchor="middle" fill={CONDENSER_COLOR}>
+                  CU
+                </text>
+              </g>
+            );
+          }
           return (
             <g key={i} transform={`translate(${cx} ${cy}) scale(${s(1)})`}>
               <DiffuserBodySvg tagCode={pin.patternTagCode} color={SUPPLY_COLOR} paperColor={PAPER} />
@@ -579,6 +594,12 @@ export function DuctRoutingDiagram({
             <rect x={1} y={1} width={12} height={12} fill={SYMBOL_INK} />
           </svg>
           AHU / mechanical equipment
+        </span>
+        <span className="flex items-center gap-1.5">
+          <svg width={14} height={14}>
+            <polygon points="7,1.5 12.5,7 7,12.5 1.5,7" fill={PAPER} stroke={CONDENSER_COLOR} strokeWidth={1.3} />
+          </svg>
+          Outdoor unit / condenser
         </span>
         <span className="flex items-center gap-1.5">
           <svg width={14} height={14}>

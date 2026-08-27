@@ -18,7 +18,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PDFDocument } from "pdf-lib";
 import { renderPdfPageToPngDataUri, getEffectivePageSize } from "./floorPlanRender";
-import { computeSheetDuctRouting, type RoutedDuctSegment } from "./ductRouting";
+import { computeSheetDuctRouting, computeRealDistanceBetweenPinsFt, type RoutedDuctSegment } from "./ductRouting";
+import { applyRealLineSetLength, type LinesetSpec } from "./installPackage";
+import type { EquipmentCatalogEntry } from "./manualS";
 import { fitCorridorGraphCalibration, resolveCorridorNodePositions, mapGraphRoomIdsToRealRoomIds } from "./ductCorridorGraph";
 import {
   extractTrunkArms,
@@ -126,6 +128,13 @@ export async function attachFrozenImages(
 
   const residentialRooms = reportData.residential?.rooms ?? [];
   const residentialZones = reportData.residential?.zones ?? [];
+
+  // Catalog Expansion + Recommended Install Package, Section 5 gap - the
+  // condenser/outdoor-unit pin has real page dimensions available here
+  // (Puppeteer/pdf-lib, not lib/reportData.ts's cheap pass), so the real
+  // AHU-to-condenser refrigerant line-set length is computed in this
+  // pass and patched into installPackagesByZone below.
+  const lineSetLengthFtByZoneId = new Map<string, number>();
 
   const ductRoutingIllustration = reportData.residential
     ? await Promise.all(
@@ -242,6 +251,28 @@ export async function attachFrozenImages(
             }
           }
 
+          // Real refrigerant line-set length - only computable once a
+          // real scale exists for this sheet (same "don't guess" gate as
+          // routedSegments above) and both the AHU and condenser pins
+          // are resolved on it.
+          if (dims) {
+            const ahuPinsOnSheet = sheet.pins.filter((p) => p.kind === "ahu");
+            const condenserPinsOnSheet = sheet.pins.filter((p) => p.kind === "condenser");
+            for (const condenserPin of condenserPinsOnSheet) {
+              const ahuPin = ahuPinsOnSheet.find((p) => p.zoneId === condenserPin.zoneId);
+              if (!ahuPin) continue;
+              const distanceFt = computeRealDistanceBetweenPinsFt(
+                drawing?.extracted_data ?? null,
+                sheet.pageNumber,
+                dims.widthPt,
+                dims.heightPt,
+                { xNorm: ahuPin.xNorm, yNorm: ahuPin.yNorm },
+                { xNorm: condenserPin.xNorm, yNorm: condenserPin.yNorm },
+              );
+              if (distanceFt != null) lineSetLengthFtByZoneId.set(condenserPin.zoneId, distanceFt);
+            }
+          }
+
           return {
             ...sheet,
             imageDataUri: await renderPage(sheet.drawingId, sheet.pageNumber),
@@ -253,11 +284,88 @@ export async function attachFrozenImages(
       )
     : [];
 
+  // Patch every affected zone's install package with the real, now-known
+  // line-set length - the only piece of computeInstallPackage's output
+  // that depends on real page dimensions this file has and
+  // lib/reportData.ts's cheap pass never does.
+  let installPackagesByZone = reportData.residential?.installPackagesByZone ?? [];
+  if (reportData.residential && lineSetLengthFtByZoneId.size > 0) {
+    const outdoorEquipmentIds = [
+      ...new Set(
+        reportData.residential.zones
+          .filter((z) => lineSetLengthFtByZoneId.has(z.id) && z.selected_equipment_id != null)
+          .map((z) => z.selected_equipment_id as string),
+      ),
+    ];
+    if (outdoorEquipmentIds.length > 0) {
+      const [{ data: equipRows }, { data: linesetRows }] = await Promise.all([
+        supabase
+          .from("equipment_catalog")
+          .select("id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document")
+          .in("id", outdoorEquipmentIds)
+          .returns<
+            {
+              id: string;
+              manufacturer: string;
+              model_number: string;
+              equipment_type: EquipmentCatalogEntry["equipmentType"];
+              stage_type: EquipmentCatalogEntry["stageType"];
+              nominal_cooling_capacity_btu: number | null;
+              nominal_heating_capacity_btu: number | null;
+              rated_cfm: number | null;
+              source_document: string;
+            }[]
+          >(),
+        supabase
+          .from("refrigerant_lineset_specs")
+          .select("equipment_id, liquid_line_diameter_in, vapor_line_diameter_in, max_equivalent_length_ft, length_derate_notes")
+          .in("equipment_id", outdoorEquipmentIds)
+          .returns<{ equipment_id: string; liquid_line_diameter_in: number; vapor_line_diameter_in: number; max_equivalent_length_ft: number | null; length_derate_notes: string | null }[]>(),
+      ]);
+      const equipById = new Map<string, EquipmentCatalogEntry>(
+        (equipRows ?? []).map((r) => [
+          r.id,
+          {
+            id: r.id,
+            manufacturer: r.manufacturer,
+            modelNumber: r.model_number,
+            equipmentType: r.equipment_type,
+            stageType: r.stage_type,
+            nominalCoolingCapacityBtu: r.nominal_cooling_capacity_btu,
+            nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
+            ratedCfm: r.rated_cfm,
+            sourceDocument: r.source_document,
+          },
+        ]),
+      );
+      const linesetByEquip = new Map<string, LinesetSpec>(
+        (linesetRows ?? []).map((r) => [
+          r.equipment_id,
+          {
+            equipmentId: r.equipment_id,
+            liquidLineDiameterIn: r.liquid_line_diameter_in,
+            vaporLineDiameterIn: r.vapor_line_diameter_in,
+            maxEquivalentLengthFt: r.max_equivalent_length_ft,
+            lengthDerateNotes: r.length_derate_notes,
+          },
+        ]),
+      );
+
+      installPackagesByZone = installPackagesByZone.map((pkg) => {
+        const lineSetLengthFt = lineSetLengthFtByZoneId.get(pkg.zoneId);
+        const zone = reportData.residential!.zones.find((z) => z.id === pkg.zoneId);
+        const outdoorUnit = zone?.selected_equipment_id ? equipById.get(zone.selected_equipment_id) : null;
+        if (lineSetLengthFt == null || !outdoorUnit) return pkg;
+        return applyRealLineSetLength(pkg, outdoorUnit, linesetByEquip.get(outdoorUnit.id) ?? null, lineSetLengthFt);
+      });
+    }
+  }
+
   return {
     ...reportData,
     floorPlanImageDataUri,
     residential: reportData.residential
-      ? { ...reportData.residential, ductRoutingIllustration }
+      ? { ...reportData.residential, ductRoutingIllustration, installPackagesByZone }
       : reportData.residential,
   };
 }

@@ -60,10 +60,14 @@ export type DuctRunRow = {
   // convention as the calculated_* fields above.
   total_effective_length_ft: number | null;
   pressure_drop_iwc: number | null;
+  // Permit-package Section 4 - real, technician-confirmed fact: has a
+  // balancing damper actually been installed at this branch's trunk
+  // connection. Defaults false (not yet confirmed), never assumed true.
+  has_balancing_damper: boolean;
 };
 
 export const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc";
+  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc, has_balancing_damper";
 export const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 export const AHU_INSTALLATION_DETAIL_COLUMNS =
@@ -802,6 +806,20 @@ export function DuctDesignSection({
     }
   }
 
+  async function handleToggleBalancingDamper(id: string, hasBalancingDamper: boolean) {
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.from("duct_runs").update({ has_balancing_damper: hasBalancingDamper }).eq("id", id);
+      if (error) {
+        setRunError(error.message);
+        return;
+      }
+      setDuctRuns((prev) => prev.map((r) => (r.id === id ? { ...r, has_balancing_damper: hasBalancingDamper } : r)));
+    } catch (err) {
+      setRunError(err instanceof Error ? err.message : "Failed to update damper status - check your connection and try again.");
+    }
+  }
+
   async function handleAddDiffuser() {
     setDiffuserSaving(true);
     setDiffuserError(null);
@@ -1304,6 +1322,7 @@ export function DuctDesignSection({
                     <th className="py-2 pr-4 text-right">Velocity</th>
                     <th className="py-2 pr-4">Insulation</th>
                     <th className="py-2 pr-4">Material</th>
+                    <th className="py-2 pr-4">Damper</th>
                     <th className="py-2 pr-4" />
                   </tr>
                 </thead>
@@ -1396,6 +1415,21 @@ export function DuctDesignSection({
                         </td>
                         <td className="py-2 pr-4 text-brand-silver">
                           {MATERIAL_OPTIONS.find((m) => m.value === run.material)?.label}
+                        </td>
+                        <td className="py-2 pr-4">
+                          {run.run_type === "branch" ? (
+                            <label className="flex items-center gap-1.5 text-xs text-brand-silver">
+                              <input
+                                type="checkbox"
+                                checked={run.has_balancing_damper}
+                                onChange={(e) => handleToggleBalancingDamper(run.id, e.target.checked)}
+                                className="h-3.5 w-3.5"
+                              />
+                              Installed
+                            </label>
+                          ) : (
+                            <span className="text-xs text-brand-grey-text">—</span>
+                          )}
                         </td>
                         <td className="py-2 pr-4 text-right">
                           <button

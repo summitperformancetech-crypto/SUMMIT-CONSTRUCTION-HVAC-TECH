@@ -150,6 +150,7 @@ describe("buildDuctRoutingIllustrations", () => {
         calculated_height_in: null,
         total_effective_length_ft: 37,
         pressure_drop_iwc: 0.0296,
+        has_balancing_damper: false,
       },
     ];
     const ductSchedule: DuctSizingResult[] = [
@@ -225,6 +226,7 @@ describe("buildDuctRoutingIllustrations", () => {
         calculated_height_in: null,
         total_effective_length_ft: 30,
         pressure_drop_iwc: 0.024,
+        has_balancing_damper: false,
       },
     ];
     const ductSchedule: DuctSizingResult[] = [

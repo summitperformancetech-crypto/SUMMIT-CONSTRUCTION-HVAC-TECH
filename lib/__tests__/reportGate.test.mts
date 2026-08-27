@@ -147,6 +147,8 @@ function baseReportData(rooms: RoomRow[]): ReportData {
       ductDiffusers: [],
       ductTerminations: [],
       espCapacityCheckByZone: [],
+      trunkTopologyByZone: [],
+      balancingDamperCheckByZone: [],
       ductRuns: [],
       rooms,
       zones: [],
@@ -240,6 +242,7 @@ function ductRun(overrides: Partial<DuctRunRow> = {}): DuctRunRow {
     calculated_height_in: null,
     total_effective_length_ft: null,
     pressure_drop_iwc: null,
+    has_balancing_damper: false,
     ...overrides,
   };
 }

@@ -147,6 +147,8 @@ describe("validateReportTotals", () => {
       ductDiffusers: [],
       ductTerminations: [],
       espCapacityCheckByZone: [],
+      trunkTopologyByZone: [],
+      balancingDamperCheckByZone: [],
     });
 
     const result = validateReportTotals(data);
@@ -192,6 +194,8 @@ describe("validateReportTotals", () => {
       ductDiffusers: [],
       ductTerminations: [],
       espCapacityCheckByZone: [],
+      trunkTopologyByZone: [],
+      balancingDamperCheckByZone: [],
     });
 
     const result = validateReportTotals(data);

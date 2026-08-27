@@ -60,6 +60,7 @@ import {
   type RoutedDuctSegment,
 } from "./ductRouting";
 import type { CorridorGraph } from "./ductCorridorGraph";
+import { analyzeTrunkTopology, type TrunkTopologyAnalysis } from "./ductTrunkTopology";
 
 export type ReportProject = {
   id: string;
@@ -495,6 +496,15 @@ export type ReportData = {
     // equipment-capacity result per zone, null when that zone has no
     // selected air handler yet (never a fabricated pass).
     espCapacityCheckByZone: { zoneId: string; zoneName: string; result: EspCapacityCheckResult | null }[];
+    // Permit-Submittable Manual D Package, Section 4 - real per-zone
+    // Extended Plenum / Reducing Trunk topology analysis (see
+    // lib/ductTrunkTopology.ts). determinable: false when the zone has
+    // no real corridor_graph - never a guessed topology.
+    trunkTopologyByZone: { zoneId: string; zoneName: string; analysis: TrunkTopologyAnalysis }[];
+    // Real per-zone balancing-damper coverage - counts of real
+    // technician-confirmed duct_runs.has_balancing_damper, never
+    // inferred.
+    balancingDamperCheckByZone: { zoneId: string; zoneName: string; totalBranches: number; branchesWithDamper: number }[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -508,7 +518,7 @@ const ROOM_COLUMNS =
 const ZONE_COLUMNS =
   "id, project_id, name, ahu_label, created_at, selected_equipment_id, selected_air_handler_equipment_id, equipment_selection_notes, ahu_position_x_norm, ahu_position_y_norm, ahu_position_source_drawing_id, ahu_position_source_page_number, return_position_x_norm, return_position_y_norm, return_position_source_drawing_id, return_position_source_page_number, corridor_graph";
 const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc";
+  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc, has_balancing_damper";
 const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 const AHU_INSTALLATION_DETAIL_COLUMNS =
@@ -976,6 +986,32 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       };
     });
 
+    // Permit-Submittable Manual D Package, Section 4 - real Extended
+    // Plenum / Reducing Trunk topology analysis per zone, from that
+    // zone's own real, human-digitized corridor_graph when one exists.
+    // Zones without one report determinable: false, not a guessed
+    // topology - see lib/ductTrunkTopology.ts's own module comment.
+    const sizedByRunIdForTopology = new Map(ductSchedule.map((r) => [r.runId, r]));
+    const diameterInByRoomId = new Map<string, number | null>();
+    for (const run of ductRuns ?? []) {
+      if (run.run_type !== "branch" || !run.room_id) continue;
+      diameterInByRoomId.set(run.room_id, sizedByRunIdForTopology.get(run.id)?.diameterIn ?? run.calculated_diameter_in ?? null);
+    }
+    const trunkTopologyByZone = (zones ?? []).map((zone) => ({
+      zoneId: zone.id,
+      zoneName: zone.name,
+      analysis: analyzeTrunkTopology(zone.corridor_graph, diameterInByRoomId),
+    }));
+    const balancingDamperCheckByZone = (zones ?? []).map((zone) => {
+      const branches = (ductRuns ?? []).filter((r) => r.run_type === "branch" && r.zone_id === zone.id);
+      return {
+        zoneId: zone.id,
+        zoneName: zone.name,
+        totalBranches: branches.length,
+        branchesWithDamper: branches.filter((r) => r.has_balancing_damper).length,
+      };
+    });
+
     residential = {
       envelope,
       manualJ,
@@ -1010,6 +1046,8 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       ductDiffusers: ductDiffusers ?? [],
       ductTerminations: ductTerminations ?? [],
       espCapacityCheckByZone,
+      trunkTopologyByZone,
+      balancingDamperCheckByZone,
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&

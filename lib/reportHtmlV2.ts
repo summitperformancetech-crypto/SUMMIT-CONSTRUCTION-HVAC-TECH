@@ -42,6 +42,7 @@ import {
   type AhuInstallationDetailRow,
   type DuctRoutingModeBasis,
 } from "./ductRouting";
+import { EXTENDED_PLENUM_MAX_DOUBLE_RUN_FT } from "./ductTrunkTopology";
 
 export type OrgBranding = {
   name: string;
@@ -1112,6 +1113,101 @@ function renderEspCapacitySection(r: NonNullable<ReportData["residential"]>): st
   </p>`;
 }
 
+// Permit-Submittable Manual D Package, Section 4 - real Extended Plenum /
+// Reducing Trunk analysis (lib/ductTrunkTopology.ts), computed from each
+// zone's own real, human-digitized corridor_graph. A zone with no
+// corridor_graph shows an honest "not yet determinable," never a guessed
+// topology - see that module's own comment for why the computed room-box-
+// avoidance router isn't a substitute source for this specific check.
+function renderTrunkTopologySection(r: NonNullable<ReportData["residential"]>): string {
+  const determinableZones = r.trunkTopologyByZone.filter((z) => z.analysis.determinable);
+  const notDeterminableZones = r.trunkTopologyByZone.filter((z) => !z.analysis.determinable);
+
+  if (determinableZones.length === 0) {
+    return `<div class="callout"><span class="badge badge-neutral">Not yet determinable</span> No zone on this project has a real, human-digitized corridor graph yet - this check needs real trunk/branch topology, not the computed room-box-avoidance router used for the diagram, which has no notion of "where along the trunk" a branch attaches.</div>`;
+  }
+
+  const rows = determinableZones
+    .flatMap(({ zoneName, analysis }) =>
+      analysis.arms.map((arm) => {
+        const isExtended = arm.topology === "extended_plenum";
+        return `<tr>
+          <td>${esc(zoneName)}${analysis.arms.length > 1 ? ` (arm ${arm.armIndex + 1})` : ""}</td>
+          <td class="num">${fmt1(arm.totalLengthFt)} ft</td>
+          <td>${isExtended ? `<span class="badge badge-pass">Extended Plenum</span>` : `<span class="badge badge-fail">Reducing Trunk required</span>`}</td>
+          <td class="num">${arm.reductionPointsFt.length > 0 ? arm.reductionPointsFt.map((f) => `${fmt1(f)}ft`).join(", ") : "—"}</td>
+        </tr>`;
+      }),
+    )
+    .join("");
+
+  const allViolations = determinableZones.flatMap(({ zoneName, analysis }) =>
+    analysis.takeoffSpacingViolations.map((v) => ({ zoneName, ...v })),
+  );
+  const violationRows = allViolations
+    .map(
+      (v) => `<tr>
+        <td>${esc(v.zoneName)}</td>
+        <td>${esc(v.roomId)}</td>
+        <td class="muted">${esc(v.detail)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  const doublePlenumIssues = determinableZones.filter((z) => z.analysis.exceedsDoublePlenumLimit);
+
+  return `<table>
+      <thead><tr><th>Zone / Arm</th><th class="num">Real Length</th><th>Topology</th><th class="num">Reduction Point(s)</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="section-title" style="margin-top:10px;font-size:12px;">Take-off Spacing</div>
+    ${
+      allViolations.length === 0
+        ? `<div class="callout"><span class="badge badge-pass">No Violations</span> Every real take-off position clears the plenum-end, trunk-terminal-end, and post-reduction clearances.</div>`
+        : `<table>
+            <thead><tr><th>Zone</th><th>Room</th><th>Violation</th></tr></thead>
+            <tbody>${violationRows}</tbody>
+          </table>`
+    }
+    ${
+      doublePlenumIssues.length > 0
+        ? `<p class="muted" style="font-size:11px;">${doublePlenumIssues.length} zone(s) exceed the ${EXTENDED_PLENUM_MAX_DOUBLE_RUN_FT}ft combined double-plenum limit across their real trunk arms.</p>`
+        : ""
+    }
+    ${
+      notDeterminableZones.length > 0
+        ? `<p class="muted" style="font-size:10px;">${notDeterminableZones.map((z) => esc(z.zoneName)).join(", ")}: not yet determinable - no real corridor graph digitized for ${notDeterminableZones.length === 1 ? "this zone" : "these zones"} yet.</p>`
+        : ""
+    }`;
+}
+
+function renderBalancingDamperSection(r: NonNullable<ReportData["residential"]>): string {
+  if (r.balancingDamperCheckByZone.length === 0) {
+    return `<div class="callout"><span class="badge badge-neutral">No zones</span></div>`;
+  }
+  const rows = r.balancingDamperCheckByZone
+    .map(({ zoneName, totalBranches, branchesWithDamper }) => {
+      const allInstalled = totalBranches > 0 && branchesWithDamper === totalBranches;
+      return `<tr>
+        <td>${esc(zoneName)}</td>
+        <td class="num">${branchesWithDamper} / ${totalBranches}</td>
+        <td>${
+          totalBranches === 0
+            ? `<span class="badge badge-neutral">No branches yet</span>`
+            : allInstalled
+              ? `<span class="badge badge-pass">Complete</span>`
+              : `<span class="badge badge-fail">Incomplete</span>`
+        }</td>
+      </tr>`;
+    })
+    .join("");
+  return `<table>
+    <thead><tr><th>Zone</th><th class="num">Branches w/ Damper Confirmed</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>
+  <p class="muted" style="font-size:10px;">Per IMC 608.1, every branch needs a real means of air-volume adjustment. Counts reflect technician-confirmed installation (Duct Design's Damper column), never assumed present.</p>`;
+}
+
 function renderDesignCheckSummaryPage(data: ReportData, org: OrgBranding): string {
   const r = data.residential!;
 
@@ -1161,14 +1257,11 @@ function renderDesignCheckSummaryPage(data: ReportData, org: OrgBranding): strin
      <div class="section-title">Total External Static Pressure vs. Equipment Rated Capacity</div>
      ${renderEspCapacitySection(r)}
 
-     <div class="section-title">Extended Plenum / Reducing Trunk Topology Rules</div>
-     <div class="callout" style="border-color:#b91c1c;">
-       <span class="badge badge-fail">NOT APPLICABLE</span> Summit's current duct-routing engine models one home-run trunk per
-       zone feeding radial branches, not a multi-segment extended-plenum or reducing trunk with real take-off positions along a
-       backbone. Take-off spacing/offset, end-cap clearance, reducing-trunk step-down, and balancing-damper-per-branch placement
-       cannot be checked against a topology the routing model does not represent. This requires a routing-model rebuild, not a
-       report-page change.
-     </div>`,
+     <div class="section-title">Extended Plenum / Reducing Trunk Topology</div>
+     ${renderTrunkTopologySection(r)}
+
+     <div class="section-title">Balancing Dampers</div>
+     ${renderBalancingDamperSection(r)}`,
     data,
   );
 }

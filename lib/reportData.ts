@@ -839,7 +839,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       // so they never get ranked as if they were a candidate outdoor
       // unit. See selectedAirHandler/blower-performance handling below.
       const catalog: EquipmentCatalogEntry[] = (catalogRows ?? [])
-        .filter((r) => r.equipment_type !== "air_handler")
+        .filter((r) => r.equipment_type !== "air_handler" && r.equipment_type !== "coil")
         .map((r) => ({
         id: r.id,
         manufacturer: r.manufacturer,

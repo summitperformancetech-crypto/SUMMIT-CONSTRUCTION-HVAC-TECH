@@ -51,6 +51,7 @@ const TYPE_LABEL: Record<EquipmentCatalogEntry["equipmentType"], string> = {
   furnace: "Furnace",
   package_unit: "Package Unit",
   air_handler: "Air Handler",
+  coil: "Coil",
 };
 
 const DEFAULT_VISIBLE_COUNT = 3;
@@ -179,7 +180,7 @@ export function EquipmentSelectionSection({
     // independent cooling/heating capacity - excluded here so one never
     // gets ranked as if it were a candidate outdoor unit.
     const evals: EquipmentEvaluation[] = catalog
-      .filter((equipment) => equipment.equipmentType !== "air_handler")
+      .filter((equipment) => equipment.equipmentType !== "air_handler" && equipment.equipmentType !== "coil")
       .map((equipment) =>
       evaluateEquipment(
         equipment,

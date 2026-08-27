@@ -3,7 +3,12 @@
 // Permit-Submittable Manual D Package's ESP-vs-capacity gate (see
 // lib/manualD.ts's checkEspVsEquipmentCapacity), explicitly excluded
 // from rankEquipment's candidate pool wherever that pool is built.
-export type EquipmentType = "split_ac" | "heat_pump" | "furnace" | "package_unit" | "air_handler";
+//
+// coil: same non-capacity-bearing treatment, same exclusion - a cased
+// coil's real capacity only exists as part of a certified outdoor-unit +
+// coil COMBINATION (see equipment_coil_matching), never as a standalone
+// rating.
+export type EquipmentType = "split_ac" | "heat_pump" | "furnace" | "package_unit" | "air_handler" | "coil";
 export type StageType = "single" | "two_stage" | "variable_speed";
 
 export type EquipmentCatalogEntry = {

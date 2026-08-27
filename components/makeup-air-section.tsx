@@ -59,15 +59,20 @@ export function MakeupAirSection({
   initialExhaustSources,
   catalogOptions,
   initialSelectedMakeupAirEquipmentId,
-  userRole,
 }: {
   projectId: string;
   initialExhaustSources: ExhaustSourceRow[];
   catalogOptions: MakeupAirCatalogOption[];
   initialSelectedMakeupAirEquipmentId: string | null;
-  userRole: string;
 }) {
-  const canEdit = userRole === "admin" || userRole === "estimator";
+  // Unlike HVAC equipment selection (Manual S - see equipment-selection-
+  // section.tsx's canSelectEquipment), there's no admin/estimator-only
+  // restriction on entering exhaust sources or picking a makeup-air
+  // unit - this is plain project data entry (real field-measured/
+  // manufacturer-spec CFM numbers), same as room dimensions or
+  // process_loads, which this codebase's own convention leaves open to
+  // every role. RLS on exhaust_sources (admin/estimator OR the
+  // project's own creator) is the real boundary, not a client-side gate.
   const [sources, setSources] = useState(initialExhaustSources);
   const [selectedId, setSelectedId] = useState(initialSelectedMakeupAirEquipmentId);
   const [savingSelection, setSavingSelection] = useState(false);
@@ -169,7 +174,7 @@ export function MakeupAirSection({
               <th className="pb-2">Source</th>
               <th className="pb-2">Description</th>
               <th className="pb-2 text-right">CFM</th>
-              {canEdit && <th className="pb-2" />}
+              <th className="pb-2" />
             </tr>
           </thead>
           <tbody>
@@ -178,17 +183,15 @@ export function MakeupAirSection({
                 <td className="py-2">{SOURCE_TYPE_LABEL[s.sourceType]}</td>
                 <td className="py-2 text-brand-grey-text">{s.description ?? "—"}</td>
                 <td className="py-2 text-right">{s.ratedCfm}</td>
-                {canEdit && (
-                  <td className="py-2 text-right">
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveSource(s.id)}
-                      className="rounded-md border border-red-900 px-2 py-1 text-xs text-red-400 transition hover:border-red-700 hover:text-red-300"
-                    >
-                      Remove
-                    </button>
-                  </td>
-                )}
+                <td className="py-2 text-right">
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSource(s.id)}
+                    className="rounded-md border border-red-900 px-2 py-1 text-xs text-red-400 transition hover:border-red-700 hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -199,8 +202,7 @@ export function MakeupAirSection({
         </p>
       )}
 
-      {canEdit && (
-        <div className="mb-4 flex flex-wrap items-end gap-3">
+      <div className="mb-4 flex flex-wrap items-end gap-3">
           <div>
             <label className="mb-1 block text-xs font-medium text-brand-grey-text">Source type</label>
             <select
@@ -241,17 +243,16 @@ export function MakeupAirSection({
             disabled={adding}
             className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
           >
-            {adding ? "Adding…" : "Add Source"}
-          </button>
-        </div>
-      )}
+          {adding ? "Adding…" : "Add Source"}
+        </button>
+      </div>
 
       <div className="mb-4">
         <label className="mb-1 block text-xs font-medium text-brand-grey-text">Selected makeup-air equipment (optional)</label>
         <select
           value={selectedId ?? ""}
           onChange={(e) => handleSelectUnit(e.target.value)}
-          disabled={!canEdit || savingSelection}
+          disabled={savingSelection}
           className="w-full max-w-xl rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold disabled:opacity-50"
         >
           <option value="">None selected</option>

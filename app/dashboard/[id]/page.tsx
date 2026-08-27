@@ -841,7 +841,6 @@ export default async function ProjectDetailPage({
           initialExhaustSources={initialExhaustSources}
           catalogOptions={makeupAirCatalogOptions}
           initialSelectedMakeupAirEquipmentId={project.selected_makeup_air_equipment_id}
-          userRole={userRole}
         />
       </div>
 

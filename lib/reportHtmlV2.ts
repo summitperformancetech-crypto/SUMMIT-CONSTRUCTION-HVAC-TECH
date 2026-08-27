@@ -20,6 +20,7 @@
 //   never a fabricated or approximated drawing.
 import type { ReportData } from "./reportData";
 import { resolvedFieldResolutionsAudit } from "./reportData";
+import type { InstallPackage } from "./installPackage";
 import { validateReportTotals, computeRequiredTonnage, type ReportValidationResult } from "./reportValidation";
 import { getReportGenerationGateStatus, type ReportGenerationGateStatus } from "./reportGate";
 import { renderCompassSvg } from "./reportCompass";
@@ -1306,6 +1307,66 @@ function renderDesignCheckSummaryPage(data: ReportData, org: OrgBranding): strin
 }
 
 // ---------------------------------------------------------------------------
+// Page 10a: Recommended Install Package (Catalog Expansion spec, Section
+// 5) - a real, per-zone bill of materials assembled from the equipment
+// catalog data (electrical/lineset/coil-matching/heat-kit/filter) and
+// this zone's own already-resolved Manual D diffuser/termination data.
+// See lib/installPackage.ts for the real, disclosed sourcing of every
+// line item - never a fabricated BOM line.
+// ---------------------------------------------------------------------------
+const LINE_ITEM_STATUS_BADGE: Record<string, string> = {
+  resolved: `<span class="badge badge-pass">Resolved</span>`,
+  flagged: `<span class="badge badge-fail">Flagged</span>`,
+  unresolved: `<span class="badge badge-neutral">Unresolved</span>`,
+};
+
+const INSTALL_PACKAGE_CATEGORY_LABEL: Record<string, string> = {
+  coil_matching: "Coil Matching",
+  electrical: "Electrical",
+  refrigerant_lineset: "Refrigerant Lineset",
+  heat_kit: "Heat Kit",
+  filter: "Filter",
+  diffuser: "Diffusers",
+  duct_material: "Duct Material",
+  termination: "Terminations",
+};
+
+function renderInstallPackagePage(data: ReportData, org: OrgBranding): string {
+  const r = data.residential!;
+
+  function renderZonePackage(pkg: InstallPackage): string {
+    const rows = pkg.lineItems
+      .map(
+        (item) => `<tr>
+          <td>${esc(INSTALL_PACKAGE_CATEGORY_LABEL[item.category] ?? item.category)}</td>
+          <td>${LINE_ITEM_STATUS_BADGE[item.status] ?? esc(item.status)}</td>
+          <td>${esc(item.summary)}</td>
+          <td class="muted" style="font-size:11px;">${esc(item.detail)}</td>
+        </tr>`,
+      )
+      .join("");
+    const scoreClass = pkg.completenessPercent >= 100 ? "badge-pass" : pkg.completenessPercent >= 60 ? "badge-neutral" : "badge-fail";
+    return `<div class="section-title">${esc(pkg.zoneName)}</div>
+      <div class="callout">
+        <span class="badge ${scoreClass}">${fmt1(pkg.completenessPercent)}% Complete</span>
+        ${pkg.uncertifiedPairing ? `<span class="badge badge-fail" style="margin-left:6px;">Uncertified Pairing - Requires Documented Acknowledgement</span>` : ""}
+        This is the full package score - every real line item below resolved cleanly, not just the Manual S equipment-compatibility score.
+      </div>
+      <table>
+        <thead><tr><th>Category</th><th>Status</th><th>Summary</th><th>Detail</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  const body =
+    r.installPackagesByZone.length === 0
+      ? `<div class="callout"><span class="badge badge-neutral">No zones</span></div>`
+      : r.installPackagesByZone.map(renderZonePackage).join("");
+
+  return pageShell("Recommended Install Package", org, body, data);
+}
+
+// ---------------------------------------------------------------------------
 // Page 11: Extraction status / field reference
 // ---------------------------------------------------------------------------
 function renderExtractionStatusPage(
@@ -1431,6 +1492,7 @@ export function renderSummitReportHtml(
     renderDuctSizingSchedulePage(data, org),
     renderRegisterSchedulePage(data, org),
     renderDesignCheckSummaryPage(data, org),
+    renderInstallPackagePage(data, org),
     renderExtractionStatusPage(data, org, drawings),
     renderAuditTrailPage(data, org, validation),
   ].join("\n");

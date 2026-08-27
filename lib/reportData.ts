@@ -34,6 +34,7 @@ import {
   type EquipmentEvaluation,
   type PerformancePoint,
 } from "./manualS";
+import { computeInstallPackage, type InstallPackage, type ElectricalSpec, type LinesetSpec, type HeatKitOption, type FilterSpec } from "./installPackage";
 import {
   computeCommercialBlockLoad,
   type CommercialOccupancyDefault,
@@ -529,6 +530,13 @@ export type ReportData = {
     // technician-confirmed duct_runs.has_balancing_damper, never
     // inferred.
     balancingDamperCheckByZone: { zoneId: string; zoneName: string; totalBranches: number; branchesWithDamper: number }[];
+    // Catalog Expansion + Recommended Install Package, Section 5 - the
+    // real, per-zone bill of materials assembled from the equipment
+    // catalog data (electrical/lineset/coil-matching/heat-kit/filter)
+    // closed by that spec, plus this zone's own already-resolved Manual
+    // D diffuser/termination data. See lib/installPackage.ts for the
+    // real, disclosed field-by-field sourcing of each line item.
+    installPackagesByZone: InstallPackage[];
   } | null;
   commercial: {
     blockLoad: CommercialBlockLoadResult | null;
@@ -1044,6 +1052,151 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       };
     });
 
+    // Catalog Expansion + Recommended Install Package, Section 5 - real,
+    // per-zone bill of materials. Fetches only the catalog/electrical/
+    // lineset/coil-match/heat-kit/filter rows for equipment a zone has
+    // actually selected (usually 0-2 distinct models per project), the
+    // same "fetch only what's selected" pattern the blower-performance
+    // fetch above already uses - not the whole reference tables.
+    const installPackageEquipmentIds = [
+      ...new Set(
+        (zones ?? [])
+          .flatMap((z) => [z.selected_equipment_id, z.selected_air_handler_equipment_id])
+          .filter((id): id is string => id != null),
+      ),
+    ];
+    const [
+      { data: installPackageCatalogRows },
+      { data: coilMatchRows },
+      { data: electricalSpecRows },
+      { data: linesetSpecRows },
+      { data: heatKitRows },
+      { data: filterSpecRows },
+    ] =
+      installPackageEquipmentIds.length > 0
+        ? await Promise.all([
+            supabase.from("equipment_catalog").select(EQUIPMENT_CATALOG_COLUMNS).in("id", installPackageEquipmentIds).returns<
+              {
+                id: string;
+                manufacturer: string;
+                model_number: string;
+                equipment_type: EquipmentCatalogEntry["equipmentType"];
+                stage_type: EquipmentCatalogEntry["stageType"];
+                nominal_cooling_capacity_btu: number | null;
+                nominal_heating_capacity_btu: number | null;
+                rated_cfm: number | null;
+                source_document: string;
+              }[]
+            >(),
+            supabase
+              .from("equipment_coil_matching")
+              .select("outdoor_unit_id, indoor_unit_id")
+              .in("outdoor_unit_id", installPackageEquipmentIds)
+              .returns<{ outdoor_unit_id: string; indoor_unit_id: string }[]>(),
+            supabase
+              .from("equipment_electrical_specs")
+              .select("equipment_id, voltage_phase, min_circuit_ampacity, max_overcurrent_protection")
+              .in("equipment_id", installPackageEquipmentIds)
+              .returns<{ equipment_id: string; voltage_phase: string; min_circuit_ampacity: number; max_overcurrent_protection: number }[]>(),
+            supabase
+              .from("refrigerant_lineset_specs")
+              .select("equipment_id, liquid_line_diameter_in, vapor_line_diameter_in, max_equivalent_length_ft, length_derate_notes")
+              .in("equipment_id", installPackageEquipmentIds)
+              .returns<{ equipment_id: string; liquid_line_diameter_in: number; vapor_line_diameter_in: number; max_equivalent_length_ft: number | null; length_derate_notes: string | null }[]>(),
+            supabase
+              .from("equipment_heat_kit_compatibility")
+              .select("equipment_id, heat_kit_kw, heat_kit_model, minimum_airflow_cfm")
+              .in("equipment_id", installPackageEquipmentIds)
+              .returns<{ equipment_id: string; heat_kit_kw: number; heat_kit_model: string | null; minimum_airflow_cfm: number | null }[]>(),
+            supabase
+              .from("equipment_filter_specs")
+              .select("equipment_id, filter_furnished, filter_type, filter_size, merv_rating_recommended")
+              .in("equipment_id", installPackageEquipmentIds)
+              .returns<{ equipment_id: string; filter_furnished: boolean; filter_type: string | null; filter_size: string | null; merv_rating_recommended: string | null }[]>(),
+          ])
+        : [{ data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }, { data: [] }];
+
+    const installPackageEquipmentById = new Map<string, EquipmentCatalogEntry>(
+      (installPackageCatalogRows ?? []).map((r) => [
+        r.id,
+        {
+          id: r.id,
+          manufacturer: r.manufacturer,
+          modelNumber: r.model_number,
+          equipmentType: r.equipment_type,
+          stageType: r.stage_type,
+          nominalCoolingCapacityBtu: r.nominal_cooling_capacity_btu,
+          nominalHeatingCapacityBtu: r.nominal_heating_capacity_btu,
+          ratedCfm: r.rated_cfm,
+          sourceDocument: r.source_document,
+        },
+      ]),
+    );
+    const coilMatchIndoorIdsByOutdoor = new Map<string, string[]>();
+    for (const r of coilMatchRows ?? []) {
+      if (!coilMatchIndoorIdsByOutdoor.has(r.outdoor_unit_id)) coilMatchIndoorIdsByOutdoor.set(r.outdoor_unit_id, []);
+      coilMatchIndoorIdsByOutdoor.get(r.outdoor_unit_id)!.push(r.indoor_unit_id);
+    }
+    const electricalSpecByEquipmentId = new Map<string, ElectricalSpec>(
+      (electricalSpecRows ?? []).map((r) => [
+        r.equipment_id,
+        { equipmentId: r.equipment_id, voltagePhase: r.voltage_phase, minCircuitAmpacity: r.min_circuit_ampacity, maxOvercurrentProtection: r.max_overcurrent_protection },
+      ]),
+    );
+    const linesetSpecByEquipmentId = new Map<string, LinesetSpec>(
+      (linesetSpecRows ?? []).map((r) => [
+        r.equipment_id,
+        { equipmentId: r.equipment_id, liquidLineDiameterIn: r.liquid_line_diameter_in, vaporLineDiameterIn: r.vapor_line_diameter_in, maxEquivalentLengthFt: r.max_equivalent_length_ft, lengthDerateNotes: r.length_derate_notes },
+      ]),
+    );
+    const heatKitOptionsByEquipmentId = new Map<string, HeatKitOption[]>();
+    for (const r of heatKitRows ?? []) {
+      const option: HeatKitOption = { equipmentId: r.equipment_id, heatKitKw: r.heat_kit_kw, heatKitModel: r.heat_kit_model, minimumAirflowCfm: r.minimum_airflow_cfm };
+      if (!heatKitOptionsByEquipmentId.has(r.equipment_id)) heatKitOptionsByEquipmentId.set(r.equipment_id, []);
+      heatKitOptionsByEquipmentId.get(r.equipment_id)!.push(option);
+    }
+    const filterSpecByEquipmentId = new Map<string, FilterSpec>(
+      (filterSpecRows ?? []).map((r) => [
+        r.equipment_id,
+        { equipmentId: r.equipment_id, filterFurnished: r.filter_furnished, filterType: r.filter_type, filterSize: r.filter_size, mervRatingRecommended: r.merv_rating_recommended },
+      ]),
+    );
+
+    const installPackagesByZone: InstallPackage[] = (zones ?? []).map((zone) => {
+      const outdoorUnit = zone.selected_equipment_id ? (installPackageEquipmentById.get(zone.selected_equipment_id) ?? null) : null;
+      const indoorUnit = zone.selected_air_handler_equipment_id
+        ? (installPackageEquipmentById.get(zone.selected_air_handler_equipment_id) ?? null)
+        : null;
+      const zoneCfm = (rooms ?? [])
+        .filter((r) => r.zone_id === zone.id)
+        .reduce((sum, r) => sum + (illustrationCfmByRoom.get(r.id) ?? 0), 0);
+      return computeInstallPackage({
+        zoneId: zone.id,
+        zoneName: zone.name,
+        outdoorUnit,
+        indoorUnit,
+        coilMatchIndoorUnitIds: outdoorUnit ? (coilMatchIndoorIdsByOutdoor.get(outdoorUnit.id) ?? []) : [],
+        electricalSpecByEquipmentId,
+        linesetSpecByEquipmentId,
+        heatKitOptionsForIndoorUnit: indoorUnit ? (heatKitOptionsByEquipmentId.get(indoorUnit.id) ?? []) : [],
+        filterSpecByEquipmentId,
+        supplementalHeatDeficitBtuh: zoneEquipment.find((z) => z.zoneId === zone.id)?.selectedEquipment?.supplementalHeatBtuh ?? null,
+        requiredCfm: zoneCfm,
+        // Real, disclosed limitation: the outdoor unit/condenser position
+        // pin (zones.condenser_position_*) has no placement UI yet (see
+        // this session's diagnostic report) - a real run length can't be
+        // computed for any project today, only once that pin exists.
+        lineSetLengthFt: null,
+        diffusers: (ductDiffusers ?? []).filter((d) => d.zone_id === zone.id),
+        // Real, disclosed limitation: diffuser_org_defaults/
+        // duct_material_org_defaults have 0 rows on any org today
+        // (confirmed live during the diagnostic report) - never null-
+        // coalesced into a fabricated default.
+        ductMaterialDefault: null,
+        terminations: (ductTerminations ?? []).filter((t) => t.zone_id === zone.id),
+      });
+    });
+
     residential = {
       envelope,
       manualJ,
@@ -1080,6 +1233,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
       espCapacityCheckByZone,
       trunkTopologyByZone,
       balancingDamperCheckByZone,
+      installPackagesByZone,
     };
   } else if (
     (project.project_type === "commercial" || project.project_type === "industrial") &&

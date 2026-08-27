@@ -62,6 +62,7 @@ import {
 } from "./ductRouting";
 import { mapGraphRoomIdsToRealRoomIds, type CorridorGraph } from "./ductCorridorGraph";
 import { analyzeTrunkTopology, type TrunkTopologyAnalysis } from "./ductTrunkTopology";
+import { evaluateMakeupAirBalance, type ExhaustSource, type MakeupAirBalanceResult, type MakeupAirUnitSpec } from "./makeupAir";
 
 export type ReportProject = {
   id: string;
@@ -570,6 +571,12 @@ export type ReportData = {
     industrialLoad: IndustrialZoneLoadResult[] | null;
   } | null;
   fieldResolutions: FieldResolution[];
+  // Makeup-air balance check (lib/makeupAir.ts) - whole-project, not
+  // per-zone or per-project-type, since a building's real exhaust load
+  // (kitchen hood, bath fans, dryer, industrial process exhaust) isn't
+  // tied to one HVAC zone or scoped to residential vs. commercial. Real,
+  // project-entered exhaust_sources rows drive it; never fabricated.
+  makeupAir: MakeupAirBalanceResult;
 };
 
 const ROOM_COLUMNS =
@@ -594,13 +601,14 @@ const PROCESS_LOAD_COLUMNS =
   "id, project_id, zone_id, load_type, description, sensible_btu_hr, latent_btu_hr, cfm, ach_required, source, notes";
 const FIELD_RESOLUTION_COLUMNS =
   "id, project_id, table_name, record_id, field_name, ai_extracted_value, final_value, resolution_type, override_reason, resolved_by, resolved_at";
+const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function getReportData(supabase: SupabaseClient<any>, projectId: string): Promise<ReportData | null> {
   const { data: project } = await supabase
     .from("projects")
     .select(
-      "id, org_id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc, no_vented_attic_or_crawlspace",
+      "id, org_id, name, project_type, address_line1, address_line2, city, state, zip, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, foundation_type, available_static_pressure_iwc, supply_air_temp_f, hvac_system_configuration, blower_tesp_iwc, no_vented_attic_or_crawlspace, selected_makeup_air_equipment_id",
     )
     .eq("id", projectId)
     .maybeSingle();
@@ -670,6 +678,40 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     .select("duct_location, min_r_value")
     .returns<{ duct_location: string; min_r_value: number }[]>();
   const codeMinimumsByLocation = buildCodeMinimumsByLocation(codeMinimumRows ?? []);
+
+  // Makeup-air balance (lib/makeupAir.ts) - whole-project, computed once
+  // regardless of project_type. Real, project-entered exhaust sources
+  // (kitchen hood, bath fans, dryer, industrial process exhaust) plus
+  // the project's own selected makeup-air unit, if any.
+  const { data: exhaustSourceRows } = await supabase
+    .from("exhaust_sources")
+    .select(EXHAUST_SOURCE_COLUMNS)
+    .eq("project_id", projectId)
+    .returns<{ id: string; room_id: string | null; source_type: string; description: string | null; rated_cfm: number }[]>();
+  const exhaustSources: ExhaustSource[] = (exhaustSourceRows ?? []).map((r) => ({
+    id: r.id,
+    roomId: r.room_id,
+    sourceType: r.source_type as ExhaustSource["sourceType"],
+    description: r.description,
+    ratedCfm: r.rated_cfm,
+  }));
+
+  let selectedMakeupAirUnit: MakeupAirUnitSpec | null = null;
+  if (project.selected_makeup_air_equipment_id) {
+    const { data: makeupAirSpecRow } = await supabase
+      .from("equipment_makeup_air_specs")
+      .select("category, min_rated_cfm, max_rated_cfm")
+      .eq("equipment_id", project.selected_makeup_air_equipment_id)
+      .maybeSingle<{ category: string; min_rated_cfm: number | null; max_rated_cfm: number | null }>();
+    if (makeupAirSpecRow) {
+      selectedMakeupAirUnit = {
+        category: makeupAirSpecRow.category as MakeupAirUnitSpec["category"],
+        minRatedCfm: makeupAirSpecRow.min_rated_cfm,
+        maxRatedCfm: makeupAirSpecRow.max_rated_cfm,
+      };
+    }
+  }
+  const makeupAir = evaluateMakeupAirBalance(exhaustSources, selectedMakeupAirUnit);
 
   let residential: ReportData["residential"] = null;
   let commercial: ReportData["commercial"] = null;
@@ -1456,6 +1498,7 @@ export async function getReportData(supabase: SupabaseClient<any>, projectId: st
     residential,
     commercial,
     fieldResolutions: fieldResolutions ?? [],
+    makeupAir,
   };
 }
 

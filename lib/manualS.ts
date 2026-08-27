@@ -8,7 +8,14 @@
 // coil's real capacity only exists as part of a certified outdoor-unit +
 // coil COMBINATION (see equipment_coil_matching), never as a standalone
 // rating.
-export type EquipmentType = "split_ac" | "heat_pump" | "furnace" | "package_unit" | "air_handler" | "coil";
+// 'makeup_air_unit' rows are real equipment_catalog rows (see migration
+// 20260827270000_add_makeup_air_tracking.sql) but are never evaluated by
+// evaluateEquipment/rankEquipment below - makeup air equipment has no
+// heating/cooling capacity to size against a Manual J load, and is
+// instead checked by the separate lib/makeupAir.ts module. Included here
+// only so EquipmentCatalogEntry can represent every real equipment_type
+// value without a cast.
+export type EquipmentType = "split_ac" | "heat_pump" | "furnace" | "package_unit" | "air_handler" | "coil" | "makeup_air_unit";
 export type StageType = "single" | "two_stage" | "variable_speed";
 
 export type EquipmentCatalogEntry = {

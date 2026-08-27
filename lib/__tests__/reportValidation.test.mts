@@ -120,6 +120,7 @@ function baseReportData(residential: NonNullable<ReportData["residential"]>): Re
     residential,
     commercial: null,
     fieldResolutions: [],
+    makeupAir: { totalExhaustCfm: 0, largestSingleSourceCfm: 0, status: "not_applicable", summary: "", detail: "" },
   };
 }
 

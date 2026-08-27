@@ -30,6 +30,7 @@ import {
 import { computeStaleItems, type StaleItem } from "@/lib/staleness";
 import type { Compass8 } from "@/lib/constants/compass";
 import type { HvacSystemConfiguration } from "@/components/system-configuration-section";
+import { MakeupAirSection, type ExhaustSourceRow, type MakeupAirCatalogOption } from "@/components/makeup-air-section";
 
 type Project = {
   id: string;
@@ -69,6 +70,7 @@ type Project = {
   preferred_manufacturer: string | null;
   hvac_system_configuration: HvacSystemConfiguration;
   no_vented_attic_or_crawlspace: boolean;
+  selected_makeup_air_equipment_id: string | null;
 };
 
 type DuctSizingTableDbRow = {
@@ -108,6 +110,28 @@ type EquipmentPerformancePointDbRow = {
   input_power_kw: number;
 };
 
+type ExhaustSourceDbRow = {
+  id: string;
+  room_id: string | null;
+  source_type: ExhaustSourceRow["sourceType"];
+  description: string | null;
+  rated_cfm: number;
+};
+
+type MakeupAirSpecDbRow = {
+  equipment_id: string;
+  category: "residential_damper" | "residential_fan_powered" | "commercial_tempered";
+  duct_diameter_in: number | null;
+  min_rated_cfm: number | null;
+  max_rated_cfm: number | null;
+  heating_fuel_type: "gas" | "electric" | "none";
+  max_heating_capacity_btu: number | null;
+  control_type: string;
+  cooling_capable: boolean;
+  min_cooling_tons: number | null;
+  max_cooling_tons: number | null;
+};
+
 // Duplicated from equipment-selection-section.tsx rather than imported -
 // same "use client" runtime-value-across-the-boundary issue documented on
 // DUCT_RUN_COLUMNS above.
@@ -115,6 +139,9 @@ const EQUIPMENT_CATALOG_COLUMNS =
   "id, manufacturer, model_number, equipment_type, stage_type, nominal_cooling_capacity_btu, nominal_heating_capacity_btu, rated_cfm, source_document, direct_vent_capable";
 const EQUIPMENT_PERFORMANCE_POINT_COLUMNS =
   "equipment_id, mode, outdoor_temp_f, indoor_entering_temp_f, indoor_entering_wetbulb_f, sensible_capacity_btu, total_capacity_btu, input_power_kw";
+const EXHAUST_SOURCE_COLUMNS = "id, room_id, source_type, description, rated_cfm";
+const MAKEUP_AIR_SPEC_COLUMNS =
+  "equipment_id, category, duct_diameter_in, min_rated_cfm, max_rated_cfm, heating_fuel_type, max_heating_capacity_btu, control_type, cooling_capable, min_cooling_tons, max_cooling_tons";
 
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
@@ -250,7 +277,7 @@ export default async function ProjectDetailPage({
   const { data: project, error } = await supabase
     .from("projects")
     .select(
-      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, blower_tesp_iwc, evaporator_coil_loss_iwc, air_filter_loss_iwc, grilles_registers_loss_iwc, building_front_faces, preferred_manufacturer, hvac_system_configuration, no_vented_attic_or_crawlspace",
+      "id, name, project_type, address_line1, city, state, zip, climate_confirmed, created_by, created_at, wall_insulation_r_value, ceiling_insulation_r_value, floor_insulation_r_value, window_u_value, window_shgc, door_u_value, ach50, indoor_design_temp_heating_f, indoor_design_temp_cooling_f, occupants, attic_construction_type, attic_insulation_type, foundation_type, window_type, window_count, available_static_pressure_iwc, supply_air_temp_f, blower_tesp_iwc, evaporator_coil_loss_iwc, air_filter_loss_iwc, grilles_registers_loss_iwc, building_front_faces, preferred_manufacturer, hvac_system_configuration, no_vented_attic_or_crawlspace, selected_makeup_air_equipment_id",
     )
     .eq("id", id)
     .maybeSingle<Project>();
@@ -546,6 +573,8 @@ export default async function ProjectDetailPage({
     { data: equipmentPerformancePointRows },
     { data: equipmentPreferenceRows },
     { data: ductInsulationCodeMinimumRows },
+    { data: exhaustSourceRows },
+    { data: makeupAirSpecRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -633,6 +662,19 @@ export default async function ProjectDetailPage({
       .from("duct_insulation_code_minimums")
       .select("duct_location, min_r_value")
       .returns<{ duct_location: string; min_r_value: number }[]>(),
+    supabase
+      .from("exhaust_sources")
+      .select(EXHAUST_SOURCE_COLUMNS)
+      .eq("project_id", project.id)
+      .order("created_at", { ascending: true })
+      .returns<ExhaustSourceDbRow[]>(),
+    // Global reference data, not project-scoped - one row per real
+    // equipment_catalog row with equipment_type = 'makeup_air_unit' (see
+    // migration 20260827270000_add_makeup_air_tracking.sql).
+    supabase
+      .from("equipment_makeup_air_specs")
+      .select(MAKEUP_AIR_SPEC_COLUMNS)
+      .returns<MakeupAirSpecDbRow[]>(),
   ]);
 
   const preferredEquipmentIds = new Set(
@@ -654,6 +696,31 @@ export default async function ProjectDetailPage({
     sourceDocument: r.source_document,
     directVentCapable: r.direct_vent_capable,
   }));
+
+  const initialExhaustSources: ExhaustSourceRow[] = (exhaustSourceRows ?? []).map((r) => ({
+    id: r.id,
+    roomId: r.room_id,
+    sourceType: r.source_type,
+    description: r.description,
+    ratedCfm: r.rated_cfm,
+  }));
+
+  const makeupAirSpecByEquipmentId = new Map((makeupAirSpecRows ?? []).map((r) => [r.equipment_id, r]));
+  const makeupAirCatalogOptions: MakeupAirCatalogOption[] = (equipmentCatalogRows ?? [])
+    .filter((r) => r.equipment_type === "makeup_air_unit")
+    .map((r) => {
+      const spec = makeupAirSpecByEquipmentId.get(r.id);
+      return {
+        equipmentId: r.id,
+        manufacturer: r.manufacturer,
+        modelNumber: r.model_number,
+        category: spec?.category ?? "residential_damper",
+        ductDiameterIn: spec?.duct_diameter_in ?? null,
+        minRatedCfm: spec?.min_rated_cfm ?? null,
+        maxRatedCfm: spec?.max_rated_cfm ?? null,
+        controlType: spec?.control_type ?? "",
+      };
+    });
 
   const equipmentPerformancePoints: PerformancePoint[] = (equipmentPerformancePointRows ?? []).map(
     (r) => ({
@@ -767,6 +834,16 @@ export default async function ProjectDetailPage({
         initialSignOffs={signOffRows ?? []}
         userRole={userRole}
       />
+
+      <div className="mb-6">
+        <MakeupAirSection
+          projectId={project.id}
+          initialExhaustSources={initialExhaustSources}
+          catalogOptions={makeupAirCatalogOptions}
+          initialSelectedMakeupAirEquipmentId={project.selected_makeup_air_equipment_id}
+          userRole={userRole}
+        />
+      </div>
 
       <ProjectWorkspace
         projectId={project.id}

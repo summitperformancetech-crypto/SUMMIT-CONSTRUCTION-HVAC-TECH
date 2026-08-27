@@ -158,6 +158,7 @@ function baseReportData(rooms: RoomRow[]): ReportData {
     },
     commercial: null,
     fieldResolutions: [],
+    makeupAir: { totalExhaustCfm: 0, largestSingleSourceCfm: 0, status: "not_applicable", summary: "", detail: "" },
   };
 }
 
@@ -209,6 +210,7 @@ describe("getReportGenerationGateStatus - data completeness gate", () => {
       residential: null,
       commercial: { blockLoad: null, industrialLoad: null },
       fieldResolutions: [],
+      makeupAir: { totalExhaustCfm: 0, largestSingleSourceCfm: 0, status: "not_applicable", summary: "", detail: "" },
     };
     const status = getReportGenerationGateStatus(data, [], new Set());
     expect(status.blockers.some((b) => b.code === "data_incomplete")).toBe(false);

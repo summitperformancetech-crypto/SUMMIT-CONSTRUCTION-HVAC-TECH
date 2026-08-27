@@ -1381,6 +1381,41 @@ function renderInstallPackagePage(data: ReportData, org: OrgBranding): string {
 }
 
 // ---------------------------------------------------------------------------
+// Page 10b: Makeup Air Balance (lib/makeupAir.ts) - real, project-entered
+// exhaust sources (kitchen range hood, bath/utility fans, dryer, process
+// exhaust) checked against IRC M1503.6's real 400 cfm makeup-air trigger
+// and, when a makeup-air unit is selected, its real published capacity.
+// Whole-project, not per-zone - see lib/makeupAir.ts's own header comment
+// for why the ASHRAE 62.2 Section 6.4 net-exhaust calculation isn't
+// attempted here.
+// ---------------------------------------------------------------------------
+const MAKEUP_AIR_STATUS_BADGE: Record<string, string> = {
+  resolved: `<span class="badge badge-pass">Resolved</span>`,
+  flagged: `<span class="badge badge-fail">Flagged</span>`,
+  not_applicable: `<span class="badge badge-neutral">Not Applicable</span>`,
+};
+
+function renderMakeupAirPage(data: ReportData, org: OrgBranding): string {
+  const m = data.makeupAir;
+  const body = `
+    <div class="section-title">Makeup Air Balance</div>
+    <table>
+      <thead><tr><th>Status</th><th class="num">Total Exhaust</th><th class="num">Largest Single Source</th><th>Summary</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>${MAKEUP_AIR_STATUS_BADGE[m.status] ?? esc(m.status)}</td>
+          <td class="num">${fmt(m.totalExhaustCfm)} cfm</td>
+          <td class="num">${fmt(m.largestSingleSourceCfm)} cfm</td>
+          <td>${esc(m.summary)}</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:11px;">${esc(m.detail)}</p>
+  `;
+  return pageShell("Makeup Air Balance", org, body, data);
+}
+
+// ---------------------------------------------------------------------------
 // Page 11: Extraction status / field reference
 // ---------------------------------------------------------------------------
 function renderExtractionStatusPage(
@@ -1507,6 +1542,7 @@ export function renderSummitReportHtml(
     renderRegisterSchedulePage(data, org),
     renderDesignCheckSummaryPage(data, org),
     renderInstallPackagePage(data, org),
+    renderMakeupAirPage(data, org),
     renderExtractionStatusPage(data, org, drawings),
     renderAuditTrailPage(data, org, validation),
   ].join("\n");

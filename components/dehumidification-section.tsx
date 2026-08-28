@@ -99,6 +99,60 @@ export function DehumidificationSection({
 
   const latentBtuhByRoomId = useMemo(() => new Map(roomResults.map((r) => [r.roomId, r.coolingLatentBtuh])), [roomResults]);
 
+  // Recompute this system's real duct sizing and persist the snapshot
+  // fields (cfm, friction_rate, velocity_fpm, calculated_*, total_
+  // effective_length_ft, pressure_drop_iwc) back to duct_runs - same
+  // "recompute and re-save on every input change" convention as
+  // duct-design-section.tsx's persistRunSnapshot/handleAddRun (the
+  // live UI never trusts these columns for display, but they still need
+  // to be real and current for any future export that reads duct_runs
+  // directly, same rationale as the main system's own duct schedule).
+  async function persistSizingForSystem(
+    system: DehumidificationSystemRow,
+    runsForSystem: DehumidificationDuctRunRow[],
+    supabase: ReturnType<typeof createClient>,
+  ) {
+    const selectedOption = system.selectedEquipmentId
+      ? catalogOptions.find((o) => o.equipmentId === system.selectedEquipmentId) ?? null
+      : null;
+    if (!selectedOption || system.availableStaticPressureIwc == null) return;
+    const selectedBlowerPoints = blowerPerformancePoints.filter((p) => p.equipmentId === selectedOption.equipmentId);
+    const cfm = interpolateBlowerCfmAtEsp(selectedBlowerPoints, "single", system.availableStaticPressureIwc);
+    if (cfm == null) return;
+
+    const ductRunInputs: DuctRunInput[] = runsForSystem.map((r) => ({
+      id: r.id,
+      zoneId: system.id,
+      runType: "branch",
+      roomId: null,
+      lengthFt: r.lengthFt,
+      fittingEquivalentLengthFt: r.fittingEquivalentLengthFt,
+      ductShape: r.ductShape,
+      targetHeightIn: r.targetHeightIn,
+    }));
+    const frictionRate = computeZoneFrictionRates(ductRunInputs, system.availableStaticPressureIwc).get(system.id) ?? null;
+    if (frictionRate == null) return;
+
+    await Promise.all(
+      ductRunInputs.map(async (input) => {
+        const sizing = sizeDuctRun(input, cfm, frictionRate, ductSizingTable);
+        await supabase
+          .from("duct_runs")
+          .update({
+            cfm: sizing.cfm,
+            friction_rate: sizing.frictionRate,
+            velocity_fpm: sizing.velocityFpm,
+            calculated_diameter_in: sizing.diameterIn,
+            calculated_width_in: sizing.widthIn,
+            calculated_height_in: sizing.heightIn,
+            total_effective_length_ft: sizing.totalEffectiveLengthFt,
+            pressure_drop_iwc: sizing.pressureDropIwc,
+          })
+          .eq("id", input.id);
+      }),
+    );
+  }
+
   async function handleAddSystem() {
     if (!newName.trim()) {
       setError("Give the dehumidification system a name (e.g. \"Basement Dehumidifier\").");
@@ -155,6 +209,16 @@ export function DehumidificationSection({
       return;
     }
     setSystems((prev) => prev.map((s) => (s.id === id ? { ...s, ...localPatch } : s)));
+    // Every run's cfm/friction depends on the system's own static-
+    // pressure budget and selected equipment - refresh every stored
+    // snapshot for this system whenever either changes, same reason
+    // duct-design-section.tsx refreshes every run on a project-level
+    // settings save.
+    if ("available_static_pressure_iwc" in patch || "selected_equipment_id" in patch) {
+      const updatedSystem = { ...systems.find((s) => s.id === id)!, ...localPatch };
+      const runsForSystem = ductRuns.filter((r) => r.dehumidificationSystemId === id);
+      await persistSizingForSystem(updatedSystem, runsForSystem, supabase);
+    }
   }
 
   async function handleToggleRoom(system: DehumidificationSystemRow, roomId: string) {
@@ -215,19 +279,22 @@ export function DehumidificationSection({
       setError(insertError?.message ?? "Failed to add duct run.");
       return;
     }
-    setDuctRuns((prev) => [
-      ...prev,
-      {
-        id: data.id,
-        dehumidificationSystemId: data.dehumidification_system_id,
-        runType: data.run_type,
-        lengthFt: data.length_ft,
-        fittingEquivalentLengthFt: data.fitting_equivalent_length_ft,
-        ductShape: data.duct_shape,
-        targetHeightIn: data.target_height_in,
-        material: data.material,
-      },
-    ]);
+    const newRun: DehumidificationDuctRunRow = {
+      id: data.id,
+      dehumidificationSystemId: data.dehumidification_system_id,
+      runType: data.run_type,
+      lengthFt: data.length_ft,
+      fittingEquivalentLengthFt: data.fitting_equivalent_length_ft,
+      ductShape: data.duct_shape,
+      targetHeightIn: data.target_height_in,
+      material: data.material,
+    };
+    setDuctRuns((prev) => [...prev, newRun]);
+    const system = systems.find((s) => s.id === systemId);
+    if (system) {
+      const runsForSystem = [...ductRuns.filter((r) => r.dehumidificationSystemId === systemId), newRun];
+      await persistSizingForSystem(system, runsForSystem, supabase);
+    }
   }
 
   async function handleUpdateDuctRun(id: string, patch: Record<string, unknown>, localPatch: Partial<DehumidificationDuctRunRow>) {
@@ -240,7 +307,14 @@ export function DehumidificationSection({
       setError(updateError.message);
       return;
     }
-    setDuctRuns((prev) => prev.map((r) => (r.id === id ? { ...r, ...localPatch } : r)));
+    const updatedRuns = ductRuns.map((r) => (r.id === id ? { ...r, ...localPatch } : r));
+    setDuctRuns(updatedRuns);
+    const changedRun = updatedRuns.find((r) => r.id === id);
+    const system = changedRun ? systems.find((s) => s.id === changedRun.dehumidificationSystemId) : undefined;
+    if (system && changedRun) {
+      const runsForSystem = updatedRuns.filter((r) => r.dehumidificationSystemId === system.id);
+      await persistSizingForSystem(system, runsForSystem, supabase);
+    }
   }
 
   async function handleRemoveDuctRun(id: string) {

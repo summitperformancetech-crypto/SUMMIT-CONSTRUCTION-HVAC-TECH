@@ -70,6 +70,13 @@ export type DehumidifierCatalogOption = {
   outletDuctDiameterIn: number;
   drainConnectionSpec: string;
   hasBackdraftDamper: boolean;
+  // Real, manufacturer-published ceiling from the unit's own
+  // installation instructions (a distinct, higher number than the data
+  // sheet's last tested curve point - see supabase/migrations/
+  // 20260827350000_add_dehumidifier_max_design_esp.sql). Null only if a
+  // future catalog addition hasn't had its installation instructions
+  // checked yet - never assumed equal to the data sheet's curve range.
+  maxDesignExternalStaticPressureIwc: number | null;
 };
 
 // See module comment above - the real, published number closest to

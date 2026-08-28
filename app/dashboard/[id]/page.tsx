@@ -164,6 +164,7 @@ type EquipmentDehumidifierSpecDbRow = {
   outlet_duct_diameter_in: number;
   drain_connection_spec: string;
   has_backdraft_damper: boolean;
+  max_design_external_static_pressure_iwc: number | null;
 };
 
 type EquipmentBlowerPerformanceDbRow = {
@@ -201,7 +202,7 @@ const MAKEUP_AIR_SPEC_COLUMNS =
 const EXHAUST_FAN_SPEC_COLUMNS =
   "equipment_id, fan_category, min_rated_cfm, max_rated_cfm, sone_rating, hvi_certified, has_backdraft_damper";
 const EQUIPMENT_DEHUMIDIFIER_SPEC_COLUMNS =
-  "equipment_id, rated_pints_per_day_80_60, rated_pints_per_day_73_60, inlet_duct_diameter_in, secondary_inlet_duct_diameter_in, outlet_duct_diameter_in, drain_connection_spec, has_backdraft_damper";
+  "equipment_id, rated_pints_per_day_80_60, rated_pints_per_day_73_60, inlet_duct_diameter_in, secondary_inlet_duct_diameter_in, outlet_duct_diameter_in, drain_connection_spec, has_backdraft_damper, max_design_external_static_pressure_iwc";
 const EQUIPMENT_BLOWER_PERFORMANCE_COLUMNS = "equipment_id, speed_tap, esp_iwc, cfm";
 // Duplicated from dehumidification-section.tsx rather than imported -
 // same runtime-value-across-the-"use client"-boundary reason as every
@@ -873,6 +874,7 @@ export default async function ProjectDetailPage({
           outletDuctDiameterIn: spec.outlet_duct_diameter_in,
           drainConnectionSpec: spec.drain_connection_spec,
           hasBackdraftDamper: spec.has_backdraft_damper,
+          maxDesignExternalStaticPressureIwc: spec.max_design_external_static_pressure_iwc,
         },
       ];
     });

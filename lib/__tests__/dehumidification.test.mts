@@ -36,6 +36,7 @@ describe("bestAvailableRatedPintsPerDay", () => {
     outletDuctDiameterIn: 10,
     drainConnectionSpec: '3/4" MNPT',
     hasBackdraftDamper: true,
+    maxDesignExternalStaticPressureIwc: 0.6,
   };
 
   const santaFeUltra98: DehumidifierCatalogOption = {
@@ -49,6 +50,7 @@ describe("bestAvailableRatedPintsPerDay", () => {
     outletDuctDiameterIn: 10,
     drainConnectionSpec: '3/4" NPT',
     hasBackdraftDamper: false,
+    maxDesignExternalStaticPressureIwc: 0.5,
   };
 
   it("prefers the real 73/60 DOE point when the manufacturer publishes it", () => {
@@ -73,6 +75,7 @@ describe("dehumidifierCandidatesFor", () => {
       outletDuctDiameterIn: 10,
       drainConnectionSpec: '3/4" MNPT',
       hasBackdraftDamper: true,
+      maxDesignExternalStaticPressureIwc: 0.6,
     },
     {
       equipmentId: "b",
@@ -85,6 +88,7 @@ describe("dehumidifierCandidatesFor", () => {
       outletDuctDiameterIn: 10,
       drainConnectionSpec: '3/4" NPT',
       hasBackdraftDamper: false,
+      maxDesignExternalStaticPressureIwc: 0.5,
     },
   ];
 

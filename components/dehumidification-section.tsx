@@ -399,6 +399,7 @@ export function DehumidificationSection({
             <input
               type="number"
               step="0.01"
+              max={selectedOption?.maxDesignExternalStaticPressureIwc ?? undefined}
               value={system.availableStaticPressureIwc ?? ""}
               onChange={(e) =>
                 handleUpdateSystem(
@@ -410,6 +411,26 @@ export function DehumidificationSection({
               disabled={savingSystemId === system.id}
               className="w-full rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold disabled:opacity-50"
             />
+            {selectedOption?.maxDesignExternalStaticPressureIwc != null ? (
+              <p
+                className={`mt-1 text-xs ${
+                  system.availableStaticPressureIwc != null &&
+                  system.availableStaticPressureIwc >= selectedOption.maxDesignExternalStaticPressureIwc
+                    ? "text-red-400"
+                    : "text-brand-grey-text"
+                }`}
+              >
+                {selectedOption.manufacturer} {selectedOption.modelNumber}&apos;s own installation instructions:
+                do not exceed {selectedOption.maxDesignExternalStaticPressureIwc}&quot; w.c.
+                {system.availableStaticPressureIwc != null &&
+                  system.availableStaticPressureIwc >= selectedOption.maxDesignExternalStaticPressureIwc &&
+                  " - entered value meets or exceeds this real manufacturer ceiling."}
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-brand-grey-text">
+                Select a dehumidifier below to see its real manufacturer-published static pressure ceiling.
+              </p>
+            )}
           </div>
         </div>
 

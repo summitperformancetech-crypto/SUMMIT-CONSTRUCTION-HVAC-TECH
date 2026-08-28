@@ -14,6 +14,9 @@ import type {
 } from "@/lib/manualJ";
 import { DRAWING_COLUMNS, type DrawingRow } from "@/lib/drawingExtraction";
 import type { DuctRunRow } from "@/components/duct-design-section";
+import type { DehumidificationSystemRow, DehumidificationDuctRunRow } from "@/components/dehumidification-section";
+import type { DehumidifierCatalogOption } from "@/lib/dehumidification";
+import type { BlowerPerformancePoint } from "@/lib/manualD";
 import type { DuctDiffuserRow, AhuInstallationDetailRow, DuctTerminationRow } from "@/lib/ductRouting";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
@@ -152,6 +155,38 @@ type MakeupAirSpecDbRow = {
   max_cooling_tons: number | null;
 };
 
+type EquipmentDehumidifierSpecDbRow = {
+  equipment_id: string;
+  rated_pints_per_day_80_60: number;
+  rated_pints_per_day_73_60: number | null;
+  inlet_duct_diameter_in: number | null;
+  secondary_inlet_duct_diameter_in: number | null;
+  outlet_duct_diameter_in: number;
+  drain_connection_spec: string;
+  has_backdraft_damper: boolean;
+};
+
+type EquipmentBlowerPerformanceDbRow = {
+  equipment_id: string;
+  speed_tap: string;
+  esp_iwc: number;
+  cfm: number;
+};
+
+type DehumidificationSystemDbRow = {
+  id: string;
+  name: string;
+  installation_topology: DehumidificationSystemRow["installationTopology"];
+  selected_equipment_id: string | null;
+  available_static_pressure_iwc: number | null;
+  notes: string | null;
+};
+
+type DehumidificationSystemRoomDbRow = {
+  dehumidification_system_id: string;
+  room_id: string;
+};
+
 // Duplicated from equipment-selection-section.tsx rather than imported -
 // same "use client" runtime-value-across-the-boundary issue documented on
 // DUCT_RUN_COLUMNS above.
@@ -165,6 +200,17 @@ const MAKEUP_AIR_SPEC_COLUMNS =
   "equipment_id, category, duct_diameter_in, min_rated_cfm, max_rated_cfm, heating_fuel_type, max_heating_capacity_btu, control_type, cooling_capable, min_cooling_tons, max_cooling_tons";
 const EXHAUST_FAN_SPEC_COLUMNS =
   "equipment_id, fan_category, min_rated_cfm, max_rated_cfm, sone_rating, hvi_certified, has_backdraft_damper";
+const EQUIPMENT_DEHUMIDIFIER_SPEC_COLUMNS =
+  "equipment_id, rated_pints_per_day_80_60, rated_pints_per_day_73_60, inlet_duct_diameter_in, secondary_inlet_duct_diameter_in, outlet_duct_diameter_in, drain_connection_spec, has_backdraft_damper";
+const EQUIPMENT_BLOWER_PERFORMANCE_COLUMNS = "equipment_id, speed_tap, esp_iwc, cfm";
+// Duplicated from dehumidification-section.tsx rather than imported -
+// same runtime-value-across-the-"use client"-boundary reason as every
+// other *_COLUMNS constant in this file (see the DUCT_RUN_COLUMNS
+// comment below).
+const DEHUMIDIFICATION_SYSTEM_COLUMNS =
+  "id, name, installation_topology, selected_equipment_id, available_static_pressure_iwc, notes";
+const DEHUMIDIFICATION_DUCT_RUN_COLUMNS =
+  "id, dehumidification_system_id, run_type, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material";
 
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
@@ -184,7 +230,7 @@ const ZONE_COLUMNS =
 // `import type` across that boundary is fine (erased at compile time),
 // runtime values are not.
 const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc, has_balancing_damper";
+  "id, project_id, zone_id, dehumidification_system_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc, has_balancing_damper";
 const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 const AHU_INSTALLATION_DETAIL_COLUMNS =
@@ -599,6 +645,9 @@ export default async function ProjectDetailPage({
     { data: exhaustSourceRows },
     { data: makeupAirSpecRows },
     { data: exhaustFanSpecRows },
+    { data: dehumidifierSpecRows },
+    { data: blowerPerformanceRows },
+    { data: dehumidificationSystemRows },
   ] = await Promise.all([
     supabase
       .from("rooms")
@@ -706,6 +755,28 @@ export default async function ProjectDetailPage({
       .from("equipment_exhaust_fan_specs")
       .select(EXHAUST_FAN_SPEC_COLUMNS)
       .returns<ExhaustFanSpecDbRow[]>(),
+    // Global reference data, not project-scoped - one row per real
+    // equipment_catalog row with equipment_type = 'dehumidifier' (see
+    // migration 20260827330000_add_standalone_dehumidification.sql).
+    supabase
+      .from("equipment_dehumidifier_specs")
+      .select(EQUIPMENT_DEHUMIDIFIER_SPEC_COLUMNS)
+      .returns<EquipmentDehumidifierSpecDbRow[]>(),
+    // Global reference data, not project-scoped - real per-model
+    // airflow-vs-ESP curves (currently: Goodman AVPTC air handlers plus
+    // the Santa Fe/Aprilaire dehumidifier rows added alongside this
+    // feature). Small table, fetched unfiltered same as the other global
+    // reference queries above.
+    supabase
+      .from("equipment_blower_performance")
+      .select(EQUIPMENT_BLOWER_PERFORMANCE_COLUMNS)
+      .returns<EquipmentBlowerPerformanceDbRow[]>(),
+    supabase
+      .from("dehumidification_systems")
+      .select(DEHUMIDIFICATION_SYSTEM_COLUMNS)
+      .eq("project_id", project.id)
+      .order("created_at", { ascending: true })
+      .returns<DehumidificationSystemDbRow[]>(),
   ]);
 
   const preferredEquipmentIds = new Set(
@@ -783,6 +854,89 @@ export default async function ProjectDetailPage({
     name: r.name,
     roomType: r.room_type,
   }));
+
+  const dehumidifierSpecByEquipmentId = new Map((dehumidifierSpecRows ?? []).map((r) => [r.equipment_id, r]));
+  const dehumidifierCatalogOptions: DehumidifierCatalogOption[] = (equipmentCatalogRows ?? [])
+    .filter((r) => r.equipment_type === "dehumidifier")
+    .flatMap((r) => {
+      const spec = dehumidifierSpecByEquipmentId.get(r.id);
+      if (!spec) return [];
+      return [
+        {
+          equipmentId: r.id,
+          manufacturer: r.manufacturer,
+          modelNumber: r.model_number,
+          ratedPintsPerDay80_60: spec.rated_pints_per_day_80_60,
+          ratedPintsPerDay73_60: spec.rated_pints_per_day_73_60,
+          inletDuctDiameterIn: spec.inlet_duct_diameter_in,
+          secondaryInletDuctDiameterIn: spec.secondary_inlet_duct_diameter_in,
+          outletDuctDiameterIn: spec.outlet_duct_diameter_in,
+          drainConnectionSpec: spec.drain_connection_spec,
+          hasBackdraftDamper: spec.has_backdraft_damper,
+        },
+      ];
+    });
+
+  const dehumidifierBlowerPerformancePoints: BlowerPerformancePoint[] = (blowerPerformanceRows ?? []).map((r) => ({
+    equipmentId: r.equipment_id,
+    speedTap: r.speed_tap,
+    espIwc: r.esp_iwc,
+    cfm: r.cfm,
+  }));
+
+  // Sequential, not part of the Promise.all above - which real
+  // dehumidification systems exist for this project (and therefore
+  // which ids to filter dehumidification_system_rooms by) isn't known
+  // until the systems themselves are fetched. Cheap in practice: a
+  // project has at most a handful of standalone dehumidification
+  // systems.
+  const dehumidificationSystemIds = (dehumidificationSystemRows ?? []).map((r) => r.id);
+  const { data: dehumidificationSystemRoomRows } =
+    dehumidificationSystemIds.length > 0
+      ? await supabase
+          .from("dehumidification_system_rooms")
+          .select("dehumidification_system_id, room_id")
+          .in("dehumidification_system_id", dehumidificationSystemIds)
+          .returns<DehumidificationSystemRoomDbRow[]>()
+      : { data: [] as DehumidificationSystemRoomDbRow[] };
+
+  const roomIdsBySystemId = new Map<string, string[]>();
+  for (const r of dehumidificationSystemRoomRows ?? []) {
+    const existing = roomIdsBySystemId.get(r.dehumidification_system_id) ?? [];
+    existing.push(r.room_id);
+    roomIdsBySystemId.set(r.dehumidification_system_id, existing);
+  }
+
+  const initialDehumidificationSystems: DehumidificationSystemRow[] = (dehumidificationSystemRows ?? []).map((r) => ({
+    id: r.id,
+    name: r.name,
+    installationTopology: r.installation_topology,
+    selectedEquipmentId: r.selected_equipment_id,
+    availableStaticPressureIwc: r.available_static_pressure_iwc,
+    notes: r.notes,
+    roomIds: roomIdsBySystemId.get(r.id) ?? [],
+  }));
+
+  // duct_runs is fetched once for the whole project (DUCT_RUN_COLUMNS
+  // query above) and now carries two disjoint populations distinguished
+  // by exactly one of zone_id/dehumidification_system_id being set (DB
+  // constraint duct_runs_exactly_one_parent) - split here so
+  // DuctDesignSection keeps receiving exactly the zone-parented rows it
+  // always has, and the new dehumidification-system-parented rows go to
+  // DehumidificationSection instead.
+  const zoneDuctRuns = (ductRuns ?? []).filter((r) => r.dehumidification_system_id == null);
+  const initialDehumidificationDuctRuns: DehumidificationDuctRunRow[] = (ductRuns ?? [])
+    .filter((r): r is typeof r & { dehumidification_system_id: string } => r.dehumidification_system_id != null)
+    .map((r) => ({
+      id: r.id,
+      dehumidificationSystemId: r.dehumidification_system_id,
+      runType: r.run_type as "supply" | "return",
+      lengthFt: r.length_ft,
+      fittingEquivalentLengthFt: r.fitting_equivalent_length_ft,
+      ductShape: r.duct_shape,
+      targetHeightIn: r.target_height_in,
+      material: r.material,
+    }));
 
   const equipmentPerformancePoints: PerformancePoint[] = (equipmentPerformancePointRows ?? []).map(
     (r) => ({
@@ -930,7 +1084,7 @@ export default async function ProjectDetailPage({
         initialEvaporatorCoilLossIwc={project.evaporator_coil_loss_iwc}
         initialAirFilterLossIwc={project.air_filter_loss_iwc}
         initialGrillesRegistersLossIwc={project.grilles_registers_loss_iwc}
-        initialDuctRuns={ductRuns ?? []}
+        initialDuctRuns={zoneDuctRuns}
         initialDuctDiffusers={ductDiffusers ?? []}
         initialAhuInstallationDetails={ahuInstallationDetails ?? []}
         initialDuctTerminations={ductTerminations ?? []}
@@ -945,6 +1099,10 @@ export default async function ProjectDetailPage({
         initialPreferredManufacturer={project.preferred_manufacturer}
         initialSystemConfiguration={project.hvac_system_configuration}
         userRole={userRole}
+        initialDehumidificationSystems={initialDehumidificationSystems}
+        initialDehumidificationDuctRuns={initialDehumidificationDuctRuns}
+        dehumidifierCatalogOptions={dehumidifierCatalogOptions}
+        dehumidifierBlowerPerformancePoints={dehumidifierBlowerPerformancePoints}
       />
     </div>
   );

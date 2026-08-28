@@ -8,15 +8,19 @@
 // coil's real capacity only exists as part of a certified outdoor-unit +
 // coil COMBINATION (see equipment_coil_matching), never as a standalone
 // rating.
-// 'makeup_air_unit' and 'exhaust_fan' rows are real equipment_catalog
-// rows (see migrations 20260827270000_add_makeup_air_tracking.sql and
-// 20260827280000_add_local_exhaust_fan_tracking.sql) but are never
-// evaluated by evaluateEquipment/rankEquipment below - neither has
+// 'makeup_air_unit', 'exhaust_fan', and 'dehumidifier' rows are real
+// equipment_catalog rows (see migrations 20260827270000_add_makeup_air_
+// tracking.sql, 20260827280000_add_local_exhaust_fan_tracking.sql, and
+// 20260827330000_add_standalone_dehumidification.sql) but are never
+// evaluated by evaluateEquipment/rankEquipment below - none has
 // heating/cooling capacity to size against a Manual J load. Makeup air
 // is checked by lib/makeupAir.ts; exhaust fans are matched against a
-// room's real code-required CFM in components/makeup-air-section.tsx.
-// Included here only so EquipmentCatalogEntry can represent every real
-// equipment_type value without a cast.
+// room's real code-required CFM in components/makeup-air-section.tsx;
+// dehumidifiers are matched against a real Manual J latent-load-derived
+// pints/day requirement in lib/dehumidification.ts and components/
+// dehumidification-section.tsx. Included here only so
+// EquipmentCatalogEntry can represent every real equipment_type value
+// without a cast.
 export type EquipmentType =
   | "split_ac"
   | "heat_pump"
@@ -25,7 +29,8 @@ export type EquipmentType =
   | "air_handler"
   | "coil"
   | "makeup_air_unit"
-  | "exhaust_fan";
+  | "exhaust_fan"
+  | "dehumidifier";
 export type StageType = "single" | "two_stage" | "variable_speed";
 
 export type EquipmentCatalogEntry = {

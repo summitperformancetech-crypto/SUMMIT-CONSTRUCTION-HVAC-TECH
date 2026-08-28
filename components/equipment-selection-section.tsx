@@ -52,13 +52,15 @@ const TYPE_LABEL: Record<EquipmentCatalogEntry["equipmentType"], string> = {
   package_unit: "Package Unit",
   air_handler: "Air Handler",
   coil: "Coil",
-  // Never actually rendered here - makeup_air_unit/exhaust_fan rows are
-  // excluded from this component's ranked/air-handler lists above (see
-  // lib/makeupAir.ts and components/makeup-air-section.tsx instead).
+  // Never actually rendered here - makeup_air_unit/exhaust_fan/
+  // dehumidifier rows are excluded from this component's ranked/air-
+  // handler lists above (see lib/makeupAir.ts, components/makeup-air-
+  // section.tsx, and components/dehumidification-section.tsx instead).
   // Present only because TYPE_LABEL is a Record over the full
   // EquipmentType union.
   makeup_air_unit: "Makeup Air Unit",
   exhaust_fan: "Exhaust Fan",
+  dehumidifier: "Dehumidifier",
 };
 
 const DEFAULT_VISIBLE_COUNT = 3;
@@ -185,18 +187,19 @@ export function EquipmentSelectionSection({
     // Submittable Manual D Package's ESP gate needs them selectable per
     // zone - see components/duct-design-section.tsx), but they carry no
     // independent cooling/heating capacity - excluded here so one never
-    // gets ranked as if it were a candidate outdoor unit. makeup_air_unit
-    // and exhaust_fan rows are real catalog entry types too (see
-    // lib/makeupAir.ts and components/makeup-air-section.tsx) but are
-    // never a Manual S outdoor/indoor unit candidate - excluded for the
-    // same reason.
+    // gets ranked as if it were a candidate outdoor unit. makeup_air_unit,
+    // exhaust_fan, and dehumidifier rows are real catalog entry types too
+    // (see lib/makeupAir.ts, components/makeup-air-section.tsx, and
+    // components/dehumidification-section.tsx) but are never a Manual S
+    // outdoor/indoor unit candidate - excluded for the same reason.
     const evals: EquipmentEvaluation[] = catalog
       .filter(
         (equipment) =>
           equipment.equipmentType !== "air_handler" &&
           equipment.equipmentType !== "coil" &&
           equipment.equipmentType !== "makeup_air_unit" &&
-          equipment.equipmentType !== "exhaust_fan",
+          equipment.equipmentType !== "exhaust_fan" &&
+          equipment.equipmentType !== "dehumidifier",
       )
       .map((equipment) =>
       evaluateEquipment(

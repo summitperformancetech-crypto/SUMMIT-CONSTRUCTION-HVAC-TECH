@@ -32,6 +32,13 @@ import {
   type RoomFormValues,
 } from "@/components/room-form";
 import { DuctDesignSection, type DuctRunRow } from "@/components/duct-design-section";
+import {
+  DehumidificationSection,
+  type DehumidificationSystemRow,
+  type DehumidificationDuctRunRow,
+} from "@/components/dehumidification-section";
+import type { DehumidifierCatalogOption } from "@/lib/dehumidification";
+import type { BlowerPerformancePoint } from "@/lib/manualD";
 import type { DuctDiffuserRow, AhuInstallationDetailRow, DuctTerminationRow } from "@/lib/ductRouting";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
@@ -538,6 +545,10 @@ export const ManualJWorkflow = forwardRef<
     initialPreferredManufacturer: string | null;
     initialSystemConfiguration: HvacSystemConfiguration;
     userRole: string;
+    initialDehumidificationSystems: DehumidificationSystemRow[];
+    initialDehumidificationDuctRuns: DehumidificationDuctRunRow[];
+    dehumidifierCatalogOptions: DehumidifierCatalogOption[];
+    dehumidifierBlowerPerformancePoints: BlowerPerformancePoint[];
   }
 >(function ManualJWorkflow(
   {
@@ -568,6 +579,10 @@ export const ManualJWorkflow = forwardRef<
     equipmentCatalog,
     equipmentPerformancePoints,
     preferredEquipmentIds,
+    initialDehumidificationSystems,
+    initialDehumidificationDuctRuns,
+    dehumidifierCatalogOptions,
+    dehumidifierBlowerPerformancePoints,
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
     initialBuildingFrontFaces,
@@ -1730,6 +1745,21 @@ export const ManualJWorkflow = forwardRef<
           ductSizingTable={ductSizingTable}
           ductInsulationCodeMinimums={ductInsulationCodeMinimums}
         />
+      )}
+
+      {canCalculate && results && rooms.length > 0 && (
+        <div className="mb-6">
+          <DehumidificationSection
+            projectId={projectId}
+            rooms={rooms.map((r) => ({ id: r.id, name: r.name }))}
+            roomResults={results.rooms}
+            initialSystems={initialDehumidificationSystems}
+            initialDuctRuns={initialDehumidificationDuctRuns}
+            catalogOptions={dehumidifierCatalogOptions}
+            blowerPerformancePoints={dehumidifierBlowerPerformancePoints}
+            ductSizingTable={ductSizingTable}
+          />
+        </div>
       )}
 
       {canCalculate && results && manufacturers.length > 0 && (

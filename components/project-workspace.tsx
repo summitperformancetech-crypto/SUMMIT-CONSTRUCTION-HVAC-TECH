@@ -16,6 +16,9 @@ import type { ManualJEnvelope, RoomTypeDefault } from "@/lib/manualJ";
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
 import type { DrawingRow } from "@/lib/drawingExtraction";
+import type { DehumidificationSystemRow, DehumidificationDuctRunRow } from "@/components/dehumidification-section";
+import type { DehumidifierCatalogOption } from "@/lib/dehumidification";
+import type { BlowerPerformancePoint } from "@/lib/manualD";
 import type { FieldResolution } from "@/lib/fieldResolutions";
 import type { Compass8 } from "@/lib/constants/compass";
 import type { HvacSystemConfiguration } from "@/components/system-configuration-section";
@@ -57,6 +60,10 @@ export function ProjectWorkspace({
   initialPreferredManufacturer,
   initialSystemConfiguration,
   userRole,
+  initialDehumidificationSystems,
+  initialDehumidificationDuctRuns,
+  dehumidifierCatalogOptions,
+  dehumidifierBlowerPerformancePoints,
 }: {
   projectId: string;
   initialClimateConfirmed: boolean;
@@ -94,6 +101,10 @@ export function ProjectWorkspace({
   initialPreferredManufacturer: string | null;
   initialSystemConfiguration: HvacSystemConfiguration;
   userRole: string;
+  initialDehumidificationSystems: DehumidificationSystemRow[];
+  initialDehumidificationDuctRuns: DehumidificationDuctRunRow[];
+  dehumidifierCatalogOptions: DehumidifierCatalogOption[];
+  dehumidifierBlowerPerformancePoints: BlowerPerformancePoint[];
 }) {
   const [climateConfirmed, setClimateConfirmed] = useState(initialClimateConfirmed);
   const [buildingFrontFaces, setBuildingFrontFaces] = useState(initialBuildingFrontFaces);
@@ -185,6 +196,10 @@ export function ProjectWorkspace({
         initialPreferredManufacturer={initialPreferredManufacturer}
         initialSystemConfiguration={initialSystemConfiguration}
         userRole={userRole}
+        initialDehumidificationSystems={initialDehumidificationSystems}
+        initialDehumidificationDuctRuns={initialDehumidificationDuctRuns}
+        dehumidifierCatalogOptions={dehumidifierCatalogOptions}
+        dehumidifierBlowerPerformancePoints={dehumidifierBlowerPerformancePoints}
       />
     </>
   );

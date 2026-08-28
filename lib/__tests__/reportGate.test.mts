@@ -230,6 +230,7 @@ function ductRun(overrides: Partial<DuctRunRow> = {}): DuctRunRow {
     id: "run1",
     project_id: "p1",
     zone_id: "z1",
+    dehumidification_system_id: null,
     run_type: "branch",
     room_id: "r1",
     length_ft: 20,

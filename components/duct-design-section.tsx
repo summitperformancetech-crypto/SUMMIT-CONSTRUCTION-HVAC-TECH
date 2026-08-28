@@ -35,6 +35,13 @@ export type DuctRunRow = {
   id: string;
   project_id: string;
   zone_id: string | null;
+  // Alternate parent (see supabase/migrations/20260827330000_add_
+  // standalone_dehumidification.sql) - always null for this component's
+  // own rows, since page.tsx filters duct_runs by zone_id before
+  // passing initialDuctRuns here. Present on the type only so the same
+  // DB row shape can be shared with dehumidification-section.tsx without
+  // a cast.
+  dehumidification_system_id: string | null;
   run_type: "trunk" | "branch";
   room_id: string | null;
   length_ft: number;
@@ -67,7 +74,7 @@ export type DuctRunRow = {
 };
 
 export const DUCT_RUN_COLUMNS =
-  "id, project_id, zone_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc, has_balancing_damper";
+  "id, project_id, zone_id, dehumidification_system_id, run_type, room_id, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material, cfm, friction_rate, velocity_fpm, calculated_diameter_in, calculated_width_in, calculated_height_in, total_effective_length_ft, pressure_drop_iwc, has_balancing_damper";
 export const DUCT_DIFFUSER_COLUMNS =
   "id, project_id, zone_id, room_id, airflow_direction, pattern_type, duct_size, round_diameter_in, cfm, mounting_height_aff_in, manufacturer, model, description, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number, source";
 export const AHU_INSTALLATION_DETAIL_COLUMNS =

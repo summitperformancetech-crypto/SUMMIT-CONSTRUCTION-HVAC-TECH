@@ -226,3 +226,15 @@ Full detail in SESSION-PROGRESS.md's matching dated entry. Separate standing wor
 **Git/push status update (supersedes every "not pushed"/"NOT pushed to origin/main" note anywhere above in this file — those are now historical, not current)**: the user gave a new standing instruction this session — **"push everything to GITHUB that we have done as well as anything we do moving forward"** — explicitly superseding this project's prior default of never pushing without being asked, for this and all future work. All 70 outstanding local commits (this sourcing sweep plus everything from every Phase 7 addendum above that had never been pushed) were pushed. `git push origin main` timed out twice under the same system load before a longer-timeout background run succeeded. **Confirmed**: `origin/main` is in sync with local `main` at `c05de4c`. Going forward, every commit should be followed by a push — no need to ask again.
 
 Next action: get direction on whether to continue the furnace-platform sweep (Carrier motor-code question first, then the rest of Carrier and Trane) or pivot to one of Phase 7's own open items (condenser pin UI, org hardware defaults, multi-tenant billing, etc.) — both are real, valid next steps and the choice is the user's.
+
+## Addendum (2026-08-30): Standing Sourcing Sweep — Carrier 58SB0/58SB1 furnace combustion safety
+
+Full detail in SESSION-PROGRESS.md's matching dated entry. Continuation of the standing full-documentation sourcing sweep; user directed resolving the Carrier 58SB0 blocker first.
+
+**Blocker resolved.** The "motor code M vs. E" mismatch was a revision artifact: the prior session had only the superseded **58SB0A** Installation Instructions (nomenclature: motor position C/E/V, no "M"). The current **58SB0B/58SB1B Product Data (A190411)** — already cited on the catalog rows — defines **M = Multi 18-Speed Constant Torque (MCT) ECM**. `58SB0090M17-14` is a valid, current 58SB0B model number; no `equipment_catalog` change needed.
+
+**Sourced** (new migration `20260830010000`, from `58SB0B-01SI` Installation Instructions + `58SB0B` Product Data A190411, both read directly, covering both the standard `58SB0090M17-14` and Low-NOx `58SB1090M17-14` rows): Category I fan-assisted; clearances-to-combustibles (label A220231 — one orientation-independent table: top 1 / back 0 / sides 0 / front 3 / bottom 0 in., alcove front 18, service front 24, vent connector single-wall 6 / B-1 1); natural-gas supply pressure 4.5–13.6 in. w.c.; natural-gas manifold pressure 3.2–3.8 in. w.c. (worked example 3.7 with #43 orifice).
+
+**Disclosed gap**: propane manifold + supply pressure are not published in either Carrier document — they live in the separate factory conversion kit **AGAGC8NPS01B**, not obtainable from a primary source this pass. Those fields left NULL with an explicit in-migration disclosure rather than guessed or borrowed from another manufacturer's platform.
+
+**Still open**: rest of Carrier furnaces (~9 platforms), full Trane lineup (3), the two unresolved Daikin rows, and the heat_pump / package_unit / air_handler / coil / split_ac categories (no full-doc pass yet).

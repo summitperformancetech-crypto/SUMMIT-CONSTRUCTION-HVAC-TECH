@@ -15,30 +15,47 @@
 // Server-only: pulls in pdfjs and does heavy raster compute. Never import
 // from a "use client" module.
 //
-// STATUS (2026-08-31): first working pass. Not yet wired into the
-// extraction pipeline or the diagram. Verified against Schneider A3.0:
+// STATUS (2026-08-31, build 2): geometry-first pipeline works. Not yet
+// wired into the extraction route or the diagram. Verified against
+// Schneider A3.0:
 //   - parsePageSegments: exact - 40,046 segments, 1:1 with the real
 //     Chromium render (lib/floorPlanRender.ts). Solid.
-//   - classifyWallSegments / connected-component barrier: good. Drops
-//     furniture, fixtures, text, dimension marks.
-//   - bridgeDoorGaps + flood fill + regionToPolygon + poleOfInaccessibility:
-//     ~10-11 of 15 rooms reconstruct as correct polygons with an
-//     inside pin, INCLUDING the L-shaped garage (which a bounding box
-//     can never represent). Known remaining gaps:
-//       * open-plan spaces (kitchen open to hallway/living with no
-//         wall between) flood-merge - genuinely one connected space;
-//         needs a "great room" grouping or a soft cabinet-line
-//         boundary.
-//       * tiny rooms (pantry, stair landing) whose seed lands on a
-//         shelf/tread line trap the fill - needs the real label
-//         centroid as the seed + a wider nearest-open-cell search.
-//   - seeds are hand-picked in the harness. Production needs
-//     findTextLabelAnchors (cluster the vector glyph geometry -> each
-//     room label's centroid, guaranteed inside its room) which also
-//     feeds the Bug 1 name re-read.
-// Next: label-anchor extraction, then wiring (schema rooms.polygon,
-// extract route, ductPathGeometry polygon obstacle, ductRouting seed
-// from pin, renderers, computeSheetCropViewBox from polygon extents).
+//   - findTextRuns: clusters the vector glyph geometry into candidate
+//     label blobs.
+//   - buildBarrierGrid (connected-component wall isolation + surgical
+//     bridgeDoorGaps): drops furniture / fixtures / text / dimension
+//     marks; bridges only real gaps in wall lines.
+//   - discoverRooms: flood a seed grid inside the building footprint ->
+//     dedupe -> reject giant / leaked-superset regions -> attach the
+//     text runs inside/near each region. NO AI position estimate.
+//   - caller OCRs each region's label crop (isolated, high-zoom - far
+//     more reliable than reading the whole dense sheet, which is the
+//     root cause of the "BEDROOM #2" -> "Bedroom 3" / "HALLWAY" ->
+//     "WALLHALL" misreads).
+//   RESULT: 13 of ~15 Schneider A3.0 rooms come back with a correct
+//   polygon AND a correct name (incl. "BEDROOM #2", "BATHROOM #2"),
+//   including the L-shaped garage. The pin is the polygon pole of
+//   inaccessibility - always inside.
+//
+// KNOWN REMAINING WORK:
+//   1. Open-plan region split: kitchen / pantry / mud room / hallway /
+//      foyer / stairs open into one central circulation space, so they
+//      flood into a single region carrying multiple label runs. Split
+//      it by nearest-label (Voronoi on the label-run centroids) so each
+//      still gets a pin at its own label position.
+//   2. Reject regions whose pin is outside the building bbox (kills the
+//      sheet-title "1ST FLOOR PLAN" text run).
+//   3. De-dupe a room name that appears in both a clean region and the
+//      open-plan region (keep the clean one).
+//   4. Wiring: rooms.polygon schema; run this pass in the extraction
+//      route for PDF floor-plan sheets; match discovered rooms to the
+//      extraction's room list by name to carry the J-calc data;
+//      ductPathGeometry uses the polygon as the routing obstacle;
+//      resolveRoomPositionSource seeds from the polygon pin;
+//      computeSheetCropViewBox crops to polygon extents; renderers draw
+//      the polygon.
+//   5. Add the explicit `name` rule to the extraction prompt (STEP 3)
+//      as the fallback path for non-vector / image uploads.
 import { createRequire } from "node:module";
 
 // pdfjs-dist ships an ESM build; load it through require.resolve so the
@@ -205,6 +222,124 @@ export async function parsePageSegments(pdfBuffer: Buffer, pageNumber: number): 
   } finally {
     await doc.destroy();
   }
+}
+
+// -----------------------------------------------------------------------
+// Text-run clustering
+// -----------------------------------------------------------------------
+//
+// Room labels (and dimension strings, schedule cells, etc.) are drawn as
+// many short near-black glyph strokes packed into a compact region. This
+// clusters those into candidate text blobs so the pipeline can crop each
+// one, OCR it in isolation (far more reliable than reading the whole
+// dense sheet at once - the root cause of the "BEDROOM #2" -> "Bedroom 3"
+// misread), and use its centroid as a guaranteed-inside flood-fill seed.
+// It does NOT try to tell a room label from a dimension string - the
+// caller matches a run to a room by proximity to that room's rough
+// position, then OCRs to confirm the name.
+
+export type TextRun = {
+  /** centroid in normalized page space - sits inside the labelled room. */
+  xNorm: number;
+  yNorm: number;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
+  /** number of glyph-scale segments in the cluster. */
+  segCount: number;
+};
+
+export type TextRunOptions = {
+  /** longest segment (fraction of page diag) that counts as a glyph
+   *  stroke rather than a wall / leader line. */
+  maxGlyphLenFrac?: number;
+  /** clusters whose bbox diagonal is outside [min,max] fraction of the
+   *  page diagonal are dropped (too small = noise, too big = hatching /
+   *  a table). */
+  minRunDiagFrac?: number;
+  maxRunDiagFrac?: number;
+  minSegCount?: number;
+};
+
+export function findTextRuns(segments: NormSegment[], opts: TextRunOptions = {}): TextRun[] {
+  const maxGlyphLen = (opts.maxGlyphLenFrac ?? 0.006) * PAGE_DIAG;
+  const minDiag = (opts.minRunDiagFrac ?? 0.006) * PAGE_DIAG;
+  const maxDiag = (opts.maxRunDiagFrac ?? 0.09) * PAGE_DIAG;
+  const minSegCount = opts.minSegCount ?? 12;
+
+  const glyphSegs = segments.filter((s) => {
+    if (s.gray > 0.45) return false;
+    const len = Math.hypot(s.x2 - s.x1, s.y2 - s.y1);
+    return len > 0 && len <= maxGlyphLen;
+  });
+
+  // coarse occupancy grid + connected components (8-neighbour so adjacent
+  // glyphs in a word link up)
+  const G = 600; // cells across the page width
+  const cw = G;
+  const ch = Math.round(G); // page is landscape but square cells in norm space are fine here
+  const occ = new Uint8Array(cw * ch);
+  const cellSegs: number[][] = [];
+  for (let i = 0; i < cw * ch; i++) cellSegs.push([]);
+  const cellOf = (x: number, y: number) => {
+    const gx = Math.min(cw - 1, Math.max(0, Math.floor(x * cw)));
+    const gy = Math.min(ch - 1, Math.max(0, Math.floor(y * ch)));
+    return gy * cw + gx;
+  };
+  glyphSegs.forEach((s, idx) => {
+    const c = cellOf((s.x1 + s.x2) / 2, (s.y1 + s.y2) / 2);
+    occ[c] = 1;
+    cellSegs[c].push(idx);
+  });
+
+  const seen = new Uint8Array(cw * ch);
+  const runs: TextRun[] = [];
+  const stack: number[] = [];
+  for (let c0 = 0; c0 < cw * ch; c0++) {
+    if (!occ[c0] || seen[c0]) continue;
+    stack.length = 0;
+    stack.push(c0);
+    seen[c0] = 1;
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    let x0 = 1;
+    let y0 = 1;
+    let x1 = 0;
+    let y1 = 0;
+    while (stack.length) {
+      const c = stack.pop()!;
+      const gx = c % cw;
+      const gy = (c / cw) | 0;
+      for (const segIdx of cellSegs[c]) {
+        const s = glyphSegs[segIdx];
+        const mx = (s.x1 + s.x2) / 2;
+        const my = (s.y1 + s.y2) / 2;
+        sx += mx;
+        sy += my;
+        n++;
+        x0 = Math.min(x0, s.x1, s.x2);
+        y0 = Math.min(y0, s.y1, s.y2);
+        x1 = Math.max(x1, s.x1, s.x2);
+        y1 = Math.max(y1, s.y1, s.y2);
+      }
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = gx + dx;
+          const ny = gy + dy;
+          if (nx < 0 || ny < 0 || nx >= cw || ny >= ch) continue;
+          const nc = ny * cw + nx;
+          if (occ[nc] && !seen[nc]) {
+            seen[nc] = 1;
+            stack.push(nc);
+          }
+        }
+      }
+    }
+    if (n < minSegCount) continue;
+    const diag = Math.hypot(x1 - x0, y1 - y0);
+    if (diag < minDiag || diag > maxDiag) continue;
+    runs.push({ xNorm: sx / n, yNorm: sy / n, bbox: { x0, y0, x1, y1 }, segCount: n });
+  }
+  return runs;
 }
 
 // -----------------------------------------------------------------------
@@ -725,6 +860,111 @@ function polygonArea(poly: [number, number][]): number {
     a += (poly[j][0] + poly[i][0]) * (poly[j][1] - poly[i][1]);
   }
   return Math.abs(a) / 2;
+}
+
+// -----------------------------------------------------------------------
+// Label-driven room discovery (no AI position estimate anywhere)
+// -----------------------------------------------------------------------
+//
+// The reliable primitives: (1) flood fill produces an exact polygon when
+// seeded anywhere inside a room, (2) a room's text label is always
+// physically inside that room. So: flood a coarse grid of interior seeds
+// -> dedupe into distinct enclosed regions -> for each region, collect
+// the text runs whose centroid falls inside it -> the caller OCRs those
+// crops to get the name. An open-plan region that swallows several rooms
+// (kitchen open to the hallway) comes back with multiple in-region label
+// runs; the caller splits it by nearest-label.
+
+export type DiscoveredRegion = {
+  polygon: [number, number][];
+  /** pin for the whole region (pole of inaccessibility). */
+  pin: [number, number];
+  areaFrac: number;
+  /** text runs whose centroid is inside this region - candidate labels. */
+  labelRuns: TextRun[];
+};
+
+export function discoverRooms(
+  parsed: ParsedPage,
+  darkSegments: NormSegment[],
+  textRuns: TextRun[],
+  opts: ReconstructOptions & { minRoomAreaFrac?: number; maxRoomAreaFrac?: number; seedGrid?: number } = {},
+): DiscoveredRegion[] {
+  const cellPx = opts.cellPx ?? 2;
+  const closeCells = opts.wallDilateCells ?? 2;
+  const componentMinFrac = opts.componentMinFrac ?? 0.003;
+  const minArea = opts.minRoomAreaFrac ?? 0.003;
+  const maxArea = opts.maxRoomAreaFrac ?? 0.18;
+  const grid = buildBarrierGrid(parsed, darkSegments, cellPx, closeCells, componentMinFrac);
+  const total = grid.w * grid.h;
+  const leakCells = Math.floor(total * (opts.leakAreaFrac ?? 0.35));
+
+  // Confine seeding to the building footprint (bbox of the wall network)
+  // so a seed in the exterior margin can't flood the whole sheet.
+  let bx0 = grid.w;
+  let by0 = grid.h;
+  let bx1 = 0;
+  let by1 = 0;
+  for (let y = 0; y < grid.h; y++) {
+    for (let x = 0; x < grid.w; x++) {
+      if (grid.blocked[y * grid.w + x]) {
+        if (x < bx0) bx0 = x;
+        if (x > bx1) bx1 = x;
+        if (y < by0) by0 = y;
+        if (y > by1) by1 = y;
+      }
+    }
+  }
+  const inset = Math.round(Math.min(bx1 - bx0, by1 - by0) * 0.02);
+  bx0 += inset;
+  by0 += inset;
+  bx1 -= inset;
+  by1 -= inset;
+
+  const claimed = new Uint8Array(total);
+  const N = opts.seedGrid ?? 70;
+  const raw: DiscoveredRegion[] = [];
+
+  for (let iy = 0; iy <= N; iy++) {
+    for (let ix = 0; ix <= N; ix++) {
+      const gx = Math.round(bx0 + ((bx1 - bx0) * ix) / N);
+      const gy = Math.round(by0 + ((by1 - by0) * iy) / N);
+      if (gx < 0 || gy < 0 || gx >= grid.w || gy >= grid.h) continue;
+      const idx = gy * grid.w + gx;
+      if (grid.blocked[idx] || claimed[idx]) continue;
+      const { region, count, leaked } = floodFrom(grid, gx, gy, leakCells);
+      for (let i = 0; i < total; i++) if (region[i]) claimed[i] = 1;
+      if (leaked) continue;
+      const areaFrac = count / total;
+      if (areaFrac < minArea || areaFrac > maxArea) continue;
+      const polygon = regionToPolygon(region, grid);
+      if (polygon.length < 3) continue;
+      const polyAreaFrac = polygonArea(polygon);
+      if (polyAreaFrac > 0.15) continue; // no single room is >15% of a sheet
+      const pin = poleOfInaccessibility(polygon);
+      // label runs inside the polygon OR just outside it (a room name
+      // often sits right against a wall or in a doorway).
+      const labelRuns = textRuns.filter(
+        (t) => pointInPolygon(t.xNorm, t.yNorm, polygon) || distToPolygon(t.xNorm, t.yNorm, polygon) < 0.012,
+      );
+      raw.push({ polygon, pin, areaFrac: polyAreaFrac, labelRuns });
+    }
+  }
+
+  // Drop "leaked superset" regions: a larger region that swallows the
+  // pins of >=2 smaller kept regions is an open-plan merge - the smaller
+  // clean regions win, the superset is only useful for labels that never
+  // got their own region (handled by the caller via a nearest-label
+  // split), so it is dropped here and the caller works from `raw` minus
+  // these.
+  raw.sort((a, b) => a.areaFrac - b.areaFrac);
+  const kept: DiscoveredRegion[] = [];
+  for (const r of raw) {
+    const contained = kept.filter((k) => pointInPolygon(k.pin[0], k.pin[1], r.polygon)).length;
+    if (contained >= 2) continue;
+    kept.push(r);
+  }
+  return kept;
 }
 
 export function reconstructRooms(

@@ -32,30 +32,48 @@
 //     more reliable than reading the whole dense sheet, which is the
 //     root cause of the "BEDROOM #2" -> "Bedroom 3" / "HALLWAY" ->
 //     "WALLHALL" misreads).
-//   RESULT: 13 of ~15 Schneider A3.0 rooms come back with a correct
-//   polygon AND a correct name (incl. "BEDROOM #2", "BATHROOM #2"),
-//   including the L-shaped garage. The pin is the polygon pole of
-//   inaccessibility - always inside.
+//   splitRegionByLabels: Voronoi-splits an open-plan region (kitchen +
+//   hallway + foyer + ... connected with no walls between) into a
+//   sub-polygon + pin per label.
+//   discoverRooms also returns the barrier grid + wall-network bbox, and
+//   rejects any region that leaked outside the building footprint (kills
+//   the sheet-title text run).
+//
+//   RESULT (build 3, Schneider A3.0): 17 of ~18 rooms come back with a
+//   correct polygon AND a correct name - all clean solo rooms plus the
+//   central open-plan space split into Kitchen / Pantry / Mud Room /
+//   Hallway / Foyer. Names all correct incl. "BEDROOM #2" / "BATHROOM
+//   #2" (the whole-sheet extraction stored "Bedroom 3" / "Bathroom 3").
+//   Only "STAIRS" is missed (open to the hallway, its label run OCRs
+//   empty) - a tech nudge adds it.
+//
+// ORCHESTRATION RECIPE (belongs in the extraction route - it needs the
+// Anthropic client, which this module must not import):
+//   1. parsed = parsePageSegments(pdf, page)
+//   2. runs = findTextRuns(parsed.segments)   // no size filter
+//   3. dark = parsed.segments.filter(s => s.gray <= 0.4)
+//   4. { regions, grid } = discoverRooms(parsed, dark, runs,
+//        { cellPx: 2, wallDilateCells: 2, seedGrid: 90 })
+//   5. per region: OCR one generous crop over its inside-polygon runs
+//      (pad ~0.02, ~3x zoom). 1 name -> clean room. >1 name -> compound.
+//   6. per compound region: OCR each inside run individually (same
+//      generous crop) to get name<->run-centroid, drop prefix fragments,
+//      drop names already claimed by a clean region, then
+//      splitRegionByLabels(grid, region.pin, thoseLabels).
+//   7. match each {name, polygon, pin} to the extraction's room list by
+//      normalized name to carry the Manual J data.
 //
 // KNOWN REMAINING WORK:
-//   1. Open-plan region split: kitchen / pantry / mud room / hallway /
-//      foyer / stairs open into one central circulation space, so they
-//      flood into a single region carrying multiple label runs. Split
-//      it by nearest-label (Voronoi on the label-run centroids) so each
-//      still gets a pin at its own label position.
-//   2. Reject regions whose pin is outside the building bbox (kills the
-//      sheet-title "1ST FLOOR PLAN" text run).
-//   3. De-dupe a room name that appears in both a clean region and the
-//      open-plan region (keep the clean one).
-//   4. Wiring: rooms.polygon schema; run this pass in the extraction
-//      route for PDF floor-plan sheets; match discovered rooms to the
-//      extraction's room list by name to carry the J-calc data;
-//      ductPathGeometry uses the polygon as the routing obstacle;
-//      resolveRoomPositionSource seeds from the polygon pin;
-//      computeSheetCropViewBox crops to polygon extents; renderers draw
-//      the polygon.
-//   5. Add the explicit `name` rule to the extraction prompt (STEP 3)
-//      as the fallback path for non-vector / image uploads.
+//   - the ~40-line orchestration above -> a helper taking an injected
+//     async ocr(crop)=>string[] callback.
+//   - Wiring: rooms.polygon jsonb schema; run this in the extraction
+//     route for PDF floor-plan sheets; ductPathGeometry uses the polygon
+//     as the routing obstacle; resolveRoomPositionSource seeds from the
+//     polygon pin; computeSheetCropViewBox crops to polygon extents;
+//     renderers draw the polygon (the coloured-room look).
+//   - explicit `name` rule in the extraction prompt (STEP 3) as the
+//     fallback for non-vector / image uploads.
+//   - STAIRS-class rooms with no legible label run.
 import { createRequire } from "node:module";
 
 // pdfjs-dist ships an ESM build; load it through require.resolve so the
@@ -257,6 +275,12 @@ export type TextRunOptions = {
   minRunDiagFrac?: number;
   maxRunDiagFrac?: number;
   minSegCount?: number;
+  /** cap glyph height (bbox y-extent, page fraction) - room-name labels
+   *  are drawn in a larger font than dimension strings / detail tags, so
+   *  a floor lets the caller keep only label-sized runs and avoid OCRing
+   *  hundreds of dimension clusters. */
+  minRunHeightFrac?: number;
+  maxRunHeightFrac?: number;
 };
 
 export function findTextRuns(segments: NormSegment[], opts: TextRunOptions = {}): TextRun[] {
@@ -264,6 +288,8 @@ export function findTextRuns(segments: NormSegment[], opts: TextRunOptions = {})
   const minDiag = (opts.minRunDiagFrac ?? 0.006) * PAGE_DIAG;
   const maxDiag = (opts.maxRunDiagFrac ?? 0.09) * PAGE_DIAG;
   const minSegCount = opts.minSegCount ?? 12;
+  const minHeight = opts.minRunHeightFrac ?? 0;
+  const maxHeight = opts.maxRunHeightFrac ?? 1;
 
   const glyphSegs = segments.filter((s) => {
     if (s.gray > 0.45) return false;
@@ -337,6 +363,10 @@ export function findTextRuns(segments: NormSegment[], opts: TextRunOptions = {})
     if (n < minSegCount) continue;
     const diag = Math.hypot(x1 - x0, y1 - y0);
     if (diag < minDiag || diag > maxDiag) continue;
+    // a label run is wider than tall (horizontal) or taller than wide
+    // (rotated 90deg); use the SHORTER axis as the glyph-height proxy.
+    const glyphHeight = Math.min(x1 - x0, y1 - y0);
+    if (glyphHeight < minHeight || glyphHeight > maxHeight) continue;
     runs.push({ xNorm: sx / n, yNorm: sy / n, bbox: { x0, y0, x1, y1 }, segCount: n });
   }
   return runs;
@@ -884,12 +914,22 @@ export type DiscoveredRegion = {
   labelRuns: TextRun[];
 };
 
+export type DiscoverResult = {
+  regions: DiscoveredRegion[];
+  /** the barrier grid, so the caller can re-flood a region to split an
+   *  open-plan blob (splitRegionByLabels) without rebuilding it. */
+  grid: Grid;
+  /** wall-network bbox in normalized page space - anything well outside
+   *  it (e.g. the sheet-title text) is not a room. */
+  buildingBBox: { x0: number; y0: number; x1: number; y1: number };
+};
+
 export function discoverRooms(
   parsed: ParsedPage,
   darkSegments: NormSegment[],
   textRuns: TextRun[],
   opts: ReconstructOptions & { minRoomAreaFrac?: number; maxRoomAreaFrac?: number; seedGrid?: number } = {},
-): DiscoveredRegion[] {
+): DiscoverResult {
   const cellPx = opts.cellPx ?? 2;
   const closeCells = opts.wallDilateCells ?? 2;
   const componentMinFrac = opts.componentMinFrac ?? 0.003;
@@ -915,6 +955,13 @@ export function discoverRooms(
       }
     }
   }
+  const buildingBBox = {
+    x0: (bx0 * cellPx) / parsed.renderWidthPx,
+    y0: (by0 * cellPx) / parsed.renderHeightPx,
+    x1: (bx1 * cellPx) / parsed.renderWidthPx,
+    y1: (by1 * cellPx) / parsed.renderHeightPx,
+  };
+
   const inset = Math.round(Math.min(bx1 - bx0, by1 - by0) * 0.02);
   bx0 += inset;
   by0 += inset;
@@ -941,6 +988,18 @@ export function discoverRooms(
       if (polygon.length < 3) continue;
       const polyAreaFrac = polygonArea(polygon);
       if (polyAreaFrac > 0.15) continue; // no single room is >15% of a sheet
+      // reject a region that leaked well outside the building footprint
+      // (e.g. flooded through a wall gap into the sheet margin and picked
+      // up the sheet-title text)
+      const outMargin = 0.03;
+      const leakedOutside = polygon.some(
+        ([px, py]) =>
+          px < buildingBBox.x0 - outMargin ||
+          px > buildingBBox.x1 + outMargin ||
+          py < buildingBBox.y0 - outMargin ||
+          py > buildingBBox.y1 + outMargin,
+      );
+      if (leakedOutside) continue;
       const pin = poleOfInaccessibility(polygon);
       // label runs inside the polygon OR just outside it (a room name
       // often sits right against a wall or in a doorway).
@@ -964,7 +1023,106 @@ export function discoverRooms(
     if (contained >= 2) continue;
     kept.push(r);
   }
-  return kept;
+  return { regions: kept, grid, buildingBBox };
+}
+
+// Split one open-plan region (kitchen + hallway + foyer + ... connected
+// with no walls between) into a sub-polygon per label: re-flood the
+// region from `regionPin`, then assign every filled cell to its nearest
+// label point (Voronoi), and contour each partition. Each label still
+// ends up with a pin at its own position and a routing polygon that is a
+// real slice of the open space.
+export type LabelPoint = { key: string; xNorm: number; yNorm: number };
+
+export function splitRegionByLabels(
+  grid: Grid,
+  regionPin: [number, number],
+  labels: LabelPoint[],
+): Map<string, ReconstructedRoom> {
+  const out = new Map<string, ReconstructedRoom>();
+  if (labels.length === 0) return out;
+
+  const { w, h, blocked, cellPx, pageW, pageH } = grid;
+  const total = w * h;
+  const sx = Math.round((regionPin[0] * pageW) / cellPx);
+  const sy = Math.round((regionPin[1] * pageH) / cellPx);
+  const start = nearestOpenCell(grid, sx, sy);
+  if (!start) return out;
+
+  // flood the whole region
+  const inRegion = new Uint8Array(total);
+  {
+    const qx = new Int32Array(total);
+    const qy = new Int32Array(total);
+    let head = 0;
+    let tail = 0;
+    qx[tail] = start[0];
+    qy[tail] = start[1];
+    tail++;
+    inRegion[start[1] * w + start[0]] = 1;
+    while (head < tail) {
+      const x = qx[head];
+      const y = qy[head];
+      head++;
+      const nb = [
+        [x + 1, y],
+        [x - 1, y],
+        [x, y + 1],
+        [x, y - 1],
+      ];
+      for (const [nx, ny] of nb) {
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const idx = ny * w + nx;
+        if (inRegion[idx] || blocked[idx]) continue;
+        inRegion[idx] = 1;
+        qx[tail] = nx;
+        qy[tail] = ny;
+        tail++;
+      }
+    }
+  }
+
+  // assign each region cell to the nearest label point
+  const labelCellX = labels.map((l) => (l.xNorm * pageW) / cellPx);
+  const labelCellY = labels.map((l) => (l.yNorm * pageH) / cellPx);
+  const assign = new Int16Array(total).fill(-1);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = y * w + x;
+      if (!inRegion[idx]) continue;
+      let best = -1;
+      let bestD = Infinity;
+      for (let li = 0; li < labels.length; li++) {
+        const d = (x - labelCellX[li]) ** 2 + (y - labelCellY[li]) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = li;
+        }
+      }
+      assign[idx] = best;
+    }
+  }
+
+  for (let li = 0; li < labels.length; li++) {
+    const partition = new Uint8Array(total);
+    let count = 0;
+    for (let i = 0; i < total; i++) {
+      if (assign[i] === li) {
+        partition[i] = 1;
+        count++;
+      }
+    }
+    if (count === 0) continue;
+    const polygon = regionToPolygon(partition, grid);
+    if (polygon.length < 3) continue;
+    out.set(labels[li].key, {
+      polygon,
+      pin: poleOfInaccessibility(polygon),
+      areaFrac: polygonArea(polygon),
+      leaked: false,
+    });
+  }
+  return out;
 }
 
 export function reconstructRooms(

@@ -2890,3 +2890,11 @@ Spike confirmed the plan sheets are CAD vector exports: parsed A3.0's content st
 ### Git
 
 1 commit this session for this workstream (`be1c2e6`), plus `7c050c0` earlier (Carrier 58SB0 furnace combustion specs — separate standing sweep). Both pushed to `origin/main` per the standing push-after-every-commit instruction.
+
+### 2026-08-31 (later) — vector room geometry build 2
+
+Iterated lib/pdfRoomGeometry.ts from hand-picked seeds to a self-contained geometry-first pipeline. findTextRuns clusters the vector glyph geometry into candidate label blobs; discoverRooms floods a seed grid confined to the wall-network bbox, dedupes, rejects giant (>15% page) and leaked-superset regions, and attaches the text runs inside or near each region polygon. The caller OCRs each region label crop in isolation (high-zoom, forced-tool call) - this is the Bug 1 fix: reading one label in a tight crop is reliable where reading the whole dense sheet at once produced "Bedroom 3" / "WALLHALL".
+
+Verified against Schneider A3.0: 13 of ~15 rooms reconstruct with a correct polygon AND a correct name - Master Bedroom/Bath/Closet, Living, Dining, Study, Utility, Front/Back Porch, 2-Car Garage (L-shape), and crucially "BEDROOM #2" and "BATHROOM #2" (were stored "Bedroom 3"/"Bathroom 3"). Pin = polygon pole of inaccessibility, always inside. Zero AI position estimate in the path.
+
+Remaining (in the module header): split the one open-plan region (kitchen/pantry/mud room/hallway/foyer/stairs share a central circulation space, no walls between) by nearest-label; reject the sheet-title "1ST FLOOR PLAN" text run (pin outside building bbox); de-dupe a name appearing in both a clean region and the open-plan blob. Then wiring: rooms.polygon schema, extraction-route pass, ductPathGeometry polygon obstacle, pin seeding, computeSheetCropViewBox from polygon extents, renderers, explicit name prompt rule for the non-vector fallback. tsc clean; not imported anywhere yet.

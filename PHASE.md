@@ -238,3 +238,26 @@ Full detail in SESSION-PROGRESS.md's matching dated entry. Continuation of the s
 **Disclosed gap**: propane manifold + supply pressure are not published in either Carrier document — they live in the separate factory conversion kit **AGAGC8NPS01B**, not obtainable from a primary source this pass. Those fields left NULL with an explicit in-migration disclosure rather than guessed or borrowed from another manufacturer's platform.
 
 **Still open**: rest of Carrier furnaces (~9 platforms), full Trane lineup (3), the two unresolved Daikin rows, and the heat_pump / package_unit / air_handler / coil / split_ac categories (no full-doc pass yet).
+
+## Addendum (2026-08-31): Manual D duct-routing pin coordinates — root-cause + vector-geometry subsystem started
+
+Full detail in SESSION-PROGRESS.md's matching dated entry. User directive: stop patching, root-cause the pin-placement bug (pins land outside their rooms on the rendered diagram) and make Summit generate **correct** coordinates.
+
+**Diagnosed (evidence against Schneider, not assumed):**
+- **Bug 1 — room identity.** `extracted_data.rooms[].name` are vision-OCR misreads. Drawing reads "BEDROOM #2" / "BATHROOM #2" / "HALLWAY"; Summit stored "Bedroom 3" / "Bathroom 3" / "Wallhall". Causes: (a) the extraction prompt has **no instruction for the `name` field** (STEP 3 covers `room_label_text`/`room_position`/walls, never "transcribe the printed label exactly"); (b) the plan sheets have **no text layer** — A3.0 has 15 text objects, all title-block; every room label is outlined vector geometry, so it's pure OCR; (c) `pdfTextBlock` ground-truth is empty for these sheets so nothing catches the misread; (d) zero `field_resolutions` touch `name` — misreads flowed straight through.
+- **Bug 2 — room shape.** `room_position` is a 4-number axis-aligned bounding box at every stage (`drawingExtraction.ts:762`/`:798`, `ductPathGeometry.ts:16`/`:65`). The bbox centre of the garage / stairs / any L-shaped room is not inside the room — an independent cause of pins-outside-rooms.
+- **Three AI-estimation attempts** (raw-PDF raster, full-sheet fractions, tight-crop + labelled grid) each capped out at *roughly* right, never *correct*. Abandoned.
+
+**Chosen fix (user picked "A"): recover true geometry from the PDF vector data.** The plan sheets are CAD vector exports — ~40,000 real wall segments in a coordinate system that maps 1:1 to `lib/floorPlanRender.ts`'s render.
+
+**Shipped this session (WIP, commit `be1c2e6`): `lib/pdfRoomGeometry.ts`** — `parsePageSegments` (pdfjs operator-list → line segments, pixel-exact), connected-component wall isolation, surgical door-gap bridging, flood-fill → marching-squares contour → RDP-simplified polygon, pin at pole-of-inaccessibility. Verified against Schneider A3.0: **~10-11 of 15 rooms reconstruct as correct polygons with an inside pin, including the L-shaped garage.** Known gaps (in the module header): open-plan spaces flood-merge; tiny rooms whose seed hits a shelf/tread line trap.
+
+**Not done — remaining subsystem work (multi-day):**
+1. `findTextLabelAnchors` — cluster the vector glyph geometry → each room label's centroid (guaranteed inside its room) as the flood seed; same pass feeds a high-zoom per-label re-read to fix Bug 1 names.
+2. Add an explicit `name` rule to the extraction prompt.
+3. Schema: `rooms.polygon jsonb` + `polygon_source`.
+4. Wiring: extraction route runs the geometry pass for PDF floor-plan sheets; `ductPathGeometry` uses the polygon as the routing obstacle; `resolveRoomPositionSource` seeds from the polygon pin; `computeSheetCropViewBox` crops to polygon extents (auto-robust to outliers); renderers can draw the polygon.
+5. Open-plan handling (kitchen/hallway/living as one connected space) and tiny-room seed robustness.
+6. Schneider re-run → regenerate diagram → user review (acceptance test: every name matches the drawing incl. "Bedroom #2"; polygon not rectangle for those + garage + stairs; every pin inside its correct, correctly-labelled room).
+
+**Also this session:** reverted migration `20260830020000` (`drawings.room_position_space`, backed the abandoned approach) via `20260831010000`, applied live. Moved the two Schneider debug reference images to `reference/`.

@@ -2837,3 +2837,56 @@ Continuation of the standing full-documentation sourcing sweep. User's call this
 **Remaining furnace backlog** (unchanged): rest of Carrier (~9 platforms: 58SC0/58SC1 [catalog already carries a disclosed "differs from 58SB only by blower-cabinet sound insulation" basis], 58TP0/58TP1, 59MN7A, 59SC2B, 59SC6A, 59TN7A, 59TP7A, plus the several model-page-only rows), full Trane lineup (3 platforms: S9V2B080U4PSBB, TUD1B080A9241B, TUHMB080ACV3VB), and the two still-unresolved Daikin rows (DR96TC0803BN, DR97MC0803BN). After furnaces: heat_pump / package_unit / air_handler / coil / split_ac still haven't had this full-documentation pass.
 
 **Git**: 1 commit this session, pushed to `origin/main` per the standing push-after-every-commit instruction.
+
+## 2026-08-31 — Manual D duct-routing pin coordinates: full root-cause + vector-geometry subsystem (day 1)
+
+Continuation of the Manual D diagram work. User: stop patching the pin-placement bug ("pins land outside the room boundaries they belong to on the rendered diagram"), root-cause it, make Summit generate **correct** coordinates. Standing protocol reaffirmed: diagnose+report first, root-cause fix, test against the real Schneider project, show the corrected diagram before it's considered done.
+
+### Coordinate pipeline traced end to end (read-only DB queries against Schneider)
+
+There is **no room polygon or wall geometry anywhere in Summit.** Per room it stores: one AI-estimated axis-aligned bounding box (`extracted_data.rooms[].room_position` = 4 page-fractions, always `unresolved:true`) and one tech-confirmed pin point (`rooms.position_x_norm/y_norm`). The pin canvas, the report, and the live diagram all plot the pin at `xNorm*100` in a 0-100 viewBox cropped by `computeSheetCropViewBox`. `lib/ductPathGeometry.ts` builds obstacle *rectangles* from the AI boxes.
+
+**The extraction never rasterises the PDF itself** — it sends the raw PDF as an `application/pdf` document block, so the model's `room_position` fractions are relative to Anthropic's internal PDF raster, not `lib/floorPlanRender.ts`'s Chromium 96px/72pt render that the canvas + report composite pins onto. Nothing reconciles the two spaces.
+
+### Three AI-estimation attempts, all abandoned
+
+1. **Re-derive `room_position` against the app's own render** (new `lib/roomPositionRefinement.ts` + migration `20260830020000` `drawings.room_position_space`). Ran against Schneider: the model, given the full sheet, estimated x-fractions as if the floor-plan area were the whole image — every pin shifted ~15% right, "Dining Room"/"Pantry"/"2-Car Garage" pins landed in the title block. Rolled back; Schneider restored exactly.
+2. **Overlay old box centres.** Also unusable — the original Anthropic-raster boxes are ~10-20% off in scattered directions (Bedroom 2/5 swapped in Y — the rename artifact showing through name-matching).
+3. **Crop tight to the plan bbox + labelled grid + crop-local coords.** Best of the three: ~15/18 rooms landed in-room on A3.0, but the garage overshot ~0.09, and the model still can't estimate a fraction accurately enough on a dense sheet. User rejected: "we need Summit to generate the correct coordinates."
+
+### Root cause, two bugs (evidence in the diagnostic artifact)
+
+**Bug 1 — room identity.** Schneider's drawing reads "BEDROOM #2" / "BATHROOM #2" / "HALLWAY"; `extracted_data` stored "Bedroom 3" / "Bathroom 3" / "Hallway / Wallhall" (and put those misreads into `room_label_text`, which STEP 3 calls a "plain transcription"). "HALLWAY → WALLHALL" is the tell — unreliable visual OCR of drafted outlined letters. Causes:
+- The extraction prompt has **no instruction for the `name` field** at all. STEP 3 introduces rooms and covers `source_sheet`/`room_label_text`/`room_position`/wall lengths — never "set `name` to the printed label, transcribed exactly, keep any `#N`, `unresolved` if not clearly legible." The only `name` guidance (line 848) covers only the unlabeled case.
+- **No text layer.** pdfjs `getTextContent()` on A3.0 returns **15 text items — all title-block / address text**. Zero room labels, zero dimensions as text. Every label, dimension, grid bubble is outlined vector geometry (11,632 `constructPath` ops). Pure OCR.
+- `pdfTextBlock` deterministic cross-check contains only that title-block text for this PDF, so it can't catch a misread label.
+- **Zero `field_resolutions` touch `name`** — the misreads were applied to the `rooms` table verbatim and drive every label, pin-to-room match, and diagram caption. (Positions were hand-corrected across 55 resolutions; names never were.)
+
+**Bug 2 — room shape is a bounding box everywhere.** `room_position` = `x_norm,y_norm,width_norm,height_norm` (schema `drawingExtraction.ts:762`, prompt STEP 3 `:798`). `ductPathGeometry.ts:16` states it in its own header: *"extraction only ever produced axis-aligned room bounding boxes, not room polygons or door locations."* The pin "centre" = bbox centre; for the garage / stairs / any L-shaped room that centre is not inside the room — an independent pins-outside-rooms cause, exactly as the user predicted.
+
+### Chosen fix (user: "A"): recover true geometry from the PDF vector data
+
+Spike confirmed the plan sheets are CAD vector exports: parsed A3.0's content stream → **40,046 line segments**, rendered a near-perfect reconstruction of the floor plan, pixel-aligned to the Chromium render (uses `viewport.transform`, same 72pt→device basis). The geometry is fully there and exact.
+
+**Shipped: `lib/pdfRoomGeometry.ts` (WIP, commit `be1c2e6`):**
+- `parsePageSegments(pdfBuffer, pageNumber)` — pdfjs operator-list walk, tracks the CTM, flattens every path (beziers → endpoint chords) to line segments in normalized [0,1] page space with stroke width + greyscale. Pixel-exact.
+- `classifyWallSegments` — keeps dark (gray ≤ 0.4), long-enough, axis-aligned-or-collinear-run segments.
+- `buildBarrierGrid` — rasterise all dark segments → **keep only large connected components** (drops furniture, fixtures, text, dimension marks — the wall network is one giant component) → `bridgeDoorGaps` (spans only real breaks between collinear wall segments a door-width apart; does NOT weld parallel room-dividing walls the way a blind morphological close does) → light close for hairlines.
+- `reconstructRooms` — flood-fill from a seed → Moore-neighbour boundary trace → RDP-simplified polygon; pin = pole of inaccessibility (grid search, always inside — even the L-shaped garage).
+
+**Verified against Schneider A3.0** (harness overlay on the real render): **~10-11 of 15 rooms reconstruct as correct polygons with an inside pin** — Master Bed/Bath/Closet, Study, Living, Dining, Bedroom #2, Utility, Foyer, and critically the **2-Car Garage** with its real bump-out L-outline (a bounding box could never do this). Known remaining gaps, documented in the module header: open-plan spaces (kitchen open to hallway/living with no wall between) flood-merge — genuinely one connected space; tiny rooms (pantry, stair landing) whose seed lands on a shelf/tread line trap the fill.
+
+`tsc --noEmit` clean. The module is not yet imported anywhere — no runtime/behaviour change yet.
+
+### Not done — remaining subsystem (multi-day), tracked in PHASE.md
+
+`findTextLabelAnchors` (cluster vector glyph geometry → label centroids as flood seeds + high-zoom per-label re-read for Bug 1 names) → explicit `name` prompt rule → `rooms.polygon` schema → extraction-route wiring → `ductPathGeometry` polygon obstacle + `resolveRoomPositionSource` polygon-pin seed + `computeSheetCropViewBox` from polygon extents + renderers → open-plan/tiny-room robustness → Schneider re-run + regenerate + user review.
+
+### Housekeeping
+
+- Migration `20260830020000` (`drawings.room_position_space`) reverted via `20260831010000`, applied to the live DB — it backed abandoned attempt #1 and was never read by committed code.
+- The two Schneider debug reference images moved from repo root to `reference/` (committed) — the pre-existing stray `manual D duct design diagram  /` folder left untracked as before.
+
+### Git
+
+1 commit this session for this workstream (`be1c2e6`), plus `7c050c0` earlier (Carrier 58SB0 furnace combustion specs — separate standing sweep). Both pushed to `origin/main` per the standing push-after-every-commit instruction.

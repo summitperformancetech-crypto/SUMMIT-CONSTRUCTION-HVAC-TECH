@@ -4,14 +4,34 @@
 Summit Construction Technology & Restoration Group — Summit HVAC platform
 
 ## Current Phase
-Phase number: 7 (post-6-phase-plan software completion push) — started 2026-08-24, same session as the KHAWAJA MAMOON drawing-reading deep dive that preceded it.
-Phase name: Close the "finish the software" gap list — role UI, AED, offline/PWA, multi-tenant, deploy (in that order, deploy explicitly last, per direct user instruction).
+Phase number: 8 — Strict in-order pipeline + full auto-propose/review (residential). Started 2026-09-01.
+Phase name: Fix the order of operations. One guided stepper, every stage gated on the previous stage's exit gate, one human orientation confirmation, everything else an AI proposal the technician Accepts or Overrides, an explicit Finalize as the only snapshot-freeze path.
 
 ## Phase Objective
-User asked directly: "where are you with finishing the software," then, after a 5-item gap list was presented (role UI, AED, PWA/offline, multi-tenant, deploy), said to go through all 5 "with undisrupted intent to finish this software," reordering so local build-out happens before any deployment. Scope for AED/PWA/multi-tenant was clarified via direct questions rather than assumed: real analytical solar model for AED (not a fabricated shortcut, not a live external API this app has no key for), full offline data entry with sync for PWA (not just installability), real self-serve signup + billing for multi-tenant (needs real business input, see Open Questions).
+User halted all feature work for a forensic audit of Summit's *actual* order of operations (`PIPELINE-SEQUENCE-AUDIT.md`), which found: orientation confirmation built twice (S3 gate + S7b section), the first report of *any* type silently freezing a snapshot while only `summit_standard` was gated, `/api/reports/revise` freezing a new version with no gate, a one-shot readiness checklist that goes stale in-session, sections that don't communicate, and steps that unlock on a prerequisite being *started* rather than *complete*. User then asked for a full fix ("fix it all... DONT GIVE ME A PRODUCT WITH IT INCOMPLETE") with four decisions locked: **guided stepper**, **full auto-propose + review**, **explicit Finalize action**, **residential only**. Implementation prompt: `FIX-PIPELINE-PROMPT.md`. Canonical spec: `SUMMIT-BUILD-SEQUENCE.md`.
 
 ## Status
-**Items 1-3 of 5 are done, verified, committed, and pushed this session:**
+**Phase 8 — built this session (see SESSION-PROGRESS.md for the full detail):**
+
+- `lib/pipeline.ts` — the one pure `computePipelineState(input): PipelineState`. 13 ordered stages, each with a named exit-gate predicate; strict-order guarantee (stage N `locked` unless every prior exit gate is `true`); `canFinalize` false while `outstandingProposals > 0`. `lib/pipelineInput.ts` (`buildPipelineInput`) assembles the bundle server-side from `getReportData` + a few extra queries so the pipeline's view never drifts from the report gate / frozen snapshot.
+- `lib/aiProposals.ts` — Accept/Override on the existing `field_resolutions` table (`proposal:*` namespace); `listOutstandingProposals`.
+- `lib/zoning.ts` (`proposeZoning`), `lib/pinPlacement.ts` (`proposeRoomPins`/`proposeMechanicalPins`, does **not** import `lib/pdfRoomGeometry.ts`), `lib/dehumidification.ts` (`proposeDehumidification`), `lib/extractionApply.ts` (`buildEnvelopeAndRoomsForApply`).
+- Orientation dedup: `applyOrientationTransform` extracted into `lib/orientation.ts` and run automatically at the end of `applyExtractedData` (stage-6 auto-apply, no button). `components/building-orientation-section.tsx` **deleted**. `grep -rn "building_front_faces" components/` → exactly one writer: `building-orientation-gate.tsx` (stage 3).
+- New routes: `app/api/projects/[id]/pipeline-state` (GET) and `app/api/projects/[id]/finalize` (POST — the only first-snapshot freeze path, runs the full gate). `app/api/reports/route.ts` no longer freezes anything → `409` until finalized. `app/api/reports/revise/route.ts` re-runs the full gate. `gate-status` route delegates to `computePipelineState`.
+- Migration `20260901000000_add_pipeline_finalization.sql` — `projects.finalized_at`, `zones.equipment_selection_source`, non-destructive backfill (existing snapshotted projects stay finalized; existing equipment picks → `human_confirmed`).
+- Client: `components/pipeline/` (`pipeline-provider`, `pipeline-rail`, `proposal-panel`, `finalize-panel`). `components/project-workspace.tsx` rewritten as the guided stepper (rail + one stage body at a time + Back/Next gated by the exit gate). `ManualJWorkflow` renders only the viewed stage's sections and exposes `autoApplyExtraction` / `autoProposeZoning` / `confirmAllPins` / `acceptAiEquipment` handle methods that run against its own live state. `MakeupAirSection` / `GenerateReportsButton` / `ReportSignOffSection` / `StalenessBanner` moved into the Ventilation and Finalize stages. Every stage write calls `refreshPipeline()`.
+
+**Verification:** `npx tsc --noEmit` clean; `npm run lint` clean; `npm test` — 30 files / 428 tests green, +55 new (`pipeline`, `zoning`, `pinPlacement`, `orientationTransform`, `proposeDehumidification`); `npm run build` — see SESSION-PROGRESS. Live end-to-end run: see SESSION-PROGRESS (migration + click-through).
+
+**Out of scope / untouched:** `lib/pdfRoomGeometry.ts` (paused vector-geometry experiment — uncommitted, not built on); commercial/industrial (`components/commercial-workflow.tsx`).
+
+---
+
+## Prior phase — Phase 7 (context, superseded as the live tracker)
+
+Phase name: Close the "finish the software" gap list — role UI, AED, offline/PWA, multi-tenant, deploy.
+
+**Items 1-3 of 5 done, verified, committed, and pushed:**
 
 1. **Role UI (Estimator/Admin) — done.** Investigated the real architecture before building (the 3-tier role model, RLS policies, and per-role permission gating were already fully built — Estimator was already functionally complete). Real gaps closed: team management (invite/role-change/remove, admin-only, with a last-admin-lockout guard), project deletion (didn't exist for any role), a settings page with no nav link. New: `/api/team/invite`, `/dashboard/settings/team`, `/auth/set-password`, `components/team-management-section.tsx`, `components/delete-project-button.tsx`. Migration: `profiles.email`. Commit `105d5d4`.
 2. **AED (Adequate Exposure Diversification) — done.** Was rendering an honest "not yet computed" placeholder since an earlier session (needs per-orientation hourly solar data the design-point calc engine doesn't model). Built real solar-position astronomy (`lib/solarPosition.ts`, NOAA Solar Calculator equations, verified against known reference facts) + a real ASHRAE Clear Sky irradiance model (`lib/solarIrradiance.ts`, honest about its own precision boundary) + the actual 30%-excess diversification test (`lib/aedAssessment.ts`). Wired into `getReportData`/`reportHtmlV2.ts` — real per-zone pass/fail and peak-excess-by-orientation when a real geocode (`resolveLatLong`, same free Census geocoder `resolveCounty` already used) and a real `project.window_shgc` both exist; explicit "not assessed" otherwise, never a fabricated number. Live-verified against KHAWAJA MAMOON's real window data: physically sensible result (north beat west on total Btuh despite far lower irradiance per sqft, because this house has far more north-facing glass area — a real finding, not an artifact). 25 new tests. Commit `c856655`.

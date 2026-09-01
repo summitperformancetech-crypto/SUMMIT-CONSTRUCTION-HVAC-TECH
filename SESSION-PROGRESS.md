@@ -2898,3 +2898,157 @@ Iterated lib/pdfRoomGeometry.ts from hand-picked seeds to a self-contained geome
 Verified against Schneider A3.0: 13 of ~15 rooms reconstruct with a correct polygon AND a correct name - Master Bedroom/Bath/Closet, Living, Dining, Study, Utility, Front/Back Porch, 2-Car Garage (L-shape), and crucially "BEDROOM #2" and "BATHROOM #2" (were stored "Bedroom 3"/"Bathroom 3"). Pin = polygon pole of inaccessibility, always inside. Zero AI position estimate in the path.
 
 Remaining (in the module header): split the one open-plan region (kitchen/pantry/mud room/hallway/foyer/stairs share a central circulation space, no walls between) by nearest-label; reject the sheet-title "1ST FLOOR PLAN" text run (pin outside building bbox); de-dupe a name appearing in both a clean region and the open-plan blob. Then wiring: rooms.polygon schema, extraction-route pass, ductPathGeometry polygon obstacle, pin seeding, computeSheetCropViewBox from polygon extents, renderers, explicit name prompt rule for the non-vector fallback. tsc clean; not imported anywhere yet.
+
+---
+
+## 2026-09-01 — Phase 8: strict in-order pipeline + full auto-propose/review (residential)
+
+Executed `FIX-PIPELINE-PROMPT.md` (the fix for every finding in
+`PIPELINE-SEQUENCE-AUDIT.md`). Four decisions were locked by the user
+beforehand: **guided stepper**, **full auto-propose + review**, **explicit
+Finalize action**, **residential only**.
+
+### The one state machine
+
+- **`lib/pipeline.ts`** — `computePipelineState(input: PipelineInput): PipelineState`,
+  pure, no I/O. 13 ordered stages (`project, climate, orientation, drawings,
+  field_review, rooms_envelope, zones, manual_j, duct_pins, manual_d,
+  equipment, ventilation, finalize`). Each has a named exit-gate predicate
+  (`climateExitGate`, `manualDExitGate`, …) exported for direct testing.
+  Strict-order guarantee: a stage is `locked` unless every prior exit gate
+  is `true`. `canFinalize` is false while `outstandingProposals > 0`.
+- **`lib/pipelineInput.ts`** — `buildPipelineInput(supabase, projectId)`
+  assembles the bundle server-side from `getReportData` (so `manualJ` /
+  per-zone `rankEquipment` can never drift from the report gate / frozen
+  snapshot) plus a handful of extra queries (`finalized_at`,
+  `climate_confirmed`, `building_front_faces`, per-zone
+  `equipment_selection_source`, drawing `extraction_status`, exhaust
+  `review_status`, latest snapshot version).
+- **`lib/aiProposals.ts`** — Accept/Override tracked on the existing
+  `field_resolutions` table with a `proposal:<name>` field-name namespace
+  (`rooms`, `zoning`, `duct_design`, `ventilation`); per-record proposals
+  (duct pins, equipment) reuse the keys those subsystems already write
+  (`rooms/<id>/position`, `zones/<id>/ahu_position`, …,
+  `zones.equipment_selection_source`). `listOutstandingProposals` is the
+  authoritative "what does the technician still owe" list.
+- **`lib/zoning.ts`** (`proposeZoning`), **`lib/pinPlacement.ts`**
+  (`proposeRoomPins` / `proposeMechanicalPins` — **does not import
+  `lib/pdfRoomGeometry.ts`**), **`lib/dehumidification.ts`**
+  (`proposeDehumidification` from Manual J latent load),
+  **`lib/extractionApply.ts`** (`buildEnvelopeAndRoomsForApply` — the
+  extraction→(envelope,rooms) overlay pulled out of `drawings-section.tsx`).
+- **`SUMMIT-BUILD-SEQUENCE.md`** — the canonical spec; `lib/pipeline.ts` is
+  its executable form; referenced from `CLAUDE.md`.
+
+### Orientation dedup (the reported symptom)
+
+`applyOrientationTransform(supabase, projectId, rooms, buildingFrontFaces,
+resolvedKeys, roomSelectColumns)` extracted into `lib/orientation.ts`. It
+runs automatically at the end of `applyExtractedData` (stage-6 auto-apply)
+— no "Save & Auto-Fill Walls" button. **`components/building-orientation-section.tsx`
+deleted.** `grep -rn "building_front_faces" components/` → exactly one
+component writes it: `building-orientation-gate.tsx` (stage 3). Everything
+else reads it. The per-drawing review panel's orientation box is reworded
+to "Compass orientation supplied by technician: front faces {X}" (read-only,
+always known now).
+
+### Server enforcement
+
+- **New** `app/api/projects/[id]/pipeline-state/route.ts` (GET) and
+  `app/api/projects/[id]/finalize/route.ts` (POST). Finalize is the ONLY
+  path that freezes `calculation_snapshots` v1 — it runs
+  `computePipelineState`, `422 {blockers}` if `!canFinalize`, else freezes
+  v1 + `attachFrozenImages` + sets `projects.finalized_at`. Idempotent.
+- `app/api/reports/route.ts` — the auto-create-snapshot branch is **gone**;
+  `409` if the project isn't finalized, for all three report types
+  (`grep -rn "calculation_snapshots" app/api/` → inserts only in
+  `finalize` and `revise`).
+- `app/api/reports/revise/route.ts` — re-runs the full gate; `422
+  {blockers}` if `!canFinalize`.
+- `app/api/reports/gate-status/route.ts` — delegates to
+  `computePipelineState` ("can generate" == "is finalized").
+- **Migration `20260901000000_add_pipeline_finalization.sql`** —
+  `projects.finalized_at`, `zones.equipment_selection_source`
+  (`ai_proposed`|`human_confirmed`|`human_override`), non-destructive
+  backfill (existing snapshotted projects → finalized at their first
+  snapshot's time; existing equipment picks → `human_confirmed`).
+
+### Client — the guided stepper
+
+- **`components/pipeline/`** — `pipeline-provider` (one shared
+  `PipelineState`; `refreshPipeline()` re-fetches `/pipeline-state` and is
+  called after every write — this is what makes the sections communicate),
+  `pipeline-rail` (numbered rail, live status, click any unlocked stage),
+  `proposal-panel` (Accept / Override-with-reason on a `proposal:*` key),
+  `finalize-panel` (full checklist + the one Finalize button; report
+  controls disabled until finalized).
+- **`components/project-workspace.tsx`** rewritten as the stepper: rail +
+  one stage body at a time + Back (always) / Next (gated on
+  `stages[view].exitGateMet`). Auto-propose on stage entry
+  (`autoApplyExtraction`, `autoProposeZoning`); "Confirm all AI pins" and
+  "Accept AI recommendation for all zones" buttons.
+- **`components/manual-j-workflow.tsx`** — renders only the viewed stage's
+  sections (`pipelineStage` prop); `BuildingOrientationSection` removed;
+  every DB write calls `onPipelineMutate`; new handle methods
+  `autoApplyExtraction` / `autoProposeZoning` / `confirmAllPins` /
+  `acceptAiEquipment` run against its own live rooms/zones state so
+  downstream stages re-gate with no reload.
+- `equipment-selection-section.tsx` now writes
+  `equipment_selection_source = 'human_confirmed'` on Select;
+  `makeup-air-section.tsx` / `drawings-section.tsx` gained `onMutate`;
+  `generate-reports-button.tsx` no longer pretends a download freezes a
+  snapshot; `report-generation-gate.tsx` consumes the new gate-status
+  shape.
+- `app/dashboard/[id]/page.tsx` — computes `initialPipelineState`
+  server-side; `MakeupAirSection` / `GenerateReportsButton` /
+  `ReportSignOffSection` / `StalenessBanner` moved into the stepper's
+  Ventilation and Finalize stages (they were rendered out of order above
+  `ProjectWorkspace`).
+
+### Verification
+
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — clean (exit 0). Note: `eslint-config-next@16.3.0` pulls
+  `eslint-plugin-react-hooks@7`, whose new `set-state-in-effect` / `refs`
+  rules flag pre-existing patterns in four files not touched by this
+  workstream (`duct-routing-canvas.tsx`, `duct-routing-diagram.tsx`,
+  `dehumidification-section.tsx`, `lib/reportImages.ts`); those sites are
+  suppressed with noted `eslint-disable` lines and a real fix left as a
+  separate task.
+- `npm test` — 30 files / **428 tests** green (+55 new:
+  `pipeline.test.mts` covers every stage predicate + every adjacent-pair
+  lock/unlock transition + the sections-communicate recompute + canFinalize
+  vs. outstanding proposals; plus `zoning`, `pinPlacement`,
+  `orientationTransform`, `proposeDehumidification`). 0 regressions.
+- `npm run build` — clean production build; the two new routes appear in
+  the route table. (One earlier build failed on a stale
+  `.next/types/routes.d 2.ts` macOS-duplicate artifact — cleared `.next`,
+  rebuilt clean; not a code issue.)
+- Dev server (`npm run dev`) boots clean; `/api/projects/[id]/pipeline-state`
+  and `/finalize` are wired and behind auth (307→/login unauthenticated).
+
+### Handed to the owner (could not run here)
+
+1. **Apply the migration** to the live Supabase DB — same as every prior
+   migration in this repo, applied by the owner, not in-session:
+   `psql "$SUPABASE_DB_URL" -f supabase/migrations/20260901000000_add_pipeline_finalization.sql`
+   (an attempt to apply it from here was correctly blocked — a live
+   schema change is the owner's call).
+2. **The authenticated end-to-end click-through** — create a residential
+   project → confirm climate → confirm orientation once → upload
+   `REFERENCE-DOCS/4308 Vivian Street.pdf` (or MJS) → resolve every
+   UNRESOLVED flag → Accept rooms → Accept zoning → confirm pins → Accept
+   duct design → Accept equipment → Accept ventilation → **Finalize
+   Project** → download the Summit Standard PDF → create a revision.
+   Confirm: each stage was locked until the prior one completed, the
+   orientation question appeared exactly once, the Finalize button was the
+   only thing that froze a snapshot, and the PDF is complete.
+
+### Out of scope / untouched
+
+- `lib/pdfRoomGeometry.ts` — the paused vector-geometry experiment; its
+  uncommitted build-4 changes were left exactly as-is, not built on, not
+  committed.
+- Commercial / industrial (`components/commercial-workflow.tsx`) — a
+  separate branch; the guided stepper is residential-only this pass. The
+  commercial branch still renders the standalone report/sign-off controls.

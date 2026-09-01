@@ -73,17 +73,16 @@ export function GenerateReportsButton({
   const [versionsLoading, setVersionsLoading] = useState(false);
   const [downloadingVersion, setDownloadingVersion] = useState<number | null>(null);
   const canFinalizeOrRevise = userRole === "admin" || userRole === "estimator";
-  const generateDisabled = generating !== null || (!snapshot && !canFinalizeOrRevise);
+  // FIX-PIPELINE: reports render only from a frozen snapshot, and a
+  // snapshot only exists once the project has been Finalized (POST
+  // /api/projects/[id]/finalize). No download ever freezes one.
+  const generateDisabled = generating !== null || !snapshot;
 
   async function handleGenerate(type: "internal" | "client" | "summit_standard") {
     setGenerating(type);
     setError(null);
     try {
       await downloadReport(projectId, type);
-      // The first download of any type finalizes version 1 server-side -
-      // reflect that in the status line immediately rather than only
-      // after the next full page load.
-      if (!snapshot) setSnapshot({ version: 1, createdAt: new Date().toISOString(), reason: null });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Report generation failed");
     } finally {
@@ -150,7 +149,7 @@ export function GenerateReportsButton({
         <button
           onClick={() => handleGenerate("internal")}
           disabled={generateDisabled}
-          title={!snapshot && !canFinalizeOrRevise ? "Only Estimators and Admins can finalize a project's first report" : undefined}
+          title={!snapshot ? "Finalize the project first" : undefined}
           className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
         >
           {generating === "internal" ? "Generating…" : "Internal Engineering Report"}
@@ -158,7 +157,7 @@ export function GenerateReportsButton({
         <button
           onClick={() => handleGenerate("client")}
           disabled={generateDisabled}
-          title={!snapshot && !canFinalizeOrRevise ? "Only Estimators and Admins can finalize a project's first report" : undefined}
+          title={!snapshot ? "Finalize the project first" : undefined}
           className="rounded-md border border-brand-gold px-4 py-2 text-sm font-semibold text-brand-gold transition hover:bg-brand-gold/10 disabled:opacity-50"
         >
           {generating === "client" ? "Generating…" : "Client Scope of Work"}
@@ -181,9 +180,7 @@ export function GenerateReportsButton({
       <p className="mt-2 text-xs text-brand-grey-text">
         {snapshot
           ? `Finalized as of ${new Date(snapshot.createdAt).toLocaleString()} (v${snapshot.version}${snapshot.reason ? ` — ${snapshot.reason}` : ""}). Reports always reflect this frozen data, not live edits, until a new revision is created.`
-          : canFinalizeOrRevise
-            ? "Not yet finalized — the first report you download freezes today's calculations. Later reference-data updates (new equipment models, corrected duct tables, etc.) will never silently change this project's reports once that happens."
-            : "Not yet finalized — only an Estimator or Admin can finalize this project's first report."}
+          : "Not yet finalized — use the Finalize Project button above. Reports cannot be generated until the project is finalized; the freeze happens there, never on a download."}
       </p>
 
       <div className="mt-6 border-t border-brand-gold/30 pt-5">
@@ -198,8 +195,8 @@ export function GenerateReportsButton({
         <ReportGenerationGate projectId={projectId} onReady={setSummitStandardReady} />
         <button
           onClick={() => handleGenerate("summit_standard")}
-          disabled={generating !== null || !summitStandardReady || (!snapshot && !canFinalizeOrRevise)}
-          title={!snapshot && !canFinalizeOrRevise ? "Only Estimators and Admins can finalize a project's first report" : undefined}
+          disabled={generating !== null || !summitStandardReady || !snapshot}
+          title={!snapshot ? "Finalize the project first" : undefined}
           className="mt-3 rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
           {generating === "summit_standard" ? "Generating…" : "Generate Summit Standard Report"}

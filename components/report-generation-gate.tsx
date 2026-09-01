@@ -1,27 +1,15 @@
 "use client";
 
-// SUMMIT-REPORT-STANDARD.md Section 3: "The 'Generate Report' action must
-// be disabled (not just warned-against) until every one of these is
-// true... the correct product behavior is to show the user what's
-// blocking generation (a checklist of the above), not to render a report
-// with gaps, placeholders, or a 'TBD' equipment section." This component
-// is that checklist - it calls app/api/reports/gate-status, a thin
-// server route wrapping the SAME lib/reportGate.ts function the actual
-// render path uses, so the UI can never claim "ready" when generation
-// would actually fail, or vice versa. Fetched via the API route (not
-// getReportData directly) so the calc engine it pulls in
-// (computeManualJ/computeManualD/evaluateEquipment) stays server-side,
-// out of the client bundle.
+// FIX-PIPELINE: the readiness checklist for report generation. It now
+// mirrors the one pipeline state machine - "can generate" == "project is
+// finalized", and the blocker list is the set of stage gates / unreviewed
+// AI proposals still standing (from GET-equivalent POST /api/reports/gate-
+// status, which delegates to computePipelineState). The guided stepper's
+// FinalizePanel shows the same checklist from context; this component is
+// kept for the non-guided (commercial) report button.
 import { useEffect, useState } from "react";
-import type { ReportGenerationBlocker } from "@/lib/reportGate";
 
-const BLOCKER_LABELS: Record<ReportGenerationBlocker["code"], string> = {
-  unresolved_fields: "Unresolved fields",
-  equipment_incomplete: "Equipment selection",
-  duct_design_incomplete: "Duct design",
-  totals_invalid: "Calculation totals",
-  data_incomplete: "Room data completeness",
-};
+type Blocker = { label: string; detail: string };
 
 export function ReportGenerationGate({
   projectId,
@@ -29,12 +17,11 @@ export function ReportGenerationGate({
 }: {
   projectId: string;
   // Called once the gate status is known, so a parent (e.g. the actual
-  // "Generate Report" button) can enable/disable itself - this component
-  // owns the checklist display, not the download action itself.
+  // "Generate Report" button) can enable/disable itself.
   onReady: (ready: boolean) => void;
 }) {
   const [loading, setLoading] = useState(true);
-  const [blockers, setBlockers] = useState<ReportGenerationBlocker[]>([]);
+  const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -86,19 +73,19 @@ export function ReportGenerationGate({
   if (blockers.length === 0) {
     return (
       <p className="flex items-center gap-2 text-sm text-brand-success">
-        <span aria-hidden>✓</span> Ready to generate - all Section 3 gate conditions met.
+        <span aria-hidden>✓</span> Ready - project is finalized.
       </p>
     );
   }
   return (
     <div className="rounded-md border border-brand-gold/50 bg-brand-gold-base/10 p-4">
       <p className="mb-2 text-sm font-semibold text-brand-gold">
-        {blockers.length} thing{blockers.length === 1 ? "" : "s"} blocking report generation:
+        {blockers.length} item{blockers.length === 1 ? "" : "s"} before this project can be finalized:
       </p>
       <ul className="flex flex-col gap-2">
         {blockers.map((b, i) => (
           <li key={i} className="text-sm text-brand-silver-highlight">
-            <span className="font-medium text-brand-gold">{BLOCKER_LABELS[b.code]}:</span> {b.detail}
+            <span className="font-medium text-brand-gold">{b.label}:</span> {b.detail}
           </li>
         ))}
       </ul>

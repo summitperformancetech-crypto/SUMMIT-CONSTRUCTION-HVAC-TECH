@@ -14,6 +14,7 @@ import {
   type FieldResolution,
 } from "@/lib/fieldResolutions";
 import { FieldResolutionBadge } from "@/components/field-resolution-badge";
+import type { Compass8 } from "@/lib/constants/compass";
 import type {
   ApplyExtractedDataResult,
   ExtractableEnvelopeFields,
@@ -36,6 +37,8 @@ export function DrawingsSection({
   initialDrawings,
   initialFieldResolutions,
   onApply,
+  onMutate,
+  buildingFrontFaces = null,
 }: {
   projectId: string;
   initialDrawings: DrawingRow[];
@@ -44,6 +47,14 @@ export function DrawingsSection({
     envelope: ExtractableEnvelopeFields,
     rooms: ExtractedRoom[],
   ) => Promise<ApplyExtractedDataResult>;
+  // FIX-PIPELINE: called after any change that could move a pipeline gate
+  // (a drawing finished extracting, a floor-plan page was marked/cleared,
+  // an UNRESOLVED field was Accepted/Overridden) so the guided stepper
+  // re-fetches shared pipeline state.
+  onMutate?: () => void;
+  // The one human-confirmed orientation (stage 3). Shown read-only in the
+  // per-drawing review panel - it is always known now, never guessed.
+  buildingFrontFaces?: Compass8 | null;
 }) {
   const [drawings, setDrawings] = useState<DrawingRow[]>(initialDrawings);
   const [uploading, setUploading] = useState(false);
@@ -63,6 +74,7 @@ export function DrawingsSection({
 
   function handleResolved(resolution: FieldResolution) {
     setResolutions((prev) => [...prev, resolution]);
+    onMutate?.();
   }
 
   // At most one drawing per project is the floor plan (SUMMIT-REPORT-
@@ -98,6 +110,7 @@ export function DrawingsSection({
     setDrawings((prev) =>
       prev.map((d) => ({ ...d, floor_plan_page_number: d.id === drawingId ? pageNumber : null })),
     );
+    onMutate?.();
   }
 
   async function handleClearFloorPlan(drawingId: string) {
@@ -113,6 +126,7 @@ export function DrawingsSection({
     setDrawings((prev) =>
       prev.map((d) => (d.id === drawingId ? { ...d, floor_plan_page_number: null } : d)),
     );
+    onMutate?.();
   }
 
   const reviewingDrawing = drawings.find((d) => d.id === reviewingId) ?? null;
@@ -192,6 +206,7 @@ export function DrawingsSection({
         ),
       );
       setReviewingId(row.id);
+      onMutate?.();
     } catch {
       setDrawings((prev) =>
         prev.map((d) => (d.id === row.id ? { ...d, extraction_status: "failed" } : d)),
@@ -495,6 +510,7 @@ export function DrawingsSection({
           onApply={() => handleApply(reviewingDrawing)}
           resolutionMap={resolutionMap}
           onResolved={handleResolved}
+          buildingFrontFaces={buildingFrontFaces}
         />
       )}
     </section>
@@ -510,6 +526,7 @@ function ReviewPanel({
   onApply,
   resolutionMap,
   onResolved,
+  buildingFrontFaces,
 }: {
   projectId: string;
   drawing: DrawingRow;
@@ -519,31 +536,19 @@ function ReviewPanel({
   onApply: () => void;
   resolutionMap: Map<string, FieldResolution>;
   onResolved: (resolution: FieldResolution) => void;
+  buildingFrontFaces: Compass8 | null;
 }) {
   const data = drawing.extracted_data!;
   const envelope = data.building_envelope;
-  const orientation = data.orientation;
 
   return (
     <div className="mt-4 space-y-4 rounded-lg border border-brand-gold/50 bg-zinc-900 p-4">
-      <div
-        className={`rounded-md border px-3 py-2 text-xs ${
-          orientation?.detected
-            ? "border-brand-success/40 bg-brand-success/10 text-brand-success"
-            : "border-brand-gold/50 bg-brand-gold/10 text-brand-gold"
-        }`}
-      >
-        {orientation?.detected ? (
-          <>
-            <span className="font-semibold">Orientation detected.</span>{" "}
-            {orientation.description ?? "Room wall exposure was estimated from the drawing."}
-          </>
-        ) : (
-          <>
-            <span className="font-semibold">No orientation marker found.</span> Room wall
-            exposure (N/S/E/W) was left blank rather than guessed — enter it manually if needed.
-          </>
-        )}
+      <div className="rounded-md border border-brand-success/40 bg-brand-success/10 px-3 py-2 text-xs text-brand-success">
+        <span className="font-semibold">Compass orientation supplied by technician:</span>{" "}
+        {buildingFrontFaces
+          ? `front elevation faces ${buildingFrontFaces}.`
+          : "not confirmed yet (set it in the Orientation stage)."}{" "}
+        Room wall exposure (N/S/E/W) is rotated from this, not guessed per room.
       </div>
 
       <div>

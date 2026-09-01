@@ -33,13 +33,14 @@ import {
 import { computeStaleItems, type StaleItem } from "@/lib/staleness";
 import type { Compass8 } from "@/lib/constants/compass";
 import type { HvacSystemConfiguration } from "@/components/system-configuration-section";
-import {
-  MakeupAirSection,
-  type ExhaustSourceRow,
-  type MakeupAirCatalogOption,
-  type ExhaustFanCatalogOption,
-  type ExhaustRoomLookup,
+import type {
+  ExhaustSourceRow,
+  MakeupAirCatalogOption,
+  ExhaustFanCatalogOption,
+  ExhaustRoomLookup,
 } from "@/components/makeup-air-section";
+import { buildPipelineInput } from "@/lib/pipelineInput";
+import { computePipelineState } from "@/lib/pipeline";
 
 type Project = {
   id: string;
@@ -210,8 +211,6 @@ const EQUIPMENT_BLOWER_PERFORMANCE_COLUMNS = "equipment_id, speed_tap, esp_iwc, 
 // comment below).
 const DEHUMIDIFICATION_SYSTEM_COLUMNS =
   "id, name, installation_topology, selected_equipment_id, available_static_pressure_iwc, notes";
-const DEHUMIDIFICATION_DUCT_RUN_COLUMNS =
-  "id, dehumidification_system_id, run_type, length_ft, fitting_equivalent_length_ft, duct_shape, target_height_in, material";
 
 const ROOM_COLUMNS =
   "id, project_id, name, level, floor_area_sqft, ceiling_height_ft, ceiling_exposed, floor_exposed, is_conditioned, is_bedroom, room_type, occupant_count, sensible_gain_override, latent_gain_override, duct_location, duct_insulation_r_value, duct_source, duct_confidence, zone_id, wall_north_len_ft, wall_south_len_ft, wall_east_len_ft, wall_west_len_ft, wall_front_len_ft, wall_rear_len_ft, wall_left_len_ft, wall_right_len_ft, wall_north_exposure_type, wall_south_exposure_type, wall_east_exposure_type, wall_west_exposure_type, window_north_area_sqft, window_south_area_sqft, window_east_area_sqft, window_west_area_sqft, door_count, position_x_norm, position_y_norm, position_source_drawing_id, position_source_page_number";
@@ -984,6 +983,35 @@ export default async function ProjectDetailPage({
     attic_construction_type: project.attic_construction_type,
   };
 
+  // FIX-PIPELINE: the one shared pipeline state, computed server-side and
+  // handed to PipelineProvider as the first-paint value. Every stage
+  // component re-fetches GET /api/projects/[id]/pipeline-state after a
+  // write, so this is only the starting snapshot.
+  const pipelineInput = await buildPipelineInput(supabase, project.id);
+  const pipelineState = pipelineInput
+    ? computePipelineState(pipelineInput)
+    : computePipelineState({
+        project: {
+          id: project.id,
+          project_type: project.project_type,
+          climate_confirmed: project.climate_confirmed,
+          building_front_faces: project.building_front_faces,
+          hvac_system_configuration: project.hvac_system_configuration,
+          finalized_at: null,
+        },
+        climateZone: null,
+        rooms: [],
+        zones: [],
+        drawings: [],
+        fieldResolutions: [],
+        ductRuns: [],
+        exhaustSources: [],
+        zoneEquipment: [],
+        manualJ: null,
+        makeupAirRequired: false,
+        latestSnapshotVersion: null,
+      });
+
   return (
     <div className="mx-auto max-w-3xl">
       <Link
@@ -1044,28 +1072,23 @@ export default async function ProjectDetailPage({
         )}
       </div>
 
-      <StalenessBanner projectId={project.id} initialStaleItems={staleItems} />
-      <GenerateReportsButton projectId={project.id} initialSnapshot={latestSnapshot} userRole={userRole} />
-      <ReportSignOffSection
-        projectId={project.id}
-        latestSnapshot={latestSnapshot}
-        initialSignOffs={signOffRows ?? []}
-        userRole={userRole}
-      />
-
-      <div className="mb-6">
-        <MakeupAirSection
-          projectId={project.id}
-          initialExhaustSources={initialExhaustSources}
-          catalogOptions={makeupAirCatalogOptions}
-          initialSelectedMakeupAirEquipmentId={project.selected_makeup_air_equipment_id}
-          exhaustFanCatalogOptions={exhaustFanCatalogOptions}
-          rooms={roomLookupForExhaust}
-        />
-      </div>
+      {/* FIX-PIPELINE: StalenessBanner, GenerateReportsButton,
+          ReportSignOffSection and MakeupAirSection are no longer rendered
+          standalone here - they live inside the guided stepper's
+          Ventilation and Finalize stages so they gate in order like every
+          other section. */}
 
       <ProjectWorkspace
         projectId={project.id}
+        initialPipelineState={pipelineState}
+        initialExhaustSources={initialExhaustSources}
+        makeupAirCatalogOptions={makeupAirCatalogOptions}
+        initialSelectedMakeupAirEquipmentId={project.selected_makeup_air_equipment_id}
+        exhaustFanCatalogOptions={exhaustFanCatalogOptions}
+        exhaustRoomLookup={roomLookupForExhaust}
+        initialSnapshot={latestSnapshot}
+        initialSignOffs={signOffRows ?? []}
+        initialStaleItems={staleItems}
         initialClimateConfirmed={project.climate_confirmed}
         initialEnvelope={envelope}
         initialAtticInsulationType={project.attic_insulation_type}

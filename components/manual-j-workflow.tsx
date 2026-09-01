@@ -19,11 +19,20 @@ import {
 } from "@/lib/manualJ";
 import type { ExtractedRoom, DrawingRow } from "@/lib/drawingExtraction";
 import { DuctRoutingCanvas } from "@/components/duct-routing-canvas";
-import { getDuctRoutingGateStatus } from "@/lib/ductRouting";
 import type { CorridorGraph } from "@/lib/ductCorridorGraph";
 import { normalizeDuctLocation, buildCodeMinimumsByLocation } from "@/lib/constants/ductLocations";
-import { normalizeRoomNameForMatch } from "@/lib/fieldResolutions";
+import {
+  normalizeRoomNameForMatch,
+  resolutionKey,
+  FIELD_RESOLUTION_COLUMNS,
+  type FieldResolution,
+} from "@/lib/fieldResolutions";
+import { applyOrientationTransform } from "@/lib/orientation";
 import { inferRoomTypeFromName, computeLocalExhaustRequirement } from "@/lib/localExhaust";
+import { buildEnvelopeAndRoomsForApply } from "@/lib/extractionApply";
+import { proposeZoning } from "@/lib/zoning";
+import { proposeRoomPins, proposeMechanicalPins } from "@/lib/pinPlacement";
+import { evaluateEquipment, rankEquipment } from "@/lib/manualS";
 import {
   RoomForm,
   EMPTY_ROOM_FORM,
@@ -43,8 +52,8 @@ import type { DuctDiffuserRow, AhuInstallationDetailRow, DuctTerminationRow } fr
 import type { DuctSizingTableRow } from "@/lib/manualD";
 import { EquipmentSelectionSection } from "@/components/equipment-selection-section";
 import type { EquipmentCatalogEntry, PerformancePoint } from "@/lib/manualS";
-import { BuildingOrientationSection } from "@/components/building-orientation-section";
 import { PreferredManufacturerSection } from "@/components/preferred-manufacturer-section";
+import type { PipelineStage } from "@/lib/pipeline";
 import {
   SystemConfigurationSection,
   type HvacSystemConfiguration,
@@ -319,6 +328,13 @@ export type ManualJWorkflowHandle = {
     envelope: ExtractableEnvelopeFields,
     extractedRooms: ExtractedRoom[],
   ) => Promise<ApplyExtractedDataResult>;
+  // FIX-PIPELINE guided-stepper auto-propose hooks - each runs against this
+  // component's own live rooms/zones state so downstream stages see the
+  // result with no page reload.
+  autoApplyExtraction: () => Promise<{ error: string | null }>;
+  autoProposeZoning: () => Promise<{ error: string | null; created: number }>;
+  confirmAllPins: () => Promise<{ error: string | null; placed: number }>;
+  acceptAiEquipment: () => Promise<{ error: string | null; confirmed: number }>;
 };
 
 function toNullableNumber(value: string): number | null {
@@ -549,6 +565,15 @@ export const ManualJWorkflow = forwardRef<
     initialDehumidificationDuctRuns: DehumidificationDuctRunRow[];
     dehumidifierCatalogOptions: DehumidifierCatalogOption[];
     dehumidifierBlowerPerformancePoints: BlowerPerformancePoint[];
+    // FIX-PIPELINE: when set, this component renders only the section(s)
+    // belonging to the currently-viewed pipeline stage (the guided stepper
+    // keeps one instance mounted across stages 6-12 so rooms/zones state
+    // is shared - "sections communicate"). null = legacy "render
+    // everything" mode.
+    pipelineStage?: PipelineStage | null;
+    // Called after any successful write so PipelineProvider re-fetches the
+    // shared state and downstream stages re-gate without a page reload.
+    onPipelineMutate?: () => void;
   }
 >(function ManualJWorkflow(
   {
@@ -585,14 +610,27 @@ export const ManualJWorkflow = forwardRef<
     dehumidifierBlowerPerformancePoints,
     exclusiveEquipmentIds,
     ductInsulationCodeMinimums,
+    // FIX-PIPELINE removed BuildingOrientationSection from this component -
+    // building_front_faces is confirmed once, upstream, by the stage-3
+    // orientation gate. This value is still used here for exactly one
+    // thing: running the drawing-relative -> compass wall rotation
+    // automatically at the end of applyExtractedData (stage-6 auto-apply,
+    // no button), via lib/orientation.ts's applyOrientationTransform.
     initialBuildingFrontFaces,
     initialDrawings,
     initialPreferredManufacturer,
     initialSystemConfiguration,
     userRole,
+    pipelineStage = null,
+    onPipelineMutate,
   },
   ref,
 ) {
+  // In stepper mode `pipelineStage` is always set; `show(s)` gates each
+  // section to the one stage being viewed. In legacy mode (null) every
+  // section renders as before.
+  const show = (s: PipelineStage) => pipelineStage == null || pipelineStage === s;
+  const notifyPipeline = () => onPipelineMutate?.();
   const [envelopeForm, setEnvelopeForm] = useState(
     envelopeToForm(
       initialEnvelope,
@@ -743,6 +781,7 @@ export const ManualJWorkflow = forwardRef<
       return;
     }
     setEnvelopeSaved(true);
+    notifyPipeline();
   }
 
   async function handleAddRoom(values: RoomFormValues) {
@@ -766,6 +805,7 @@ export const ManualJWorkflow = forwardRef<
     if (error) throw new Error(error.message);
     setRooms((prev) => [...prev, data]);
     setShowAddForm(false);
+    notifyPipeline();
   }
 
   async function handleQuickZoneChange(roomId: string, zoneId: string) {
@@ -782,6 +822,7 @@ export const ManualJWorkflow = forwardRef<
       return;
     }
     setRooms((prev) => prev.map((room) => (room.id === roomId ? data : room)));
+    notifyPipeline();
   }
 
   // All three zone handlers below wrap their Supabase call in try/catch -
@@ -823,6 +864,7 @@ export const ManualJWorkflow = forwardRef<
       // this looked "stuck" before).
       setNewZoneName(suggestNextZoneName(updatedZones));
       setNewZoneAhuLabel("");
+      notifyPipeline();
     } catch (err) {
       setZoneError(err instanceof Error ? err.message : "Failed to add zone - check your connection and try again.");
     } finally {
@@ -845,6 +887,7 @@ export const ManualJWorkflow = forwardRef<
         return;
       }
       setZones((prev) => prev.map((zone) => (zone.id === zoneId ? data : zone)));
+      notifyPipeline();
     } catch (err) {
       setZoneError(err instanceof Error ? err.message : "Failed to rename zone - check your connection and try again.");
     }
@@ -878,6 +921,7 @@ export const ManualJWorkflow = forwardRef<
     setRooms((prev) =>
       prev.map((room) => (room.zone_id === zoneId ? { ...room, zone_id: null } : room)),
     );
+    notifyPipeline();
   }
 
   async function handleUpdateRoom(id: string, values: RoomFormValues) {
@@ -915,6 +959,7 @@ export const ManualJWorkflow = forwardRef<
         prev.map((room) => (room.id === id ? ({ ...room, ...payload } as RoomRow) : room)),
       );
       setEditingRoomId(null);
+      notifyPipeline();
       return;
     }
 
@@ -926,6 +971,7 @@ export const ManualJWorkflow = forwardRef<
     if (error) throw new Error(error.message);
     setRooms((prev) => prev.map((room) => (room.id === id ? data : room)));
     setEditingRoomId(null);
+    notifyPipeline();
   }
 
   async function handleDeleteRoom(id: string) {
@@ -938,10 +984,14 @@ export const ManualJWorkflow = forwardRef<
       return;
     }
     setRooms((prev) => prev.filter((room) => room.id !== id));
+    notifyPipeline();
   }
 
-  useImperativeHandle(ref, () => ({
-    async applyExtractedData(extractedEnvelope, extractedRooms) {
+  async function applyExtractedDataImpl(
+    extractedEnvelope: ExtractableEnvelopeFields,
+    extractedRooms: ExtractedRoom[],
+  ): Promise<ApplyExtractedDataResult> {
+    {
       let appliedEnvelope = false;
       setEnvelopeForm((prev) => {
         const next = { ...prev };
@@ -1221,6 +1271,48 @@ export const ManualJWorkflow = forwardRef<
         await createDraftLocalExhaustSources(createClient(), projectId, allCreatedRooms);
       }
 
+      // FIX-PIPELINE stage-6 auto-apply: run the drawing-relative ->
+      // compass wall rotation automatically, no "Save & Auto-Fill Walls"
+      // button. Only touches rooms whose wall-orientation UNRESOLVED flag
+      // is already cleared (applyOrientationTransform's own guard); a
+      // blocked room is picked up on the next apply / resolution.
+      if (initialBuildingFrontFaces) {
+        const supabase = createClient();
+        const { data: resolutionRows } = await supabase
+          .from("field_resolutions")
+          .select(FIELD_RESOLUTION_COLUMNS)
+          .eq("project_id", projectId)
+          .returns<FieldResolution[]>();
+        const resolvedKeys = new Set(
+          (resolutionRows ?? []).map((r) => resolutionKey(r.table_name, r.record_id, r.field_name)),
+        );
+        // Re-read the current rooms (post insert/update) straight from the
+        // setter so the transform sees fresh drawing-relative wall data.
+        let currentRooms: RoomRow[] = [];
+        setRooms((prev) => {
+          currentRooms = prev;
+          return prev;
+        });
+        const transform = await applyOrientationTransform<RoomRow>(
+          supabase,
+          projectId,
+          currentRooms.map((r) => ({
+            id: r.id,
+            name: r.name,
+            wall_front_len_ft: r.wall_front_len_ft,
+            wall_rear_len_ft: r.wall_rear_len_ft,
+            wall_left_len_ft: r.wall_left_len_ft,
+            wall_right_len_ft: r.wall_right_len_ft,
+          })),
+          initialBuildingFrontFaces,
+          resolvedKeys,
+          ROOM_COLUMNS,
+        );
+        if (transform.updated.length > 0) {
+          setRooms((prev) => prev.map((r) => transform.updated.find((u) => u.id === r.id) ?? r));
+        }
+      }
+
       requestAnimationFrame(() => {
         roomsSectionRef.current?.scrollIntoView({
           behavior: "smooth",
@@ -1228,21 +1320,272 @@ export const ManualJWorkflow = forwardRef<
         });
       });
 
+      notifyPipeline();
       return { appliedEnvelope, roomsCreated, roomsUpdated, error: applyError, unmatchedRoomNotes };
-    },
+    }
+  }
+
+  // FIX-PIPELINE stage-6 auto-apply: fetch the completed floor-plan
+  // drawing + resolutions and run applyExtractedData with no button.
+  async function autoApplyExtractionImpl(): Promise<{ error: string | null }> {
+    const supabase = createClient();
+    const [{ data: drawings }, { data: resolutionRows }] = await Promise.all([
+      supabase
+        .from("drawings")
+        .select("id, extracted_data, floor_plan_page_number, extraction_status")
+        .eq("project_id", projectId)
+        .eq("extraction_status", "completed")
+        .returns<
+          { id: string; extracted_data: DrawingRow["extracted_data"]; floor_plan_page_number: number | null; extraction_status: string }[]
+        >(),
+      supabase.from("field_resolutions").select(FIELD_RESOLUTION_COLUMNS).eq("project_id", projectId).returns<FieldResolution[]>(),
+    ]);
+    const list = drawings ?? [];
+    const fp = list.find((d) => d.floor_plan_page_number != null) ?? list[0];
+    if (!fp || !fp.extracted_data) return { error: "No completed drawing extraction to apply yet." };
+    const built = buildEnvelopeAndRoomsForApply(fp, resolutionRows ?? [], projectId);
+    if (!built) return { error: "Could not read the drawing extraction." };
+    const result = await applyExtractedDataImpl(built.envelope, built.rooms);
+    return { error: result.error };
+  }
+
+  // FIX-PIPELINE stage 7 auto-propose: proposeZoning against this
+  // component's own live rooms/zones state, then create the zones and
+  // assign every conditioned room - all through the same state setters so
+  // stages 8-12 see the result without a reload.
+  async function autoProposeZoningImpl(): Promise<{ error: string | null; created: number }> {
+    if (zones.length > 0) return { error: null, created: 0 };
+    const proposal = proposeZoning(
+      rooms.map((r) => ({
+        id: r.id,
+        name: r.name,
+        level: r.level,
+        floor_area_sqft: r.floor_area_sqft,
+        is_conditioned: r.is_conditioned,
+        zone_id: r.zone_id,
+      })),
+      results,
+    );
+    if (proposal.zones.length === 0) return { error: "No conditioned rooms to zone yet.", created: 0 };
+    const supabase = createClient();
+    const { data: createdZones, error: zoneError } = await supabase
+      .from("zones")
+      .insert(proposal.zones.map((z) => ({ project_id: projectId, name: z.name, ahu_label: z.ahu_label })))
+      .select(ZONE_COLUMNS)
+      .returns<ZoneRow[]>();
+    if (zoneError || !createdZones) return { error: zoneError?.message ?? "Failed to create zones.", created: 0 };
+    setZones(createdZones);
+    const roomZoneUpdates: RoomRow[] = [];
+    for (const [roomId, zoneIndex] of Object.entries(proposal.roomZoneMap)) {
+      const zoneId = createdZones[zoneIndex]?.id;
+      if (!zoneId) continue;
+      const { data, error } = await supabase
+        .from("rooms")
+        .update({ zone_id: zoneId })
+        .eq("id", roomId)
+        .select(ROOM_COLUMNS)
+        .single<RoomRow>();
+      if (!error && data) roomZoneUpdates.push(data);
+    }
+    if (roomZoneUpdates.length > 0) {
+      setRooms((prev) => prev.map((r) => roomZoneUpdates.find((u) => u.id === r.id) ?? r));
+    }
+    notifyPipeline();
+    return { error: null, created: createdZones.length };
+  }
+
+  // FIX-PIPELINE stage 9: place every not-yet-confirmed duct-routing pin
+  // from the AI proposal (lib/pinPlacement.ts) and record a
+  // field_resolutions row for each - "Confirm all" in one action.
+  async function confirmAllPinsImpl(): Promise<{ error: string | null; placed: number }> {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return { error: "You must be signed in.", placed: 0 };
+
+    const drawingInputs = initialDrawings.map((d) => ({
+      id: d.id,
+      extraction_status: d.extraction_status,
+      extracted_data: d.extracted_data,
+      floor_plan_page_number: d.floor_plan_page_number,
+    }));
+    const roomInputs = rooms.map((r) => ({
+      id: r.id,
+      name: r.name,
+      zone_id: r.zone_id,
+      floor_area_sqft: r.floor_area_sqft,
+      position_x_norm: r.position_x_norm,
+      position_y_norm: r.position_y_norm,
+    }));
+    const proposedRoomPins = proposeRoomPins(roomInputs, drawingInputs);
+
+    let placed = 0;
+    const roomUpdates: RoomRow[] = [];
+    for (const r of rooms) {
+      if (r.zone_id == null || (r.floor_area_sqft ?? 0) <= 0) continue;
+      if (r.position_x_norm != null && r.position_y_norm != null) continue;
+      const pin = proposedRoomPins[r.id];
+      if (!pin) continue;
+      const { data, error } = await supabase
+        .from("rooms")
+        .update({
+          position_x_norm: pin.xNorm,
+          position_y_norm: pin.yNorm,
+          position_source_drawing_id: pin.drawingId,
+          position_source_page_number: pin.pageNumber,
+        })
+        .eq("id", r.id)
+        .select(ROOM_COLUMNS)
+        .single<RoomRow>();
+      if (error) return { error: `${r.name}: ${error.message}`, placed };
+      if (data) roomUpdates.push(data);
+      await supabase.from("field_resolutions").insert({
+        project_id: projectId,
+        table_name: "rooms",
+        record_id: r.id,
+        field_name: "position",
+        ai_extracted_value: JSON.stringify({ x_norm: pin.xNorm, y_norm: pin.yNorm }),
+        final_value: JSON.stringify({ x_norm: pin.xNorm, y_norm: pin.yNorm }),
+        resolution_type: "accepted",
+        override_reason: null,
+        resolved_by: user.id,
+      });
+      placed += 1;
+    }
+    if (roomUpdates.length > 0) {
+      setRooms((prev) => prev.map((r) => roomUpdates.find((u) => u.id === r.id) ?? r));
+    }
+
+    const zoneUpdates: ZoneRow[] = [];
+    for (const z of zones) {
+      const zoneHasRooms = rooms.some(
+        (r) => r.zone_id === z.id && r.is_conditioned && (r.floor_area_sqft ?? 0) > 0,
+      );
+      if (!zoneHasRooms) continue;
+      const mech = proposeMechanicalPins(z.id, roomInputs, drawingInputs, proposedRoomPins);
+      const patch: Record<string, unknown> = {};
+      const resolutionInserts: { field_name: string; x: number; y: number }[] = [];
+      if (z.ahu_position_x_norm == null) {
+        patch.ahu_position_x_norm = mech.ahu.xNorm;
+        patch.ahu_position_y_norm = mech.ahu.yNorm;
+        patch.ahu_position_source_drawing_id = mech.ahu.drawingId;
+        patch.ahu_position_source_page_number = mech.ahu.pageNumber;
+        resolutionInserts.push({ field_name: "ahu_position", x: mech.ahu.xNorm, y: mech.ahu.yNorm });
+      }
+      if (z.return_position_x_norm == null) {
+        patch.return_position_x_norm = mech.return.xNorm;
+        patch.return_position_y_norm = mech.return.yNorm;
+        patch.return_position_source_drawing_id = mech.return.drawingId;
+        patch.return_position_source_page_number = mech.return.pageNumber;
+        resolutionInserts.push({ field_name: "return_position", x: mech.return.xNorm, y: mech.return.yNorm });
+      }
+      if (z.condenser_position_x_norm == null) {
+        patch.condenser_position_x_norm = mech.condenser.xNorm;
+        patch.condenser_position_y_norm = mech.condenser.yNorm;
+        patch.condenser_position_source_drawing_id = mech.condenser.drawingId;
+        patch.condenser_position_source_page_number = mech.condenser.pageNumber;
+        resolutionInserts.push({ field_name: "condenser_position", x: mech.condenser.xNorm, y: mech.condenser.yNorm });
+      }
+      if (Object.keys(patch).length === 0) continue;
+      const { data, error } = await supabase
+        .from("zones")
+        .update(patch)
+        .eq("id", z.id)
+        .select(ZONE_COLUMNS)
+        .single<ZoneRow>();
+      if (error) return { error: `${z.name}: ${error.message}`, placed };
+      if (data) zoneUpdates.push(data);
+      for (const ins of resolutionInserts) {
+        await supabase.from("field_resolutions").insert({
+          project_id: projectId,
+          table_name: "zones",
+          record_id: z.id,
+          field_name: ins.field_name,
+          ai_extracted_value: null,
+          final_value: JSON.stringify({ x_norm: ins.x, y_norm: ins.y }),
+          resolution_type: "accepted",
+          override_reason: null,
+          resolved_by: user.id,
+        });
+        placed += 1;
+      }
+    }
+    if (zoneUpdates.length > 0) {
+      setZones((prev) => prev.map((z) => zoneUpdates.find((u) => u.id === z.id) ?? z));
+    }
+
+    notifyPipeline();
+    return { error: null, placed };
+  }
+
+  // FIX-PIPELINE stage 11: write the top-ranked compatible unit per panel
+  // as a human_confirmed selection - the "Accept AI recommendation" action.
+  async function acceptAiEquipmentImpl(): Promise<{ error: string | null; confirmed: number }> {
+    if (
+      winterDesignTempF == null ||
+      summerDesignTempF == null ||
+      summerCoincidentWetbulbF == null ||
+      !results
+    ) {
+      return { error: "Manual J / design conditions not ready.", confirmed: 0 };
+    }
+    const evalCatalog = equipmentCatalog.filter(
+      (e) => e.equipmentType !== "air_handler" && e.equipmentType !== "coil",
+    );
+    const pointsByEquipment = new Map<string, PerformancePoint[]>();
+    for (const p of equipmentPerformancePoints) {
+      if (!pointsByEquipment.has(p.equipmentId)) pointsByEquipment.set(p.equipmentId, []);
+      pointsByEquipment.get(p.equipmentId)!.push(p);
+    }
+    const supabase = createClient();
+    let confirmed = 0;
+    const zoneUpdates: ZoneRow[] = [];
+    for (const panel of equipmentPanels) {
+      const evals = evalCatalog.map((equipment) =>
+        evaluateEquipment(
+          equipment,
+          pointsByEquipment.get(equipment.id) ?? [],
+          panel.manualJCoolingTotalBtuh,
+          panel.manualJHeatingBtuh,
+          summerDesignTempF,
+          summerCoincidentWetbulbF,
+          winterDesignTempF,
+        ),
+      );
+      const top = rankEquipment(evals, preferredEquipmentIds)[0];
+      if (!top) continue;
+      const { data, error } = await supabase
+        .from("zones")
+        .update({
+          selected_equipment_id: top.equipment.id,
+          equipment_selection_source: "human_confirmed",
+        })
+        .in("id", panel.zoneIds)
+        .select(ZONE_COLUMNS)
+        .returns<ZoneRow[]>();
+      if (error) return { error: error.message, confirmed };
+      if (data) zoneUpdates.push(...data);
+      confirmed += panel.zoneIds.length;
+    }
+    if (zoneUpdates.length > 0) {
+      setZones((prev) => prev.map((z) => zoneUpdates.find((u) => u.id === z.id) ?? z));
+    }
+    notifyPipeline();
+    return { error: null, confirmed };
+  }
+
+  useImperativeHandle(ref, () => ({
+    applyExtractedData: applyExtractedDataImpl,
+    autoApplyExtraction: autoApplyExtractionImpl,
+    autoProposeZoning: autoProposeZoningImpl,
+    confirmAllPins: confirmAllPinsImpl,
+    acceptAiEquipment: acceptAiEquipmentImpl,
   }));
 
   return (
     <div className="space-y-6">
-      <BuildingOrientationSection
-        projectId={projectId}
-        rooms={rooms}
-        onRoomsUpdated={(updated) =>
-          setRooms((prev) => prev.map((r) => updated.find((u) => u.id === r.id) ?? r))
-        }
-        initialBuildingFrontFaces={initialBuildingFrontFaces}
-      />
-
+      {show("rooms_envelope") && (
       <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
         <h2 className="mb-4 text-lg font-semibold text-brand-gold">
           Building Envelope
@@ -1383,68 +1726,9 @@ export const ManualJWorkflow = forwardRef<
           )}
         </div>
       </section>
+      )}
 
-      <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
-        <h2 className="mb-4 text-lg font-semibold text-brand-gold">Zones</h2>
-
-        {zoneError && (
-          <p className="mb-4 text-sm text-red-400" role="alert">
-            {zoneError}
-          </p>
-        )}
-
-        {zones.length === 0 ? (
-          <p className="mb-4 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-4 text-center text-sm text-brand-grey-text">
-            No zones yet.
-          </p>
-        ) : (
-          <ul className="mb-4 space-y-2">
-            {zones.map((zone) => (
-              <ZoneRow
-                key={zone.id}
-                zone={zone}
-                roomCount={rooms.filter((room) => room.zone_id === zone.id).length}
-                onRename={(name, ahuLabel) => handleRenameZone(zone.id, name, ahuLabel)}
-                onDelete={() => handleDeleteZone(zone.id)}
-              />
-            ))}
-          </ul>
-        )}
-
-        <div className="flex flex-wrap items-end gap-2">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-brand-grey-text">Zone name</label>
-            <input
-              type="text"
-              placeholder="e.g. Zone 2 - Upstairs AHU"
-              value={newZoneName}
-              onChange={(e) => setNewZoneName(e.target.value)}
-              onFocus={(e) => e.target.select()}
-              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-medium text-brand-grey-text">
-              AHU label (optional)
-            </label>
-            <input
-              type="text"
-              placeholder="e.g. AHU-2"
-              value={newZoneAhuLabel}
-              onChange={(e) => setNewZoneAhuLabel(e.target.value)}
-              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
-            />
-          </div>
-          <button
-            onClick={handleAddZone}
-            disabled={zoneSaving || newZoneName.trim() === ""}
-            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
-          >
-            {zoneSaving ? "Adding…" : "Add Zone"}
-          </button>
-        </div>
-      </section>
-
+      {show("rooms_envelope") && (
       <section
         ref={roomsSectionRef}
         className="scroll-mt-6 rounded-lg border border-brand-gold/50 bg-brand-bg p-6"
@@ -1522,18 +1806,6 @@ export const ManualJWorkflow = forwardRef<
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <select
-                      value={room.zone_id ?? ""}
-                      onChange={(e) => handleQuickZoneChange(room.id, e.target.value)}
-                      className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-brand-silver outline-none focus:border-brand-gold"
-                    >
-                      <option value="">Unassigned</option>
-                      {zones.map((zone) => (
-                        <option key={zone.id} value={zone.id}>
-                          {zone.name}
-                        </option>
-                      ))}
-                    </select>
                     <button
                       onClick={() => {
                         setEditingRoomId(room.id);
@@ -1556,7 +1828,107 @@ export const ManualJWorkflow = forwardRef<
           </ul>
         )}
       </section>
+      )}
 
+      {show("zones") && (
+      <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
+        <h2 className="mb-4 text-lg font-semibold text-brand-gold">Zones</h2>
+
+        {zoneError && (
+          <p className="mb-4 text-sm text-red-400" role="alert">
+            {zoneError}
+          </p>
+        )}
+
+        {zones.length === 0 ? (
+          <p className="mb-4 rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-4 text-center text-sm text-brand-grey-text">
+            No zones yet.
+          </p>
+        ) : (
+          <ul className="mb-4 space-y-2">
+            {zones.map((zone) => (
+              <ZoneRow
+                key={zone.id}
+                zone={zone}
+                roomCount={rooms.filter((room) => room.zone_id === zone.id).length}
+                onRename={(name, ahuLabel) => handleRenameZone(zone.id, name, ahuLabel)}
+                onDelete={() => handleDeleteZone(zone.id)}
+              />
+            ))}
+          </ul>
+        )}
+
+        <div className="flex flex-wrap items-end gap-2">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-brand-grey-text">Zone name</label>
+            <input
+              type="text"
+              placeholder="e.g. Zone 2 - Upstairs AHU"
+              value={newZoneName}
+              onChange={(e) => setNewZoneName(e.target.value)}
+              onFocus={(e) => e.target.select()}
+              className="w-56 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-brand-grey-text">
+              AHU label (optional)
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. AHU-2"
+              value={newZoneAhuLabel}
+              onChange={(e) => setNewZoneAhuLabel(e.target.value)}
+              className="w-32 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-brand-silver-highlight outline-none focus:border-brand-gold"
+            />
+          </div>
+          <button
+            onClick={handleAddZone}
+            disabled={zoneSaving || newZoneName.trim() === ""}
+            className="rounded-md bg-brand-gold px-4 py-2 text-sm font-semibold text-black transition hover:bg-brand-gold-hover disabled:opacity-50"
+          >
+            {zoneSaving ? "Adding…" : "Add Zone"}
+          </button>
+        </div>
+
+        {rooms.length > 0 && (
+          <div className="mt-6 border-t border-brand-gold/30 pt-4">
+            <h3 className="mb-2 text-sm font-semibold text-brand-gold">Room → zone assignment</h3>
+            <ul className="space-y-2">
+              {rooms.map((room) => (
+                <li
+                  key={room.id}
+                  className="flex items-center justify-between rounded-md border border-brand-gold/50 bg-zinc-900 px-4 py-2"
+                >
+                  <span className="text-sm text-brand-silver-highlight">
+                    {room.name}
+                    {!room.is_conditioned && (
+                      <span className="ml-2 rounded-full border border-zinc-600 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-brand-grey-text">
+                        Unconditioned
+                      </span>
+                    )}
+                  </span>
+                  <select
+                    value={room.zone_id ?? ""}
+                    onChange={(e) => handleQuickZoneChange(room.id, e.target.value)}
+                    className="rounded-md border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-brand-silver outline-none focus:border-brand-gold"
+                  >
+                    <option value="">Unassigned</option>
+                    {zones.map((zone) => (
+                      <option key={zone.id} value={zone.id}>
+                        {zone.name}
+                      </option>
+                    ))}
+                  </select>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </section>
+      )}
+
+      {show("manual_j") && (
       <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
         <h2 className="mb-4 text-lg font-semibold text-brand-gold">
           Manual J Results
@@ -1653,8 +2025,9 @@ export const ManualJWorkflow = forwardRef<
           </div>
         )}
       </section>
+      )}
 
-      {canCalculate && results && results.zones.length > 0 && (
+      {show("manual_j") && canCalculate && results && results.zones.length > 0 && (
         <section className="rounded-lg border border-brand-gold/50 bg-brand-bg p-6">
           <h2 className="mb-4 text-lg font-semibold text-brand-gold">Zone Summary</h2>
           <div className="overflow-x-auto">
@@ -1701,30 +2074,34 @@ export const ManualJWorkflow = forwardRef<
         </section>
       )}
 
-      {canCalculate && results && rooms.length > 0 && zones.length > 0 && (
+      {show("duct_pins") && canCalculate && results && rooms.length > 0 && zones.length > 0 && (
         <div className="mb-6">
           <DuctRoutingCanvas
             projectId={projectId}
             rooms={rooms}
             zones={zones}
             drawings={initialDrawings}
-            onRoomPositionSaved={(roomId, update) =>
-              setRooms((prev) => prev.map((r) => (r.id === roomId ? { ...r, ...update } : r)))
-            }
-            onZonePositionSaved={(zoneId, update) =>
-              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)))
-            }
-            onReturnPositionSaved={(zoneId, update) =>
-              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)))
-            }
-            onCondenserPositionSaved={(zoneId, update) =>
-              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)))
-            }
+            onRoomPositionSaved={(roomId, update) => {
+              setRooms((prev) => prev.map((r) => (r.id === roomId ? { ...r, ...update } : r)));
+              notifyPipeline();
+            }}
+            onZonePositionSaved={(zoneId, update) => {
+              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)));
+              notifyPipeline();
+            }}
+            onReturnPositionSaved={(zoneId, update) => {
+              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)));
+              notifyPipeline();
+            }}
+            onCondenserPositionSaved={(zoneId, update) => {
+              setZones((prev) => prev.map((z) => (z.id === zoneId ? { ...z, ...update } : z)));
+              notifyPipeline();
+            }}
           />
         </div>
       )}
 
-      {canCalculate && results && rooms.length > 0 && zones.length > 0 && (
+      {show("manual_d") && canCalculate && results && rooms.length > 0 && zones.length > 0 && (
         <DuctDesignSection
           projectId={projectId}
           rooms={rooms}
@@ -1747,7 +2124,7 @@ export const ManualJWorkflow = forwardRef<
         />
       )}
 
-      {canCalculate && results && rooms.length > 0 && (
+      {show("ventilation") && canCalculate && results && rooms.length > 0 && (
         <div className="mb-6">
           <DehumidificationSection
             projectId={projectId}
@@ -1762,24 +2139,31 @@ export const ManualJWorkflow = forwardRef<
         </div>
       )}
 
-      {canCalculate && results && manufacturers.length > 0 && (
+      {show("equipment") && canCalculate && results && manufacturers.length > 0 && (
         <PreferredManufacturerSection
           projectId={projectId}
           manufacturers={manufacturers}
           initialPreferredManufacturer={preferredManufacturer}
-          onSaved={setPreferredManufacturer}
+          onSaved={(v) => {
+            setPreferredManufacturer(v);
+            notifyPipeline();
+          }}
         />
       )}
 
-      {canCalculate && results && zones.length > 1 && (
+      {show("equipment") && canCalculate && results && zones.length > 1 && (
         <SystemConfigurationSection
           projectId={projectId}
           initialSystemConfiguration={systemConfiguration}
-          onSaved={setSystemConfiguration}
+          onSaved={(v) => {
+            setSystemConfiguration(v);
+            notifyPipeline();
+          }}
         />
       )}
 
-      {canCalculate &&
+      {show("equipment") &&
+        canCalculate &&
         results &&
         winterDesignTempF != null &&
         summerDesignTempF != null &&
@@ -1810,9 +2194,11 @@ export const ManualJWorkflow = forwardRef<
             exclusiveEquipmentIds={exclusiveEquipmentIds}
             preferredManufacturer={preferredManufacturer}
             userRole={userRole}
+            onSelected={notifyPipeline}
           />
         ))}
-      {canCalculate &&
+      {show("equipment") &&
+        canCalculate &&
         results &&
         winterDesignTempF != null &&
         summerDesignTempF != null &&

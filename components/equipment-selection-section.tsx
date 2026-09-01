@@ -90,6 +90,7 @@ export function EquipmentSelectionSection({
   exclusiveEquipmentIds,
   preferredManufacturer,
   userRole,
+  onSelected,
 }: {
   // SUMMIT-REPORT-STANDARD.md Section 5.3 - one panel per AHU/zone, so
   // this writes to zones.selected_equipment_id, not projects. Normally a
@@ -127,6 +128,10 @@ export function EquipmentSelectionSection({
   // this just disables the action in the UI rather than letting a Field
   // Tech hit a raw database error.
   userRole: string;
+  // FIX-PIPELINE: called after a successful selection so the guided
+  // stepper re-fetches shared pipeline state (the equipment stage gate
+  // reads zones.equipment_selection_source).
+  onSelected?: () => void;
 }) {
   const canSelectEquipment = userRole === "admin" || userRole === "estimator";
   const [selectedEquipmentId, setSelectedEquipmentId] = useState(initialSelectedEquipmentId);
@@ -249,13 +254,20 @@ export function EquipmentSelectionSection({
       const supabase = createClient();
       const { error: saveError } = await supabase
         .from("zones")
-        .update({ selected_equipment_id: equipmentId, equipment_selection_notes: notes || null })
+        .update({
+          selected_equipment_id: equipmentId,
+          equipment_selection_notes: notes || null,
+          // A human explicitly picked this unit - the pipeline's equipment
+          // stage gate requires this NOT be null/ai_proposed.
+          equipment_selection_source: "human_confirmed",
+        })
         .in("id", zoneIds);
       if (saveError) {
         setError(saveError.message);
         return;
       }
       setSelectedEquipmentId(equipmentId);
+      onSelected?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save equipment selection - check your connection and try again.");
     } finally {

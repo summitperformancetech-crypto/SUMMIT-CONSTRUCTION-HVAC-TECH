@@ -122,6 +122,7 @@ export function MakeupAirSection({
   initialSelectedMakeupAirEquipmentId,
   exhaustFanCatalogOptions,
   rooms,
+  onMutate,
 }: {
   projectId: string;
   initialExhaustSources: ExhaustSourceRow[];
@@ -129,6 +130,11 @@ export function MakeupAirSection({
   initialSelectedMakeupAirEquipmentId: string | null;
   exhaustFanCatalogOptions: ExhaustFanCatalogOption[];
   rooms: ExhaustRoomLookup[];
+  // FIX-PIPELINE: called after any change (an exhaust source added /
+  // confirmed / removed, a makeup-air unit picked) so the guided stepper
+  // re-fetches shared pipeline state - the ventilation stage gates on no
+  // exhaust source being left pending_review.
+  onMutate?: () => void;
 }) {
   // Unlike HVAC equipment selection (Manual S - see equipment-selection-
   // section.tsx's canSelectEquipment), there's no admin/estimator-only
@@ -206,6 +212,7 @@ export function MakeupAirSection({
     ]);
     setNewDescription("");
     setNewCfm("");
+    onMutate?.();
   }
 
   async function handleRemoveSource(id: string) {
@@ -217,6 +224,7 @@ export function MakeupAirSection({
       return;
     }
     setSources((prev) => prev.filter((s) => s.id !== id));
+    onMutate?.();
   }
 
   async function handleConfirmSource(id: string) {
@@ -230,6 +238,7 @@ export function MakeupAirSection({
       return;
     }
     setSources((prev) => prev.map((s) => (s.id === id ? { ...s, reviewStatus: "confirmed" } : s)));
+    onMutate?.();
   }
 
   async function handleSelectFan(sourceId: string, equipmentId: string, candidates: ExhaustFanCatalogOption[]) {
@@ -284,7 +293,9 @@ export function MakeupAirSection({
     setSavingSelection(false);
     if (updateError) {
       setError(updateError.message);
+      return;
     }
+    onMutate?.();
   }
 
   function renderFanSelection(source: ExhaustSourceRow) {

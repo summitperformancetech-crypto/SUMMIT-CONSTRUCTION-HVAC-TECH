@@ -186,6 +186,7 @@ export function DuctRoutingCanvas({
         )
       : null;
     if (floorPlanOption) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- pre-existing (react-hooks@7); tracked separately
       setSelectedSheet(floorPlanOption);
       return;
     }
@@ -225,6 +226,7 @@ export function DuctRoutingCanvas({
   // "needs placement" instead.
   useEffect(() => {
     if (!selectedSheet) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- pre-existing (react-hooks@7); tracked separately
       setPins([]);
       return;
     }
@@ -325,6 +327,7 @@ export function DuctRoutingCanvas({
   useEffect(() => {
     if (!selectedSheet) return;
     let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- pre-existing (react-hooks@7); tracked separately
     setImageState({ dataUri: null, loading: true, error: null });
     fetch(`/api/drawings/${selectedSheet.drawingId}/page-image?page=${selectedSheet.pageNumber}`)
       .then(async (res) => {

@@ -55,8 +55,8 @@ type DrawingImageSource = {
   extracted_data: DrawingExtraction | null;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function attachFrozenImages(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: SupabaseClient<any>,
   projectId: string,
   reportData: ReportData,

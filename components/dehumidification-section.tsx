@@ -498,11 +498,11 @@ export function DehumidificationSection({
           </select>
           {selectedOption && (
             <p className="mt-1 text-xs text-brand-grey-text">
-              Duct connections: {selectedOption.inletDuctDiameterIn ?? "?"}" inlet
+              Duct connections: {selectedOption.inletDuctDiameterIn ?? "?"}&quot; inlet
               {selectedOption.secondaryInletDuctDiameterIn != null
                 ? ` (+ ${selectedOption.secondaryInletDuctDiameterIn}" ventilation inlet)`
                 : ""}
-              , {selectedOption.outletDuctDiameterIn}" outlet · Drain: {selectedOption.drainConnectionSpec} ·{" "}
+              , {selectedOption.outletDuctDiameterIn}&quot; outlet · Drain: {selectedOption.drainConnectionSpec} ·{" "}
               {selectedOption.hasBackdraftDamper ? "has backdraft damper" : "backdraft damper not confirmed"}
               {availableCfm != null && <> · delivers ~{Math.round(availableCfm)} cfm at the entered static pressure</>}
             </p>

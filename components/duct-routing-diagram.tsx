@@ -129,6 +129,7 @@ export function DuctRoutingDiagram({
     const missing = keys.filter((k) => !images.has(k));
     if (missing.length === 0) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- pre-existing (react-hooks@7); tracked separately
     setLoading(true);
     setError(null);
     Promise.all(

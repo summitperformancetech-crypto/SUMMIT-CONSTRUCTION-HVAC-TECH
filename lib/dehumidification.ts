@@ -96,3 +96,40 @@ export function dehumidifierCandidatesFor(
 ): DehumidifierCatalogOption[] {
   return options.filter((option) => bestAvailableRatedPintsPerDay(option) >= requiredPintsPerDay);
 }
+
+// FIX-PIPELINE stage 12: a reviewable dehumidification proposal derived
+// straight from the Manual J whole-house summer latent load. This is a
+// *draft to confirm*, not an automatic install - a project in a dry
+// climate legitimately needs no standalone dehumidifier, and that outcome
+// is itself something the technician Accepts.
+//
+// STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY threshold: below ~20 pints/day
+// of design latent load, a correctly-sized cooling coil's own latent
+// removal is generally adequate and a dedicated dehumidifier is not
+// recommended by default; at or above it, humid-climate part-load hours
+// routinely outrun coil latent capacity and a standalone unit is the
+// common ACCA Manual S remedy (see this module's header). It is a
+// disclosed heuristic line, not a code number.
+export const STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY = 20;
+
+export type DehumidificationProposal = {
+  latentLoadBtuh: number;
+  requiredPintsPerDay: number;
+  recommendStandalone: boolean;
+  candidates: DehumidifierCatalogOption[];
+  rationale: string;
+};
+
+export function proposeDehumidification(
+  manualJ: { wholeHouse: { coolingLatentBtuh: number } } | null,
+  options: DehumidifierCatalogOption[] = [],
+): DehumidificationProposal {
+  const latentLoadBtuh = Math.max(0, manualJ?.wholeHouse.coolingLatentBtuh ?? 0);
+  const requiredPintsPerDay = computeLatentLoadPintsPerDay(latentLoadBtuh);
+  const recommendStandalone = requiredPintsPerDay >= STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY;
+  const candidates = recommendStandalone ? dehumidifierCandidatesFor(requiredPintsPerDay, options) : [];
+  const rationale = recommendStandalone
+    ? `Manual J whole-house latent load is ${Math.round(latentLoadBtuh)} Btuh (${requiredPintsPerDay.toFixed(1)} pints/day) - at or above ${STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY} pints/day, a standalone whole-house dehumidifier is recommended.`
+    : `Manual J whole-house latent load is ${Math.round(latentLoadBtuh)} Btuh (${requiredPintsPerDay.toFixed(1)} pints/day) - below ${STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY} pints/day, the cooling coil's own latent removal is expected to be adequate; no standalone unit recommended.`;
+  return { latentLoadBtuh, requiredPintsPerDay, recommendStandalone, candidates, rationale };
+}

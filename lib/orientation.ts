@@ -1,4 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { COMPASS_8_VALUES, isCardinalCompass, type Compass8 } from "./constants/compass";
+import { roomHasUnresolvedWallOrientation } from "./fieldResolutions";
+import type { DrawingExtraction } from "./drawingExtraction";
 
 // Convention (must match EXTRACTION_PROMPT in lib/drawingExtraction.ts and
 // every UI label exactly, or a tech reading one and the model reading the
@@ -113,4 +116,97 @@ export function applyOrientationToRoom(
     result[CARDINAL_FIELD_BY_DIRECTION[direction]] = value;
   }
   return result;
+}
+
+// FIX-PIPELINE: the one place the drawing-relative -> compass wall
+// rotation runs. Previously this lived inside
+// components/building-orientation-section.tsx's "Save & Auto-Fill Walls"
+// button handler - a second orientation surface the technician had to
+// find and click. It is now called automatically:
+//   - by the Rooms & Envelope stage's auto-apply, right after rooms are
+//     created from the extraction and their wall-orientation UNRESOLVED
+//     flags are cleared, and
+//   - again whenever a wall-orientation field_resolution is added in
+//     Field Review.
+// No button. `building_front_faces` itself is written in exactly one
+// place by a human (the stage-3 orientation gate) - this function only
+// reads it and rotates room walls.
+//
+// A room whose extraction still has an unresolved wall-orientation flag
+// (see roomHasUnresolvedWallOrientation) is left untouched and its name
+// returned in `blockedRoomNames` - its front/rear/left/right data must
+// not be trusted into the compass fields until a human confirms the
+// front-entry guess. An intercardinal `buildingFrontFaces` returns
+// `applicable: false` and changes nothing (the room schema has no column
+// for a NE/SE/SW/NW wall - see isTransformApplicable).
+export type OrientationTransformRoom = DrawingRelativeWalls & { id: string; name: string };
+
+export type OrientationTransformResult<T> = {
+  applicable: boolean;
+  updated: T[];
+  blockedRoomNames: string[];
+  skippedNoData: number;
+  errors: string[];
+};
+
+export async function applyOrientationTransform<T = Record<string, unknown>>(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: SupabaseClient<any>,
+  projectId: string,
+  rooms: OrientationTransformRoom[],
+  buildingFrontFaces: Compass8 | null,
+  resolvedKeys: ReadonlySet<string>,
+  roomSelectColumns = "*",
+): Promise<OrientationTransformResult<T>> {
+  if (!buildingFrontFaces || !isTransformApplicable(buildingFrontFaces)) {
+    return { applicable: false, updated: [], blockedRoomNames: [], skippedNoData: 0, errors: [] };
+  }
+
+  const orientation = resolveOrientation(buildingFrontFaces) as {
+    front: "N" | "E" | "S" | "W";
+    rear: "N" | "E" | "S" | "W";
+    left: "N" | "E" | "S" | "W";
+    right: "N" | "E" | "S" | "W";
+  };
+
+  const { data: drawingsData } = await supabase
+    .from("drawings")
+    .select("id, extraction_status, extracted_data")
+    .eq("project_id", projectId)
+    .returns<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }[]>();
+  const drawings = drawingsData ?? [];
+
+  const updated: T[] = [];
+  const blockedRoomNames: string[] = [];
+  const errors: string[] = [];
+  let skippedNoData = 0;
+
+  for (const room of rooms) {
+    if (roomHasUnresolvedWallOrientation(room.name, drawings, resolvedKeys as Set<string>)) {
+      blockedRoomNames.push(room.name);
+      continue;
+    }
+    const cardinalUpdate = applyOrientationToRoom(room, orientation);
+    if (Object.keys(cardinalUpdate).length === 0) {
+      if (
+        room.wall_front_len_ft != null ||
+        room.wall_rear_len_ft != null ||
+        room.wall_left_len_ft != null ||
+        room.wall_right_len_ft != null
+      ) {
+        skippedNoData += 1;
+      }
+      continue;
+    }
+    const { data, error } = await supabase
+      .from("rooms")
+      .update(cardinalUpdate)
+      .eq("id", room.id)
+      .select(roomSelectColumns)
+      .single();
+    if (error) errors.push(`${room.name}: ${error.message}`);
+    else if (data) updated.push(data as T);
+  }
+
+  return { applicable: true, updated, blockedRoomNames, skippedNoData, errors };
 }

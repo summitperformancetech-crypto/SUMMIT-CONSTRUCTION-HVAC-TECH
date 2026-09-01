@@ -37,7 +37,7 @@ Active production build, not a prototype. The calculation engines are genuinely 
 - `app/api/drawings/extract/route.ts` + `lib/drawingExtraction.ts` — AI-based drawing extraction (Claude, streaming), with a human-review gate for known model failure modes
 - `app/api/reports/route.ts` + `lib/reportHtmlV2.ts` — branded PDF report generation per `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md`
 
-See `SESSION-PROGRESS.md` for the detailed session-by-session build log, and `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md` for the report-format specification.
+See `SESSION-PROGRESS.md` for the detailed session-by-session build log, `REFERENCE-DOCS/SUMMIT-REPORT-STANDARD.md` for the report-format specification, and `SUMMIT-BUILD-SEQUENCE.md` for the canonical residential pipeline spec (the strict in-order 13-stage guided flow — `lib/pipeline.ts` is its executable form; the two must not drift).
 
 ## Development Protocol
 

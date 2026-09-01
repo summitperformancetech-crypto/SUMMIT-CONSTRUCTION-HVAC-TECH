@@ -6,6 +6,8 @@ import {
   computeLatentLoadPintsPerDay,
   bestAvailableRatedPintsPerDay,
   dehumidifierCandidatesFor,
+  proposeDehumidification,
+  STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY,
   BTU_PER_PINT_OF_WATER,
   type DehumidifierCatalogOption,
 } from "../dehumidification";
@@ -107,5 +109,45 @@ describe("dehumidifierCandidatesFor", () => {
 
   it("returns an empty list when nothing cataloged meets the requirement", () => {
     expect(dehumidifierCandidatesFor(200, options)).toEqual([]);
+  });
+});
+
+describe("proposeDehumidification (pipeline stage 12)", () => {
+  const options: DehumidifierCatalogOption[] = [
+    {
+      equipmentId: "a",
+      manufacturer: "Aprilaire",
+      modelNumber: "E100",
+      ratedPintsPerDay80_60: 100,
+      ratedPintsPerDay73_60: 85,
+      inletDuctDiameterIn: 10,
+      secondaryInletDuctDiameterIn: null,
+      outletDuctDiameterIn: 10,
+      drainConnectionSpec: '3/4" MNPT',
+      hasBackdraftDamper: true,
+      maxDesignExternalStaticPressureIwc: 0.6,
+    },
+  ];
+
+  it("recommends a standalone dehumidifier and lists candidates when latent load is high", () => {
+    // 2000 Btuh -> ~45.5 pints/day, well over the threshold
+    const p = proposeDehumidification({ wholeHouse: { coolingLatentBtuh: 2000 } }, options);
+    expect(p.recommendStandalone).toBe(true);
+    expect(p.requiredPintsPerDay).toBeGreaterThan(STANDALONE_DEHUMIDIFICATION_PINTS_PER_DAY);
+    expect(p.candidates.map((c) => c.equipmentId)).toEqual(["a"]);
+  });
+
+  it("does not recommend a standalone unit for a low latent load, and is explicit about why", () => {
+    // 400 Btuh -> ~9 pints/day, under the threshold
+    const p = proposeDehumidification({ wholeHouse: { coolingLatentBtuh: 400 } }, options);
+    expect(p.recommendStandalone).toBe(false);
+    expect(p.candidates).toEqual([]);
+    expect(p.rationale.toLowerCase()).toContain("adequate");
+  });
+
+  it("handles a null Manual J result without throwing", () => {
+    const p = proposeDehumidification(null, options);
+    expect(p.latentLoadBtuh).toBe(0);
+    expect(p.recommendStandalone).toBe(false);
   });
 });

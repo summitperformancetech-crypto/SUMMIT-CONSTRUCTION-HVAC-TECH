@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getReportData } from "@/lib/reportData";
 import { attachFrozenImages } from "@/lib/reportImages";
+import { buildPipelineInput } from "@/lib/pipelineInput";
+import { computePipelineState, PIPELINE_STAGES, PIPELINE_STAGE_LABEL } from "@/lib/pipeline";
 
 // Data Integrity Addendum, Section 1, point 5: legitimate corrections to an
 // already-finalized project must be an explicit user action that creates a
@@ -45,8 +47,28 @@ export async function POST(request: Request) {
 
   if (!latest) {
     return NextResponse.json(
-      { error: "This project has no existing snapshot to revise - use Generate Reports first." },
+      { error: "This project has no existing snapshot to revise - Finalize the project first." },
       { status: 400 },
+    );
+  }
+
+  // FIX-PIPELINE: a revision re-freezes calculation from live data, so it
+  // must re-clear the same gate a first Finalize does - a legitimate
+  // correction still has to leave the project in a fully valid state.
+  const pipelineInput = await buildPipelineInput(supabase, projectId);
+  if (!pipelineInput) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+  const state = computePipelineState(pipelineInput);
+  if (!state.canFinalize) {
+    const blockers: string[] = [];
+    for (const stage of PIPELINE_STAGES) {
+      for (const b of state.stages[stage].blockers) blockers.push(`${PIPELINE_STAGE_LABEL[stage]}: ${b}`);
+    }
+    for (const p of state.outstandingProposalList) blockers.push(`Unreviewed AI proposal: ${p.label}`);
+    return NextResponse.json(
+      { error: "Project is not in a valid state to revise.", blockers },
+      { status: 422 },
     );
   }
 

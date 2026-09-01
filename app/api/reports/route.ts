@@ -1,30 +1,26 @@
 import { NextResponse } from "next/server";
 import { launchBrowser } from "@/lib/browser";
 import { createClient } from "@/lib/supabase/server";
-import { getReportData, type ReportData } from "@/lib/reportData";
+import { type ReportData } from "@/lib/reportData";
 import { renderInternalReportHtml, renderClientScopeOfWorkHtml } from "@/lib/reportTemplates";
 import { renderSummitReportHtml, type OrgBranding } from "@/lib/reportHtmlV2";
-import { getReportGenerationGateStatus } from "@/lib/reportGate";
-import { resolutionKey, type FieldResolution } from "@/lib/fieldResolutions";
+import { buildPipelineInput } from "@/lib/pipelineInput";
+import { computePipelineState } from "@/lib/pipeline";
 import type { DrawingExtraction } from "@/lib/drawingExtraction";
 import type { Compass8 } from "@/lib/constants/compass";
-import { attachFrozenImages } from "@/lib/reportImages";
 
 type SnapshotRow = { version: number; snapshot_data: ReportData; reason: string | null; created_at: string };
 
-// Data Integrity Addendum, Section 1: the first Generate Reports call for a
-// project freezes a calculation_snapshots row (version 1) and every PDF
-// after that - for that project - is rendered from the frozen snapshot_data,
-// never live tables again, so updating equipment_catalog/climate_zone_
-// reference/duct_sizing_tables/room_type_defaults/duct_insulation_code_
-// minimums later can't silently change a report already delivered to a
-// client or code official. A project only gets a NEW snapshot version via
-// the explicit, reason-required app/api/reports/revise/route.ts action -
-// never automatically here.
-async function getOrCreateSnapshot(
+// FIX-PIPELINE: this route NEVER freezes a snapshot. A first snapshot is
+// frozen only by POST /api/projects/[id]/finalize (which runs the full
+// pipeline gate first); subsequent versions only by POST
+// /api/reports/revise. If a project has no snapshot yet, this route returns
+// 409 - the technician must click Finalize Project. Every PDF renders from
+// already-frozen snapshot_data, so updating reference data later can never
+// silently change a delivered report.
+async function getExistingSnapshot(
   supabase: Awaited<ReturnType<typeof createClient>>,
   projectId: string,
-  userId: string,
 ): Promise<{ reportData: ReportData; snapshot: { version: number; createdAt: string; reason: string | null } } | null> {
   const { data: existing } = await supabase
     .from("calculation_snapshots")
@@ -34,60 +30,10 @@ async function getOrCreateSnapshot(
     .limit(1)
     .maybeSingle<SnapshotRow>();
 
-  if (existing) {
-    return {
-      reportData: existing.snapshot_data,
-      snapshot: { version: existing.version, createdAt: existing.created_at, reason: existing.reason },
-    };
-  }
-
-  const freshData = await getReportData(supabase, projectId);
-  if (!freshData) return null;
-  // Renders and freezes the Floor Plan/duct-routing images into
-  // snapshot_data itself - see lib/reportImages.ts's module comment for
-  // why this can't happen inside getReportData.
-  const fresh = await attachFrozenImages(supabase, projectId, freshData);
-
-  const { data: inserted, error } = await supabase
-    .from("calculation_snapshots")
-    .insert({ project_id: projectId, version: 1, snapshot_data: fresh, created_by: userId })
-    .select("version, created_at")
-    .single<{ version: number; created_at: string }>();
-
-  if (error || !inserted) {
-    // Two near-simultaneous first-ever Generate Reports calls for the same
-    // project (two techs clicking around the same time, or a slow request
-    // a client gave up on but the server kept processing) can both pass
-    // the "no existing snapshot" check above before either commits its
-    // insert - the unique(project_id, version) constraint then rejects the
-    // second one. That's not a real failure: version 1 now exists either
-    // way, just written by the other request. Re-select and use it rather
-    // than surfacing a 500 to a caller who did nothing wrong.
-    if (error?.code === "23505") {
-      const { data: raceWinner } = await supabase
-        .from("calculation_snapshots")
-        .select("version, snapshot_data, reason, created_at")
-        .eq("project_id", projectId)
-        .order("version", { ascending: false })
-        .limit(1)
-        .maybeSingle<SnapshotRow>();
-      if (raceWinner) {
-        return {
-          reportData: raceWinner.snapshot_data,
-          snapshot: {
-            version: raceWinner.version,
-            createdAt: raceWinner.created_at,
-            reason: raceWinner.reason,
-          },
-        };
-      }
-    }
-    throw new Error(`Failed to create calculation snapshot: ${error?.message ?? "unknown error"}`);
-  }
-
+  if (!existing) return null;
   return {
-    reportData: fresh,
-    snapshot: { version: inserted.version, createdAt: inserted.created_at, reason: null },
+    reportData: existing.snapshot_data,
+    snapshot: { version: existing.version, createdAt: existing.created_at, reason: existing.reason },
   };
 }
 
@@ -139,56 +85,48 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // SUMMIT-REPORT-STANDARD.md Section 3/8: the gate must run BEFORE
-  // snapshotting for the new report type specifically - "First report
-  // generation is also the trigger for snapshotting... this is exactly
-  // why generation must wait until everything is genuinely final:
-  // freezing early would freeze an incomplete project." Scoped to
-  // summit_standard only - the pre-existing internal/client report types
-  // are unchanged, no new gate imposed on flows that already worked.
-  if (type === "summit_standard") {
-    const gateData = await getReportData(supabase, projectId);
-    if (!gateData) {
+  // FIX-PIPELINE: this route no longer freezes anything. A report can only
+  // be rendered from an existing frozen snapshot, and a snapshot only
+  // exists once the project has been Finalized (POST
+  // /api/projects/[id]/finalize, which runs the full pipeline gate).
+  // Defense-in-depth: recompute the pipeline state and refuse if the
+  // project is not finalized, for all three report types - the primary
+  // signal is "a snapshot exists", this catches the (post-migration
+  // shouldn't-happen) case of a snapshot row without finalized_at.
+  if (version == null) {
+    const pipelineInput = await buildPipelineInput(supabase, projectId);
+    if (!pipelineInput) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
-    const [{ data: drawings }, { data: resolutions }] = await Promise.all([
-      supabase
-        .from("drawings")
-        .select("id, extraction_status, extracted_data")
-        .eq("project_id", projectId)
-        .returns<{ id: string; extraction_status: string; extracted_data: DrawingExtraction | null }[]>(),
-      supabase
-        .from("field_resolutions")
-        .select(
-          "id, project_id, table_name, record_id, field_name, ai_extracted_value, final_value, resolution_type, override_reason, resolved_by, resolved_at",
-        )
-        .eq("project_id", projectId)
-        .returns<FieldResolution[]>(),
-    ]);
-    const resolvedKeys = new Set(
-      (resolutions ?? []).map((r) => resolutionKey(r.table_name, r.record_id, r.field_name)),
-    );
-    const gate = getReportGenerationGateStatus(gateData, drawings ?? [], resolvedKeys);
-    if (!gate.canGenerate) {
-      return NextResponse.json({ error: "Report is not ready to generate", blockers: gate.blockers }, { status: 422 });
+    const state = computePipelineState(pipelineInput);
+    if (!state.finalized || pipelineInput.latestSnapshotVersion == null) {
+      return NextResponse.json(
+        { error: "Project not finalized - click Finalize Project first.", blockers: state.stages.finalize.blockers },
+        { status: 409 },
+      );
     }
   }
 
-  // getOrCreateSnapshot's own queries all run through this same
-  // user-session client, so the existing project-ownership/org-role RLS
-  // policies gate access exactly as they do everywhere else in the app - a
-  // user who can't see this project can't generate a report for it either.
+  // All queries run through this same user-session client, so the existing
+  // project-ownership/org-role RLS policies gate access exactly as they do
+  // everywhere else - a user who can't see this project can't generate a
+  // report for it either.
   let result;
   try {
-    result = version != null ? await getSnapshotVersion(supabase, projectId, version) : await getOrCreateSnapshot(supabase, projectId, user.id);
+    result =
+      version != null
+        ? await getSnapshotVersion(supabase, projectId, version)
+        : await getExistingSnapshot(supabase, projectId);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to finalize calculation snapshot";
+    const message = err instanceof Error ? err.message : "Failed to load calculation snapshot";
     return NextResponse.json({ error: message }, { status: 500 });
   }
   if (!result) {
     return NextResponse.json(
-      { error: version != null ? `Version ${version} does not exist for this project` : "Project not found" },
-      { status: 404 },
+      version != null
+        ? { error: `Version ${version} does not exist for this project` }
+        : { error: "Project not finalized - click Finalize Project first." },
+      { status: version != null ? 404 : 409 },
     );
   }
   // The PDF-generation timestamp is always "now" (this is a fresh render,
